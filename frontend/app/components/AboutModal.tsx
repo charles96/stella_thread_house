@@ -43,13 +43,7 @@ export default function AboutModal({ open, onClose }: Props) {
 
   if (!open) return null;
 
-  const rows: Array<[string, string]> = [
-    [t('about.version'), '0.1.0'],
-    [t('about.engine'), 'Ollama'],
-    [t('about.frontend'), 'Next.js · React · Tailwind · shadcn/ui'],
-    [t('about.backend'), 'NestJS'],
-    [t('about.search'), 'Tavily'],
-  ];
+  const REPO_URL = 'https://github.com/charles96/stella_thread_house';
 
   return (
     <div
@@ -89,27 +83,26 @@ export default function AboutModal({ open, onClose }: Props) {
         </div>
 
         <div className="divide-y divide-border rounded-md border border-border bg-secondary/30 text-[12.5px]">
-          {rows.map(([k, v]) => (
-            <div
-              key={k}
-              className="flex items-center justify-between gap-3 px-3 py-2"
-            >
-              <span className="text-muted-foreground">{k}</span>
-              <span className="truncate text-right">{v}</span>
-            </div>
-          ))}
-        </div>
-
-        <div className="mt-4 flex justify-end">
+          <div className="flex items-center justify-between gap-3 px-3 py-2">
+            <span className="text-muted-foreground">
+              {t('about.version')}
+            </span>
+            <span className="truncate text-right">0.1.0</span>
+          </div>
           <a
-            href="https://github.com/charles96"
+            href={REPO_URL}
             target="_blank"
-            rel="noreferrer"
-            className="inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-            title="https://github.com/charles96"
-            aria-label="GitHub"
+            rel="noopener noreferrer"
+            className="flex items-center justify-between gap-3 px-3 py-2 transition-colors hover:bg-secondary"
+            title={REPO_URL}
           >
-            <GithubIcon className="h-4 w-4" />
+            <span className="flex items-center gap-1.5 text-muted-foreground">
+              <GithubIcon className="h-3.5 w-3.5" />
+              GitHub
+            </span>
+            <span className="truncate text-right text-primary hover:underline">
+              {REPO_URL.replace(/^https?:\/\//, '')}
+            </span>
           </a>
         </div>
       </div>

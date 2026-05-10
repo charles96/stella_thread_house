@@ -2,38 +2,80 @@
 
 Ollama 기반 챗봇. Docker Compose 한 번이면 frontend + backend + postgres 가 함께 뜬다.
 
+**Repository**: https://github.com/charles96/stella_thread_house
+
 ## 사전 준비
 
 - Docker Desktop (또는 Docker Engine + compose plugin)
 - 접근 가능한 Ollama 서버 (예: `http://ai.example.com`)
 - (선택) Tavily API key — 웹 검색 / JS 차단 사이트(Instagram 등) 본문 추출용
 
-## 0. Git 으로 받아 한 번에 띄우기 (Quick Start)
+## 0. 배포 — 3단계 요약
+
+> **CLI 에서 git clone → `.env` 수정 → `docker compose up`**. 그게 전부.
+
+### Step 1. 소스 받기
 
 ```bash
-# 1) 저장소 클론
-git clone <REPOSITORY_URL> stella_chatbot
-cd stella_chatbot
+git clone https://github.com/charles96/stella_thread_house.git
+cd stella_thread_house
+```
 
-# 2) 환경변수 — 첫 admin 자격, OLLAMA_URL 정도만 수정
+### Step 2. 환경변수 수정
+
+```bash
 cp .env.example .env
-$EDITOR .env
+$EDITOR .env       # 또는 vi / nano / code .env 등
+```
 
-# 3) 빌드 + 기동 (한 번에)
+`.env` 안에서 **최소 다음 값만 본인 환경에 맞게 수정**:
+
+| 키 | 필수 | 예시 / 설명 |
+|---|---|---|
+| `TH_ADMIN_EMAIL_ID` | ✓ | `you@example.com` — 첫 admin 가입 시 일치해야 하는 이메일 |
+| `TH_ADMIN_PASSWORD` | ✓ | 강한 비밀번호 (운영에선 반드시 교체) |
+| `OLLAMA_URL` | ✓ | `http://your-ollama-host:11434` — Ollama 서버 base URL |
+| `TAVILY_API_KEY` | 선택 | `tvly-...` — 웹 검색 / Instagram 등 추출용 |
+| `TH_HOST` | 선택 | `https://stella.example.com` — 도메인 뒤에 둘 때 |
+| `POSTGRES_*` | 선택 | DB 자격증명. 기본값 사용해도 됨 |
+
+> 위 표 외 다른 값들은 기본값이 자동 적용되니 건들 필요 없음. SMTP / Google OAuth 가 필요하면 `backend/.env` 도 추가 작성 (선택, [§1 참고](#1-환경변수-설정)).
+
+### Step 3. Docker 기동
+
+```bash
 docker compose up -d --build
+```
 
-# 4) 상태 확인 (모두 healthy 까지 ~1분)
+상태 확인 — 모두 `(healthy)` 가 되면 준비 완료 (~1분):
+
+```bash
 docker compose ps
 docker compose logs -f app
 ```
 
-이후 http://localhost:3100/login 으로 접속해 `TH_ADMIN_EMAIL_ID` / `TH_ADMIN_PASSWORD` 로 첫 로그인 → admin 자동 생성.
+브라우저로 **http://localhost:3100/login** → `.env` 의 admin 자격으로 첫 로그인 → admin 자동 생성 + 즉시 입장.
 
-> **업데이트 시** — `git pull && docker compose up -d --build` 만 하면 됨. 데이터(DB/첨부) 는 named volume 으로 보존.
+---
+
+### 업데이트
 
 ```bash
+cd stella_thread_house
 git pull
 docker compose up -d --build
+```
+
+데이터(DB / 첨부 이미지) 는 named volume 으로 보존됨.
+
+### 정지 / 재시작 / 초기화
+
+```bash
+docker compose stop                    # 일시 정지 (컨테이너 보존)
+docker compose start                   # 재기동
+docker compose restart app             # app 만 재시작
+docker compose down                    # 컨테이너 제거 (데이터 보존)
+docker compose down -v                 # 컨테이너 + 볼륨 + 데이터 모두 삭제 (초기화)
 ```
 
 상세 흐름은 아래 섹션들 참고.

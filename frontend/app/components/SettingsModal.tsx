@@ -793,13 +793,7 @@ function AiSection({
       title={t('settings.menu.ai')}
       description={t('settings.ai.subtitle')}
     >
-      <div className="grid gap-5 rounded-lg border border-border bg-secondary/30 p-5 md:grid-cols-[180px_1fr]">
-        <div className="flex items-start justify-center md:justify-start">
-          <AiPersonSvg
-            hasReasoning={!!reasoningModel}
-            hasVision={!!visionModel}
-          />
-        </div>
+      <div className="rounded-lg border border-border bg-secondary/30 p-5">
         <div className="flex flex-col gap-4">
           <div>
             <div className="mb-1.5 flex items-center gap-1.5">

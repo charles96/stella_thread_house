@@ -2361,17 +2361,25 @@ export default function ChatRoom() {
 
   return (
     <div className="flex h-screen w-screen bg-background">
+      {/* 사이드바 wrapper.
+          데스크톱(md+): 인라인 패널 — w-72 / w-0 토글, transform translate 애니메이션.
+          모바일(< md): full-screen overlay — 열려있을 때만 화면 전체를 덮고, 닫히면 안 보임.
+                         tap 으로 thread 선택 시 자동으로 닫힘 → main 이 화면 가득. */}
       <div
         aria-hidden={!sidebarOpen}
         className={cn(
-          'relative h-screen shrink-0 overflow-hidden transition-[width] duration-300 ease-out',
-          sidebarOpen ? 'w-72' : 'w-0',
+          'shrink-0 overflow-hidden bg-background',
+          // 모바일 — full-screen overlay
+          sidebarOpen ? 'fixed inset-0 z-40' : 'hidden',
+          // 데스크톱 — 인라인 패널 (mobile 클래스 override)
+          'md:relative md:z-auto md:block md:h-screen md:transition-[width] md:duration-300 md:ease-out',
+          sidebarOpen ? 'md:w-72' : 'md:w-0',
         )}
       >
         <div
           className={cn(
-            'absolute inset-y-0 left-0 w-72 transition-transform duration-300 ease-out',
-            sidebarOpen ? 'translate-x-0' : '-translate-x-full',
+            'h-full w-full md:absolute md:inset-y-0 md:left-0 md:w-72 md:transition-transform md:duration-300 md:ease-out',
+            sidebarOpen ? 'md:translate-x-0' : 'md:-translate-x-full',
           )}
         >
           <Sidebar
@@ -2383,14 +2391,24 @@ export default function ChatRoom() {
             onSelect={(id) => {
               setActiveId(id);
               setView('thread');
+              // 모바일 — thread 선택 시 사이드바 자동 닫기 (full-screen overlay 였음).
+              if (typeof window !== 'undefined' && window.innerWidth < 768) {
+                setSidebarOpen(false);
+              }
             }}
             onNew={() => {
               newConversation();
               setView('thread');
+              if (typeof window !== 'undefined' && window.innerWidth < 768) {
+                setSidebarOpen(false);
+              }
             }}
             onNewChat={() => {
               newChat();
               setView('thread');
+              if (typeof window !== 'undefined' && window.innerWidth < 768) {
+                setSidebarOpen(false);
+              }
             }}
             onDelete={(id) => {
               const c = conversations.find((cc) => cc.id === id);
@@ -2546,10 +2564,11 @@ export default function ChatRoom() {
               );
             })()}
           </div>
+          {/* 우측 Summary/TagCloud 패널 토글 — 모바일에선 패널 자체가 hidden 이므로 버튼도 숨김. */}
           <Button
             variant="ghost"
             size="icon"
-            className="h-9 w-9 shrink-0"
+            className="hidden h-9 w-9 shrink-0 md:inline-flex"
             onClick={() => setTagCloudOpen((v) => !v)}
             disabled={!active}
             title={tagCloudOpen ? 'Summary 닫기' : 'Summary 열기'}
@@ -2603,7 +2622,8 @@ export default function ChatRoom() {
           <div
             className={cn(
               // pb-28: 입력창이 absolute 로 떠 있으므로 마지막 메시지가 가려지지 않게 여유.
-              'pl-4 pr-6 pb-28 pt-5 transition-[max-width] duration-300 ease-out',
+              // 모바일은 좌우 padding 축소(px-3) — 화면이 좁아 가독성 우선.
+              'px-3 pb-28 pt-5 transition-[max-width] duration-300 ease-out md:pl-4 md:pr-6',
               // 좌·우 모든 패널이 접혀 있으면 채팅 본문이 공간에 더 자연스럽게 퍼지도록 폭 확대.
               // 모든 패널 상태에서 동일한 채팅 폭 유지 — 사이드바 열기/닫기로 채팅 본문 폭이 흔들리지 않게.
               'max-w-4xl',
@@ -2730,12 +2750,12 @@ export default function ChatRoom() {
           />
           <div
             className={cn(
-              'relative w-full pl-4 pr-6 pb-2 transition-[max-width] duration-300 ease-out',
-              // 모든 패널 상태에서 동일한 채팅 폭 유지 — 사이드바 열기/닫기로 채팅 본문 폭이 흔들리지 않게.
+              'relative w-full px-3 pb-2 transition-[max-width] duration-300 ease-out md:pl-4 md:pr-6',
               'max-w-4xl',
             )}
           >
-            <div className="pointer-events-auto pl-8">
+            {/* 모바일은 pl-8 indent 제거 — 화면이 좁아 입력창 너비를 최대 확보. */}
+            <div className="pointer-events-auto md:pl-8">
               <InputBar
                 ref={inputBarRef}
                 onSend={send}
@@ -2754,11 +2774,12 @@ export default function ChatRoom() {
         )}
       </main>
 
+      {/* Artifact 미리보기 패널 (Mermaid/SVG) — 모바일에선 숨김. */}
       <div
         aria-hidden={!activeArtifact}
         className={cn(
-          'relative h-screen shrink-0 overflow-hidden transition-[width] duration-300 ease-out',
-          activeArtifact ? 'w-[480px]' : 'w-0',
+          'hidden md:relative md:block md:h-screen md:shrink-0 md:overflow-hidden md:transition-[width] md:duration-300 md:ease-out',
+          activeArtifact ? 'md:w-[480px]' : 'md:w-0',
         )}
       >
         <div
@@ -2779,12 +2800,13 @@ export default function ChatRoom() {
         </div>
       </div>
 
-      {/* Dashboard 화면에선 우측 패널 자체를 안 보이게 (사용자의 tagCloudOpen 선호는 유지 → 다시 thread 로 돌아오면 그대로 열림). */}
+      {/* Dashboard 화면에선 우측 패널 자체를 안 보이게 (사용자의 tagCloudOpen 선호는 유지 → 다시 thread 로 돌아오면 그대로 열림).
+          모바일에선 항상 hidden — 화면이 좁아 thread/chat 만 표시. */}
       <div
         aria-hidden={!tagCloudOpen || view === 'dashboard'}
         className={cn(
-          'relative h-screen shrink-0 overflow-hidden transition-[width] duration-300 ease-out',
-          tagCloudOpen && view !== 'dashboard' ? 'w-[360px]' : 'w-0',
+          'hidden md:relative md:block md:h-screen md:shrink-0 md:overflow-hidden md:transition-[width] md:duration-300 md:ease-out',
+          tagCloudOpen && view !== 'dashboard' ? 'md:w-[360px]' : 'md:w-0',
         )}
       >
         <div
