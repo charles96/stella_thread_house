@@ -19,6 +19,7 @@ import {
   ExternalLink,
   Globe,
   ImageIcon,
+  ImagePlus,
   Pin,
   PinOff,
   Sparkles,
@@ -1698,6 +1699,22 @@ export default function MessageBubble({
                       >
                         <Trash2 className="h-3 w-3" />
                         {t('image.postit.delete')}
+                      </button>
+                    )}
+                  {onAttachImage &&
+                    expanded.kind !== 'youtube' &&
+                    expanded.kind !== 'x' && (
+                      <button
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => {
+                          onAttachImage(expanded.url);
+                        }}
+                        title={t('image.postit.attach')}
+                        className="absolute right-1 top-[5.25rem] z-20 inline-flex -rotate-3 items-center gap-1 rounded-md border border-primary/40 bg-card px-2 py-0.5 text-[11px] font-medium text-primary shadow-md transition-transform hover:rotate-0 hover:bg-primary hover:text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      >
+                        <ImagePlus className="h-3 w-3" />
+                        {t('image.postit.attach')}
                       </button>
                     )}
                   {isYouTube && (

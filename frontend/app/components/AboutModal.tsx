@@ -87,7 +87,7 @@ export default function AboutModal({ open, onClose }: Props) {
             <span className="text-muted-foreground">
               {t('about.version')}
             </span>
-            <span className="truncate text-right">0.1.0</span>
+            <span className="truncate text-right">0.2.0</span>
           </div>
           <a
             href={REPO_URL}

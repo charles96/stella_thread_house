@@ -88,6 +88,7 @@ const dict = {
     'image.postit.delete': '삭제',
     'image.postit.pin': '고정',
     'image.postit.unpin': '해제',
+    'image.postit.attach': '첨부',
 
     'toast.replyDone': '답변이 완료되었습니다',
 
@@ -284,6 +285,7 @@ const dict = {
     'image.postit.delete': 'Delete',
     'image.postit.pin': 'Pin',
     'image.postit.unpin': 'Unpin',
+    'image.postit.attach': 'Attach',
 
     'toast.replyDone': 'Reply ready',
 
@@ -482,6 +484,7 @@ const dict = {
     'image.postit.delete': '削除',
     'image.postit.pin': '固定',
     'image.postit.unpin': '解除',
+    'image.postit.attach': '添付',
 
     'toast.replyDone': '回答が完了しました',
 
@@ -680,6 +683,7 @@ const dict = {
     'image.postit.delete': '删除',
     'image.postit.pin': '固定',
     'image.postit.unpin': '取消固定',
+    'image.postit.attach': '附加',
 
     'toast.replyDone': '回复已完成',
 
@@ -878,6 +882,7 @@ const dict = {
     'image.postit.delete': 'Hapus',
     'image.postit.pin': 'Sematkan',
     'image.postit.unpin': 'Lepas',
+    'image.postit.attach': 'Lampirkan',
 
     'toast.replyDone': 'Balasan siap',
 

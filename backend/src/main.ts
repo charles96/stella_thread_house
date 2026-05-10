@@ -24,7 +24,7 @@ async function bootstrap() {
   const config = new DocumentBuilder()
     .setTitle('Stella Book API')
     .setDescription('Ollama 기반 챗봇 백엔드 — chat, page extraction, auth')
-    .setVersion('0.1.0')
+    .setVersion('0.2.0')
     .addTag('page', '웹 페이지 본문/이미지/OG 태그 추출')
     .addTag('chat', '대화 스트리밍 및 보조 기능')
     .build();

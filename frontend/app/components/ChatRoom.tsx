@@ -2440,7 +2440,7 @@ export default function ChatRoom() {
             }}
             onToggleFolder={toggleFolder}
             onCollapse={() => setSidebarOpen(false)}
-            subtitle="v0.1.0"
+            subtitle="v0.2.0"
             user={user}
             onLogin={() => {
               window.location.href = `${API_URL}/auth/google`;
