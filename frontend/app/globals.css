@@ -1,0 +1,188 @@
+@import 'katex/dist/katex.min.css';
+@import url('https://fonts.googleapis.com/css2?family=Caveat:wght@400;500;600;700&family=Gaegu:wght@400;700&display=swap');
+
+/* 손글씨/낙서 느낌 폰트 — Caveat(영문) + Gaegu(한글) 조합. 본문은 시스템 폰트 유지. */
+.font-doodle {
+  font-family: 'Caveat', 'Gaegu', 'Apple SD Gothic Neo', 'Malgun Gothic', cursive;
+  letter-spacing: 0.01em;
+}
+
+/* 살짝 기울인 손글씨 카드 — 포스트잇/스티커 무드 */
+.doodle-tilt-1 { transform: rotate(-1.2deg); }
+.doodle-tilt-2 { transform: rotate(1.5deg); }
+
+/* 들쭉날쭉 둥근 모서리 — 손으로 그린 듯한 비대칭 */
+.doodle-rounded {
+  border-radius: 14px 18px 12px 20px / 16px 14px 20px 12px;
+}
+.doodle-rounded-sm {
+  border-radius: 8px 10px 6px 12px / 9px 7px 11px 8px;
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+.katex {
+  color: inherit;
+}
+.katex-display {
+  margin: 0.6em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+@layer base {
+  /* 기본 테마(chocolate dark) — 데이터 속성 미설정 시 폴백 */
+  :root,
+  [data-theme='chocolate'] {
+    color-scheme: dark;
+
+    --background: 18 26% 10%;
+    --foreground: 30 40% 92%;
+
+    --card: 22 26% 13%;
+    --card-foreground: 30 40% 92%;
+
+    --popover: 22 26% 13%;
+    --popover-foreground: 30 40% 92%;
+
+    --primary: 30 64% 65%;
+    --primary-foreground: 24 50% 12%;
+
+    --secondary: 22 22% 18%;
+    --secondary-foreground: 30 40% 92%;
+
+    --muted: 22 22% 18%;
+    --muted-foreground: 28 18% 65%;
+
+    --accent: 22 22% 22%;
+    --accent-foreground: 30 40% 92%;
+
+    --destructive: 0 60% 45%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 30 25% 22%;
+    --input: 22 22% 18%;
+    --ring: 30 64% 60%;
+
+    --sidebar: 18 26% 8%;
+    --sidebar-foreground: 30 40% 92%;
+
+    --bubble-bot: 22 26% 15%;
+    --bubble-bot-foreground: 30 40% 92%;
+    --bubble-user: 30 64% 65%;
+    --bubble-user-foreground: 24 50% 12%;
+
+    --radius: 0.625rem;
+  }
+
+  /* White 라이트 테마 — 따뜻한 크림 베이스에 chocolate primary 그대로 살림 */
+  [data-theme='white'] {
+    color-scheme: light;
+
+    --background: 30 30% 98%;
+    --foreground: 24 30% 15%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 24 30% 15%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 24 30% 15%;
+
+    --primary: 30 60% 48%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 30 25% 94%;
+    --secondary-foreground: 24 30% 15%;
+
+    --muted: 30 25% 94%;
+    --muted-foreground: 28 12% 42%;
+
+    --accent: 30 35% 90%;
+    --accent-foreground: 24 30% 15%;
+
+    --destructive: 0 70% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 30 18% 86%;
+    --input: 30 18% 92%;
+    --ring: 30 60% 48%;
+
+    --sidebar: 30 30% 96%;
+    --sidebar-foreground: 24 30% 15%;
+
+    --bubble-bot: 30 30% 96%;
+    --bubble-bot-foreground: 24 30% 15%;
+    --bubble-user: 30 60% 48%;
+    --bubble-user-foreground: 0 0% 100%;
+
+    --radius: 0.625rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html,
+  body {
+    @apply bg-background text-foreground antialiased;
+    height: 100%;
+  }
+  body {
+    font-family:
+      -apple-system,
+      BlinkMacSystemFont,
+      'Apple SD Gothic Neo',
+      'Malgun Gothic',
+      sans-serif;
+  }
+}
+
+/* Radix ScrollArea Viewport는 내부에 display:table div를 자동 삽입하는데,
+   이것이 자식이 부모 너비를 초과해도 늘어나게 만들어 truncate가 무력화된다.
+   block + width:100% 강제로 자식들이 정확히 viewport 너비에 맞도록 한다. */
+[data-radix-scroll-area-viewport] > div[style*='table'] {
+  display: block !important;
+  min-width: 100% !important;
+  width: 100% !important;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(30 25% 30%);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@keyframes visionBlink {
+  0%, 100% {
+    opacity: 1;
+    filter: brightness(1) saturate(1);
+    box-shadow:
+      0 0 0 1px rgba(168, 85, 247, 0.4),
+      0 0 12px 3px rgba(168, 85, 247, 0.35),
+      0 6px 16px rgba(0, 0, 0, 0.5);
+  }
+  50% {
+    opacity: 0.55;
+    filter: brightness(0.9) saturate(0.9);
+    box-shadow:
+      0 0 0 2px rgba(192, 132, 252, 0.85),
+      0 0 26px 8px rgba(168, 85, 247, 0.7),
+      0 8px 22px rgba(0, 0, 0, 0.6);
+  }
+}
+
+.vision-glow {
+  animation: visionBlink 2.6s ease-in-out infinite;
+}

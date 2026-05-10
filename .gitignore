@@ -1,0 +1,154 @@
+# ───── Dependencies ─────
+node_modules/
+.pnp
+.pnp.js
+.yarn/install-state.gz
+
+# ───── Build output ─────
+# Backend (NestJS)
+backend/dist/
+backend/build/
+
+# Frontend (Next.js)
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/dist/
+frontend/next-env.d.ts
+
+# TypeScript incremental build info (어느 패키지든)
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+
+# ───── Environment / Secrets ─────
+.env
+.env.local
+.env.development
+.env.development.local
+.env.test
+.env.test.local
+.env.production
+.env.production.local
+!.env.example
+
+# ───── Logs ─────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+logs/
+
+# ───── Caches ─────
+.cache/
+.parcel-cache/
+.eslintcache
+.stylelintcache
+.turbo/
+.swc/
+.next/
+.nyc_output/
+
+# ───── Test / Coverage ─────
+coverage/
+*.lcov
+.coverage
+.pytest_cache/
+
+# ───── IDE / Editor ─────
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+*.iml
+*.sublime-workspace
+*.sublime-project
+*.swp
+*.swo
+
+# ───── OS-specific ─────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ───── Playwright / Browsers ─────
+playwright-report/
+playwright/.cache/
+test-results/
+blob-report/
+ms-playwright/
+
+# ───── Local user data ─────
+.claude/
+.cursor/
+.aider*
+
+# ───── Backend specific ─────
+backend/.nest-cli.cache
+backend/uploads/
+backend/tmp/
+backend/logs/
+backend/coverage/
+
+# ───── Database / 백업 / 덤프 ─────
+*.dump
+*.sql.bak
+*.sql.backup
+*.db
+*.sqlite
+*.sqlite3
+db/dumps/
+db/backups/
+postgres-data/
+
+# ───── Frontend specific ─────
+frontend/.vercel
+frontend/.netlify
+frontend/storybook-static/
+
+# ───── Temporary / Misc ─────
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+/tmp/
+
+# ───── 보안 / 민감값 (env 외) ─────
+*.pem
+*.key
+*.crt
+*.pfx
+*.p12
+service-account*.json
+credentials.json
+secrets/
+
+# ───── 사용자 첨부 / 런타임 산출물 — 루트 한정. 소스의 같은 이름 디렉토리는 영향 X. ─────
+/uploads/
+/attachments/
+/runtime/
+/data/
+
+# ───── AI 코드 어시스턴트 캐시 ─────
+.aider*
+.codex/
+.continue/
+.windsurf/
+.copilot/
+
+# ───── 압축 / 아카이브 (실수 커밋 방지) ─────
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+
+# 단, db/init 같이 의도적으로 커밋되는 sql 파일은 유지.
+!db/init/*.sql
