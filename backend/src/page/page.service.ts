@@ -42,8 +42,6 @@ const MOBILE_UA =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 ' +
   '(KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
 
-const USER_AGENT = DESKTOP_UA;
-
 // 단순한 브라우저 흉내 헤더만 사용. 너무 많은 헤더(Sec-Fetch-*, Sec-Ch-Ua-* 등)는
 // 오히려 일부 사이트의 휴리스틱에 봇 패턴으로 잡히는 경우가 있어 최소 셋으로 유지.
 function browserLikeHeaders(targetUrl: string): Record<string, string> {
@@ -797,57 +795,6 @@ export class PageService {
     };
   }
 
-  // Tavily /search — URL 자체를 query 로 던지면 인덱싱된 페이지의 캡션/이미지를 반환.
-  // Instagram 처럼 extract 가 빈 페이지(JS 셸) 를 받는 사이트에 효과적.
-  private async searchViaTavilyForUrl(u: URL): Promise<PageExtractResult> {
-    const key = await this.getTavilyKey();
-    if (!key) throw new Error('TAVILY_API_KEY 미설정');
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 25_000);
-    let res: globalThis.Response;
-    try {
-      res = await fetch('https://api.tavily.com/search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: ctrl.signal,
-        body: JSON.stringify({
-          api_key: key,
-          query: u.toString(),
-          include_images: true,
-          include_image_descriptions: false,
-          max_results: 3,
-        }),
-      });
-    } finally {
-      clearTimeout(timer);
-    }
-    if (!res.ok) {
-      const txt = await res.text().catch(() => '');
-      throw new Error(`Tavily search HTTP ${res.status} ${txt}`);
-    }
-    const json = (await res.json()) as {
-      results?: Array<{ url?: string; content?: string; title?: string }>;
-      images?: string[];
-      answer?: string | null;
-    };
-    // 가장 관련 깊은 결과 1개의 content 를 본문으로.
-    const r = json.results?.[0];
-    if (!r || !r.content) {
-      throw new Error('Tavily search 결과 없음');
-    }
-    const text = r.content;
-    const images: PageImage[] = (json.images ?? []).map((src) => ({ src }));
-    return {
-      url: u.toString(),
-      finalUrl: r.url ?? u.toString(),
-      status: 200,
-      title: r.title,
-      ogTags: {},
-      text,
-      images,
-      bytes: Buffer.byteLength(text, 'utf-8'),
-    };
-  }
 
   private parseHtmlToResult(
     requestUrl: string,

@@ -39,6 +39,31 @@ export class AuthService {
     @InjectRepository(User) private readonly users: Repository<User>,
   ) {}
 
+  // userId → 표시 이름 캐시. AI 호출 시마다 DB 조회를 피하기 위함.
+  // updateName 으로 변경되면 즉시 갱신 / TTL 만료 시 다음 조회에서 lazy refetch.
+  // 프로세스 재시작 시 cold start — 첫 chat 요청에서만 한번 DB hit.
+  private readonly nameCache = new Map<
+    string,
+    { name: string | null; expiresAt: number }
+  >();
+  private readonly nameCacheTtlMs = 60 * 60 * 1000; // 1시간
+
+  // AI 시스템 프롬프트용 사용자 이름 조회 (캐시 우선).
+  // null = 미설정/탈퇴. 빈 문자열은 미설정으로 취급.
+  async getCachedName(userId: string): Promise<string | null> {
+    const now = Date.now();
+    const hit = this.nameCache.get(userId);
+    if (hit && hit.expiresAt > now) return hit.name;
+    const u = await this.users.findOne({
+      where: { id: userId },
+      select: { id: true, name: true },
+    });
+    const name = u?.name?.trim() ? u.name.trim() : null;
+    this.nameCache.set(userId, { name, expiresAt: now + this.nameCacheTtlMs });
+    return name;
+  }
+
+
   // 부팅 시 admin 가입이 필요한 상태인지 알려준다.
   // - users 가 비어있고 docker-compose 등에서 TH_ADMIN_EMAIL_ID 가 지정돼 있으면 needsAdminSetup=true.
   // - 프론트에서 이 응답으로 등록 폼을 노출.
@@ -150,13 +175,17 @@ export class AuthService {
     return this.toAuthUser(saved);
   }
 
-  // 사용자 표시 이름(name) 변경. 빈 문자열은 null 로 저장.
+  // 사용자 표시 이름(name) 변경. 빈 문자열은 null 로 저장. 캐시도 즉시 갱신.
   async updateName(userId: string, name: string): Promise<AuthUser> {
     const user = await this.users.findOne({ where: { id: userId } });
     if (!user) throw new UnauthorizedException();
     const trimmed = name.trim();
     user.name = trimmed.length > 0 ? trimmed : null;
     const saved = await this.users.save(user);
+    this.nameCache.set(userId, {
+      name: saved.name?.trim() ? saved.name.trim() : null,
+      expiresAt: Date.now() + this.nameCacheTtlMs,
+    });
     return this.toAuthUser(saved);
   }
 

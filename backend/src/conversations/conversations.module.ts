@@ -7,9 +7,13 @@ import { ConversationsController } from './conversations.controller';
 import { ConversationsService } from './conversations.service';
 import { FoldersController } from './folders.controller';
 import { FoldersService } from './folders.service';
+import { AttachmentsModule } from '../attachments/attachments.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Conversation, Folder, Message])],
+  imports: [
+    TypeOrmModule.forFeature([Conversation, Folder, Message]),
+    AttachmentsModule,
+  ],
   controllers: [ConversationsController, FoldersController],
   providers: [ConversationsService, FoldersService],
   exports: [ConversationsService],

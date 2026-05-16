@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useI18n } from '@/lib/i18n';
+import { version } from '../../package.json';
 
 // lucide-react 1.14 에는 Github 아이콘이 없어 표준 GitHub mark SVG 를 인라인.
 function GithubIcon({ className }: { className?: string }) {
@@ -87,7 +88,7 @@ export default function AboutModal({ open, onClose }: Props) {
             <span className="text-muted-foreground">
               {t('about.version')}
             </span>
-            <span className="truncate text-right">0.2.0</span>
+            <span className="truncate text-right">{version}</span>
           </div>
           <a
             href={REPO_URL}

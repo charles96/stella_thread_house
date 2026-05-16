@@ -46,6 +46,10 @@ CREATE TABLE conversations (
   -- 누적 요약 (Summary 패널용)
   running_summary             TEXT,
   running_summary_answer_count INTEGER,
+  -- Thread 단위 통합 hashtag — AI 가 응답 생성 시 누적 union 으로 갱신.
+  hashtags                    JSONB        NOT NULL DEFAULT '[]'::jsonb,
+  -- 사용자가 우측 패널 Hashtags 섹션에서 배제한 태그 — AI 가 재추가하지 않도록 blacklist.
+  excluded_hashtags           JSONB        NOT NULL DEFAULT '[]'::jsonb,
   created_at                  TIMESTAMPTZ  NOT NULL DEFAULT now(),
   updated_at                  TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
@@ -65,10 +69,14 @@ CREATE TABLE messages (
   -- images, searchImages, sources, readPages, hashtags, replySummary, followup,
   -- metric, status, time, visionContext 등 가변/선택 필드를 통째로 저장.
   metadata        JSONB        NOT NULL DEFAULT '{}'::jsonb,
+  -- 사용자가 Message Navigator 에서 재정렬 시 갱신되는 명시적 정렬 순서.
+  -- id(uuidv7) 시간 정렬 대신 이 컬럼으로 ORDER BY.
+  position        INT          NOT NULL DEFAULT 0,
   created_at      TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
 CREATE INDEX messages_conv_id_desc_idx ON messages (conversation_id, id DESC);
+CREATE INDEX messages_conv_position_idx ON messages (conversation_id, position ASC);
 
 -- updated_at 자동 갱신
 CREATE OR REPLACE FUNCTION set_updated_at()

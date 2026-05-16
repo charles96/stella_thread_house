@@ -54,6 +54,22 @@ export class Conversation {
   })
   runningSummaryAnswerCount?: number | null;
 
+  // Thread 단위 통합 hashtag — AI 가 응답 생성 시 누적 union 으로 갱신. 사용자는 우측 패널에서 × 로 제거.
+  @Column({
+    name: 'hashtags',
+    type: 'jsonb',
+    default: () => "'[]'::jsonb",
+  })
+  hashtags!: string[];
+
+  // 사용자가 우측 패널 Hashtags 섹션에서 명시적으로 배제한 태그 — AI 가 재추가하지 않도록 blacklist.
+  @Column({
+    name: 'excluded_hashtags',
+    type: 'jsonb',
+    default: () => "'[]'::jsonb",
+  })
+  excludedHashtags!: string[];
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;
 

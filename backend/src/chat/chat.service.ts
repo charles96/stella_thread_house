@@ -86,17 +86,6 @@ const IMG_EXT = /\.(?:jpe?g|png|webp|gif|avif|heic|heif)(?:\?[^"'\s)]*)?$/i;
 const ICON_HINT = /(?:icon|sprite|logo|favicon|emoji|button|placeholder|spinner|pixel\.gif|tracking|1x1|avatar|profile_image|thumb_small)/i;
 const TINY_DIM_HINT = /(?:[_-](?:[1-9]|[1-9]\d|1[0-4]\d)x(?:[1-9]|[1-9]\d|1[0-4]\d)\b|[_-]w(?:[1-9]\d?|1[0-4]\d)\b|[?&](?:w|width|h|height)=(?:[1-9]\d?|1[0-4]\d)\b)/i;
 
-function absolutize(src: string, baseUrl?: string): string | null {
-  try {
-    if (src.startsWith('//')) return 'https:' + src;
-    if (/^https?:/i.test(src)) return src;
-    if (baseUrl) return new URL(src, baseUrl).toString();
-    return null;
-  } catch {
-    return null;
-  }
-}
-
 // 브라우저에서 직접 <img>로 못 띄우는 호스트들. 응답에 cross-origin-resource-policy: same-origin
 // 이 박혀 있어 외부 origin 에서 표시가 차단된다 → 백엔드 프록시 경유로 바꾼다.
 // lookaside.instagram.com (SEO 크롤러 이미지) 도 동일하게 CORP 박혀있어 프록시 필요.
@@ -188,6 +177,18 @@ function looksLikeSearchIntent(text: string): boolean {
   return positive.test(trimmed);
 }
 
+// 이미지가 첨부된 상황에서 사용하는 더 엄격한 검사 — 일반 의문문(어떤/뭐야 등) 은 통과 못 함.
+// 명시적으로 "검색해/찾아봐/google/search for" 같은 동사형 요청만 인정.
+// 첨부 이미지 분석이 기본 행동이고, 사용자가 굳이 "검색"이라고 적어야 Tavily 가 추가로 발동.
+function looksLikeExplicitSearchRequest(text: string): boolean {
+  if (!text) return false;
+  const trimmed = text.trim();
+  if (trimmed.length < 3) return false;
+  return /검색(해|을|좀)|찾아\s*(봐|줘|보)|알아\s*(봐|줘|보)|조회\s*해|구글링|네이버에서|google\s+(this|for|it)|search\s+(for|this|it|the\s+web)|look\s+(it|this)\s+up|web\s+search/i.test(
+    trimmed,
+  );
+}
+
 function extractUrlsFromText(text: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
@@ -210,69 +211,6 @@ function extractUrlsFromText(text: string): string[] {
   return out;
 }
 
-function imageDedupKey(u: string): string {
-  try {
-    const url = new URL(u);
-    const last = url.pathname.split('/').filter(Boolean).pop() ?? '';
-    const stripped = last
-      .toLowerCase()
-      .replace(/[_-]\d{2,4}x\d{2,4}(?=\.|$)/, '')
-      .replace(/[_-]w\d{2,4}(?=\.|$)/, '')
-      .replace(/-(?:thumb|small|medium|large|xl)(?=\.|$)/, '');
-    return `${url.host.toLowerCase()}|${stripped}`;
-  } catch {
-    return u.toLowerCase();
-  }
-}
-
-function isLikelyContentImage(src: string): boolean {
-  if (!src || src.length < 12) return false;
-  if (src.startsWith('data:')) return false;
-  if (!/^https?:/i.test(src)) return false;
-  if (ICON_HINT.test(src)) return false;
-  if (TINY_DIM_HINT.test(src)) return false;
-  return true;
-}
-
-function extractImageUrls(html: string, baseUrl?: string): string[] {
-  if (!html) return [];
-  const urls: string[] = [];
-
-  // og:image / twitter:image
-  const metaRe =
-    /<meta[^>]+(?:property|name)=["'](?:og:image(?::secure_url)?|twitter:image(?::src)?)["'][^>]+content=["']([^"']+)["']/gi;
-  for (const m of html.matchAll(metaRe)) {
-    const abs = absolutize(m[1], baseUrl);
-    if (abs && isLikelyContentImage(abs)) urls.push(abs);
-  }
-  // <img src=... data-src=... srcset=...>
-  const imgRe = /<img\b[^>]*?>/gi;
-  for (const m of html.matchAll(imgRe)) {
-    const tag = m[0];
-    const srcMatch =
-      /(?:^|\s)src=["']([^"']+)["']/i.exec(tag) ||
-      /(?:^|\s)data-src=["']([^"']+)["']/i.exec(tag);
-    if (srcMatch) {
-      const abs = absolutize(srcMatch[1], baseUrl);
-      if (abs && isLikelyContentImage(abs)) urls.push(abs);
-    }
-    const ssMatch = /(?:^|\s)srcset=["']([^"']+)["']/i.exec(tag);
-    if (ssMatch) {
-      const first = ssMatch[1].split(',')[0]?.trim().split(/\s+/)[0];
-      if (first) {
-        const abs = absolutize(first, baseUrl);
-        if (abs && isLikelyContentImage(abs)) urls.push(abs);
-      }
-    }
-  }
-  // 확장자 강한 후보만 우선
-  const ranked = [...new Set(urls)].sort((a, b) => {
-    const aa = IMG_EXT.test(a) ? 0 : 1;
-    const bb = IMG_EXT.test(b) ? 0 : 1;
-    return aa - bb;
-  });
-  return ranked;
-}
 
 @Injectable()
 export class ChatService {
@@ -420,7 +358,13 @@ export class ChatService {
   // ====== Tavily 키워드 웹 검색 ======
   async searchWeb(
     query: string,
-    opts: { sources?: number; includeImages?: boolean } = {},
+    opts: {
+      sources?: number;
+      includeImages?: boolean;
+      country?: string;
+      topic?: 'general' | 'news' | 'finance';
+      timeRange?: 'day' | 'week' | 'month' | 'year';
+    } = {},
   ): Promise<{ results: SearchResult[]; images: SearchImage[] }> {
     const tavilyKey = await this.getTavilyKey();
     if (!tavilyKey) {
@@ -432,18 +376,23 @@ export class ChatService {
     const timer = setTimeout(() => ctrl.abort(), 20_000);
     let res: globalThis.Response;
     try {
+      // topic='news' 일 때만 country 가 의미 있음. (Tavily 스펙)
+      const body: Record<string, unknown> = {
+        api_key: tavilyKey,
+        query,
+        search_depth: 'advanced',
+        include_images: includeImages,
+        include_image_descriptions: false,
+        max_results: sourceLimit,
+      };
+      if (opts.topic) body.topic = opts.topic;
+      if (opts.country && opts.topic === 'news') body.country = opts.country;
+      if (opts.timeRange) body.time_range = opts.timeRange;
       res = await fetch('https://api.tavily.com/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: ctrl.signal,
-        body: JSON.stringify({
-          api_key: tavilyKey,
-          query,
-          search_depth: 'advanced',
-          include_images: includeImages,
-          include_image_descriptions: false,
-          max_results: sourceLimit,
-        }),
+        body: JSON.stringify(body),
       });
     } finally {
       clearTimeout(timer);
@@ -481,30 +430,74 @@ export class ChatService {
   }
 
   // 사용자의 자연스러운 메시지(예: "두 인물에 대해 검색해서 알려줘")를
-  // 대화 맥락을 반영한 1~2개의 구체 검색 쿼리로 재작성한다.
-  // 실패 시 빈 배열 반환 — 호출 측에서 raw 메시지로 폴백 가능.
+  // 대화 맥락을 반영한 1~2개의 구체 검색 쿼리 + Tavily 검색 옵션(country/topic/time_range) 으로 재작성한다.
+  // 실패 시 빈 결과 반환 — 호출 측에서 raw 메시지로 폴백 가능.
   async reformulateSearchQueries(
     userMessage: string,
     history: ChatMessage[] = [],
     model?: string,
-  ): Promise<string[]> {
+  ): Promise<{
+    queries: string[];
+    country?: string;
+    topic?: 'general' | 'news' | 'finance';
+    timeRange?: 'day' | 'week' | 'month' | 'year';
+  }> {
     const u = userMessage.trim();
-    if (!u) return [];
+    if (!u) return { queries: [] };
     try {
       const sys: ChatMessage = {
         role: 'system',
         content: [
-          '당신은 사용자의 메시지를 웹 검색에 최적화된 쿼리로 재작성합니다.',
+          '당신은 사용자의 메시지를 웹 검색에 최적화된 쿼리 + Tavily 검색 옵션으로 재작성합니다.',
           '대화 맥락(이전 user/assistant 메시지)에서 대명사·지시어("그", "이 사람", "두 인물", "그 회사" 등)가 가리키는 실제 대상(고유명사·키워드)을 찾아내 쿼리에 포함하세요.',
           '',
-          '규칙:',
-          '- 출력은 반드시 다음 JSON 한 개만: { "queries": ["쿼리1"] } 또는 { "queries": ["쿼리1", "쿼리2"] }',
-          '- 사용자 의도가 둘 이상의 독립 대상(예: 인물 두 명, 제품 두 개)에 대한 정보 요청이면 각각을 개별 쿼리로 분리해 2개 반환.',
-          '- 그 외에는 1개로 충분.',
-          '- 각 쿼리는 60자 이내, 명사 위주의 검색 키워드 (조사·"~에 대해 알려줘" 같은 군더더기 제거).',
-          '- 사용자 메시지가 한국어면 쿼리도 한국어, 외래어/영문 고유명사는 그대로.',
-          '- 맥락에서 대상을 알 수 없으면 사용자 메시지의 핵심 명사만 추려서 작성.',
-          '- JSON 외 텍스트, 코드펜스, 설명 절대 금지.',
+          '출력 형식 (정확히 이 JSON 1개만):',
+          '{ "queries": ["쿼리1"], "topic": "general", "country": null, "timeRange": null }',
+          '',
+          '*** 결정 순서 (반드시 이 순서로 판단) ***',
+          '1) topic 먼저 결정',
+          '2) topic="news" 면 country 도 결정 (한국어 메시지면 명시 없어도 기본 "south korea")',
+          '3) timeRange 결정',
+          '4) queries 작성',
+          '',
+          '필드 규칙:',
+          '* topic ("general" | "news" | "finance"):',
+          '  - "news": 메시지에 "뉴스", "속보", "최근 사건", "오늘 일어난", "보도", "이슈", "시사" 등이 포함되거나 분명히 시의성 있는 사건 정보를 요청. 예: "한국 뉴스 알려줘", "오늘 사건", "트럼프 최근 발언".',
+          '  - "finance": 주식·환율·금융 시장·기업 실적·암호화폐. 예: "삼성전자 주가", "달러 환율", "비트코인 시세".',
+          '  - "general": 그 외 일반 정보·역사·과학·기술·인물 백과 정보 등 (기본값).',
+          '* country (소문자 영문 국가명 또는 null):',
+          '  - topic="news" 일 때만 채움 (그 외 null).',
+          '  - 사용자가 국가를 명시: 그 국가 사용 ("한국" → "south korea", "미국" → "united states", "일본" → "japan", "중국" → "china", "영국" → "united kingdom").',
+          '  - 국가 명시 없음 + 사용자 메시지가 한국어: **기본값 "south korea"** (한국 사용자 관점 우선).',
+          '  - 국가 명시 없음 + 사용자 메시지가 영어: null (전세계 결과).',
+          '* timeRange ("day" | "week" | "month" | "year" | null):',
+          '  - "day": "오늘", "현재", "지금", "방금", "어제" 등 즉시성 강조.',
+          '  - "week": "최근", "이번 주", "요즘" 등.',
+          '  - "month": "이번 달", "최근 한 달".',
+          '  - "year": "올해", "최근 일년".',
+          '  - topic="news" 이지만 시점 명시 없으면 기본 "week" (최근 뉴스가 자연스러움).',
+          '  - 역사적·고정 정보면 null.',
+          '* queries (배열, 1~2개):',
+          '  - 둘 이상의 독립 대상(인물 둘, 제품 둘 등) 이면 개별 쿼리로 분리해 2개. 그 외 1개.',
+          '  - 각 60자 이내, 명사 위주 키워드. 조사·"~에 대해 알려줘" 같은 군더더기 제거.',
+          '  - 한국어 메시지 → 한국어 쿼리. 외래어/영문 고유명사는 원어 그대로.',
+          '  - topic="news" + country="south korea" 면 쿼리에 "한국" 또는 관련 한국어 키워드 자연스럽게 포함.',
+          '  - 맥락에서 대상을 알 수 없으면 메시지의 핵심 명사만 추출.',
+          '',
+          '*** 예시 ***',
+          '입력: "오늘 뉴스 알려줘"',
+          '출력: {"queries":["오늘 한국 주요 뉴스"],"topic":"news","country":"south korea","timeRange":"day"}',
+          '',
+          '입력: "삼성전자 최근 주가"',
+          '출력: {"queries":["삼성전자 주가"],"topic":"finance","country":null,"timeRange":"week"}',
+          '',
+          '입력: "Albert Einstein biography"',
+          '출력: {"queries":["Albert Einstein biography"],"topic":"general","country":null,"timeRange":null}',
+          '',
+          '입력: "미국 대통령 선거 결과"',
+          '출력: {"queries":["미국 대통령 선거 결과"],"topic":"news","country":"united states","timeRange":"week"}',
+          '',
+          'JSON 외 텍스트·코드펜스·설명 절대 금지.',
         ].join('\n'),
       };
 
@@ -543,7 +536,7 @@ export class ChatService {
       });
       if (!res.ok) {
         this.logger.warn(`[reformulate] LLM HTTP ${res.status}`);
-        return [];
+        return { queries: [] };
       }
       const json = (await res.json()) as { message?: { content?: string } };
       const text = json.message?.content?.trim() ?? '';
@@ -553,24 +546,46 @@ export class ChatService {
       const m = text.match(/\{[\s\S]*\}/);
       if (!m) {
         this.logger.warn('[reformulate] no JSON object found in LLM output');
-        return [];
+        return { queries: [] };
       }
-      const parsed = JSON.parse(m[0]) as { queries?: unknown };
+      const parsed = JSON.parse(m[0]) as {
+        queries?: unknown;
+        topic?: unknown;
+        country?: unknown;
+        timeRange?: unknown;
+      };
       const arr = Array.isArray(parsed.queries) ? parsed.queries : [];
       const cleaned = arr
         .filter((q): q is string => typeof q === 'string')
         .map((q) => q.trim())
         .filter((q) => q.length > 0)
         .slice(0, 2);
+      const topic =
+        parsed.topic === 'news' ||
+        parsed.topic === 'finance' ||
+        parsed.topic === 'general'
+          ? (parsed.topic as 'news' | 'finance' | 'general')
+          : undefined;
+      const country =
+        typeof parsed.country === 'string' && parsed.country.trim().length > 0
+          ? parsed.country.trim().toLowerCase()
+          : undefined;
+      const timeRange =
+        parsed.timeRange === 'day' ||
+        parsed.timeRange === 'week' ||
+        parsed.timeRange === 'month' ||
+        parsed.timeRange === 'year'
+          ? (parsed.timeRange as 'day' | 'week' | 'month' | 'year')
+          : undefined;
       this.logger.log(
-        `[reformulate] cleaned queries: ${JSON.stringify(cleaned)}`,
+        `[reformulate] cleaned: queries=${JSON.stringify(cleaned)}, topic=${topic}, country=${country}, timeRange=${timeRange}`,
       );
-      return cleaned;
+      return { queries: cleaned, topic, country, timeRange };
     } catch (e) {
       this.logger.warn(
         `검색 쿼리 재작성 실패: ${e instanceof Error ? e.message : ''}`,
       );
-      return [];
+      return { queries: [] };
     }
   }
 
@@ -594,14 +609,16 @@ export class ChatService {
           '- 새 메시지가 짧아도 [지난 대화]에서 충분히 의미가 명확하면 → needs=false (예: "더 자세히", "다른 거", "1번 알려줘"는 직전 대화의 대상이 분명한 경우)',
           '- 새 메시지가 모호하고 지난 대화로도 분기(종류·예산·지역·시점·대상)가 결정 안 되면 → needs=true',
           '',
+          '**IMPORTANT — Language rule: Write question and options in the SAME language as the user\'s message. If the user wrote in English → English. If Korean → Korean.**',
+          '',
           '응답 형식 — 둘 중 하나의 JSON만 출력:',
           '{ "needs": false }',
           '또는',
-          '{ "needs": true, "question": "한국어 한 문장 재질문", "options": ["답변 후보 1", "답변 후보 2", "답변 후보 3"] }',
+          '{ "needs": true, "question": "한 문장 재질문 (사용자 메시지와 같은 언어)", "options": ["답변 후보 1", "답변 후보 2", "답변 후보 3"] }',
           '',
           'question·options 작성 규칙 (필수):',
           '- 반드시 [지난 대화]에서 다뤄진 주제를 유지·구체화하는 질문이어야 함 (지난 대화와 관련 없는 일반론적 분류 묻지 말 것)',
-          '- 옵션은 사용자가 그대로 보내면 자연스러운 다음 답이 되도록 한국어 짧게(8~20자)',
+          '- 옵션은 사용자가 그대로 보내면 자연스러운 다음 답이 되도록 짧게(8~20자), 사용자 메시지와 같은 언어로',
           '- options는 2~4개',
           '- JSON 외 텍스트·코드 펜스 금지',
         ].join('\n'),
@@ -693,13 +710,15 @@ export class ChatService {
           '  · 좋은 예: "조선 22대 정조의 화성 축조 비용은?", "위 비교표에서 가성비 1위 모델 스펙 더 보기"',
           '  · 나쁜 예: "더 자세히 알려줘", "다른 정보 있어?", "관련 정보는?"',
           '',
+          '**IMPORTANT — Language rule: Write question and options in the SAME language as the user\'s message. If the user wrote in English → English. If Korean → Korean.**',
+          '',
           '응답 형식 — 둘 중 하나의 JSON 만 출력:',
           '{ "needsClarification": false }',
           '또는',
-          '{ "needsClarification": true, "question": "한국어 한 문장(생략 가능)", "options": ["구체 후속 질문 1", "구체 후속 질문 2"] }',
+          '{ "needsClarification": true, "question": "한 문장(생략 가능, 사용자 메시지와 같은 언어)", "options": ["구체 후속 질문 1", "구체 후속 질문 2"] }',
           '',
           '규칙:',
-          '- options 2~3개, 한국어, 10~30자, 그대로 사용자 메시지로 보낼 수 있는 완전한 질문 형태',
+          '- options 2~3개, 10~30자, 사용자 메시지와 같은 언어로, 그대로 사용자 메시지로 보낼 수 있는 완전한 질문 형태',
           '- 같은 답변에 대해 비슷한 옵션을 만들지 말 것 — 서로 다른 각도/주제여야 함',
           '- 확실하지 않으면 무조건 needsClarification=false (잘못된 후속보다 없는 게 낫다)',
           '- JSON 외 텍스트·코드 펜스 금지',
@@ -784,27 +803,25 @@ export class ChatService {
       const sys: ChatMessage = {
         role: 'system',
         content: [
-          '다음 답변을 보고 (1) 한 줄 요약과 (2) 핵심 해시태그 6~12개를 한국어로 만드세요.',
-          '해시태그는 추후 다른 대화/답변과 "연결"하는 용도이므로 가능한 한 잘게 쪼개 핵심 단위마다 별도 태그를 만듭니다.',
+          '다음 답변을 보고 (1) 한 줄 요약과 (2) 본문의 핵심 키워드 해시태그 3~6개를 한국어로 만드세요.',
+          '해시태그는 답변 본문에서 가장 핵심이 되는 단어들만 추출합니다. 양보다 정확성이 중요합니다.',
           '',
-          '쪼개기 가이드:',
-          '- 인물·시대·장소·도메인·개념·기술·이벤트·작품·기관 등을 각각 별도 태그로 분리한다.',
-          '  예) 답변이 "조선시대 정조의 화성 축조"라면',
-          '       ["#조선시대","#정조","#화성","#수원화성","#건축","#한국사"] 처럼 인물·장소·시대·도메인을 모두 분리.',
-          '- 복합어는 의미가 더 작은 단위로 자를 수 있으면 자른다.',
-          '  예) "한국근현대사" → "#한국" + "#근현대사"',
-          '       "OpenAI GPT API" → "#OpenAI" + "#GPT" + "#API"',
-          '- 추상 태그와 구체 태그를 함께 둬도 좋다 (예: "#한국사" + "#조선시대").',
+          '핵심 키워드 선정 가이드:',
+          '- 본문에 실제로 등장하거나 본문의 주제를 가장 잘 대표하는 단어만 선택.',
+          '- 부가적·주변적·일반적 개념은 제외 (예: "#개요","#정보","#설명","#내용" 같은 메타성 단어 금지).',
+          '- 본문에서 한 번 스쳐 지나간 단어보다 답변 전반에서 비중 있게 다뤄진 단어를 우선.',
+          '- 너무 추상적이거나 너무 광범위한 상위 카테고리(예: "#역사","#기술")만 단독으로 쓰지 않는다 — 본문이 그 자체를 정면으로 다룬 경우에만 허용.',
+          '- 복합어는 의미가 통째로 보존되어야 가치 있을 때만 그대로 두고, 의미 손실 없이 분해할 수 있으면 핵심 부분만 남긴다.',
           '- 명사형 단일 토큰. 공백·특수문자·조사·서술어 금지.',
           '- 영어는 카멜케이스 또는 짧게 (예: "#GenerativeAI", "#NextJS").',
-          '- 의미가 완전히 동일한 태그는 중복 제거.',
+          '- 의미가 사실상 동일한 태그는 중복 제거 (대표적인 것 하나만).',
           '',
           '한 줄 요약 가이드:',
           '- 15~40자 사이, 답변의 핵심을 한 문장으로 (마침표 없이도 OK).',
           '',
           '출력 형식:',
           '- JSON 객체만 출력. 추가 설명·코드 펜스·서론·결론 금지.',
-          '- 예: {"summary":"정조의 수원 화성 축조 배경과 의의","hashtags":["#조선시대","#정조","#수원화성","#화성","#건축","#한국사","#실학","#정치"]}',
+          '- 예: {"summary":"정조의 수원 화성 축조 배경과 의의","hashtags":["#정조","#수원화성","#조선시대"]}',
         ].join('\n'),
       };
       const res = await fetch(`${(await this.getAiEndpoint())}/api/chat`, {
@@ -837,7 +854,7 @@ export class ChatService {
         if (seen.has(key)) continue;
         seen.add(key);
         tags.push(tag);
-        if (tags.length >= 12) break;
+        if (tags.length >= 6) break;
       }
       const summary =
         typeof obj.summary === 'string' ? obj.summary.trim().slice(0, 60) : '';
@@ -1040,7 +1057,9 @@ export class ChatService {
       .join('\n\n---\n\n');
 
     const content = [
-      '당신은 웹 검색 결과를 통합·교차검증해 한국어로 자세히 답하는 리서치 어시스턴트입니다.',
+      '**IMPORTANT — Language rule (highest priority): Always reply in the exact same language the user used. If English → English. If Korean → Korean.**',
+      '',
+      '당신은 웹 검색 결과를 통합·교차검증해 자세히 답하는 리서치 어시스턴트입니다.',
       '',
       '** 중요 — 답해야 할 질문은 messages 배열의 가장 마지막 user 메시지입니다. **',
       '이전 turn의 assistant 답변을 그대로 복사·반복·패러프레이즈하지 말 것. 새 질문이 이전과 다르면 별개로 새로 답한다.',
@@ -1077,7 +1096,9 @@ export class ChatService {
       .join('\n\n---\n\n');
 
     const content = [
-      '당신은 사용자가 지정한 웹 페이지(들)의 텍스트 본문과 비전 모델이 분석한 이미지 정보를 통합·교차검증해 한국어로 자세히 답하는 어시스턴트입니다.',
+      '**IMPORTANT — Language rule (highest priority): Always reply in the exact same language the user used. If English → English. If Korean → Korean.**',
+      '',
+      '당신은 사용자가 지정한 웹 페이지(들)의 텍스트 본문과 비전 모델이 분석한 이미지 정보를 통합·교차검증해 자세히 답하는 어시스턴트입니다.',
       '',
       '** 중요 — 답해야 할 질문은 messages 배열의 가장 마지막 user 메시지입니다. **',
       '이전 turn의 assistant 답변을 그대로 복사·반복하거나 패러프레이즈하지 말 것. 현재 질문이 이전 질문과 다르다면, 이전 답변과 별개로 현재 질문에 정확히 새로 답한다.',
@@ -1110,7 +1131,9 @@ export class ChatService {
   private readonly defaultSystemPrompt: ChatMessage = {
     role: 'system',
     content: [
-      '당신은 한국어로 답변하는 친절한 어시스턴트입니다.',
+      '**IMPORTANT — Language rule (highest priority): Always reply in the exact same language the user used in their message. If the user writes in English → reply in English. If in Korean → reply in Korean. If in Japanese → reply in Japanese. Never switch languages unless the user explicitly requests it.**',
+      '',
+      '당신은 친절한 어시스턴트입니다.',
       '',
       '** 중요 — 답해야 할 질문은 messages 배열의 가장 마지막 user 메시지입니다. **',
       '이전 turn의 assistant 답변을 그대로 복사·반복하거나 단순 패러프레이즈하지 말 것. 현재 질문이 이전 질문과 다르면, 별개로 현재 질문에 정확히 새로 답한다.',
@@ -1120,20 +1143,26 @@ export class ChatService {
       '  예) "역대 대통령", "기능 비교", "버전별 변경점", "장단점", "예제 입력→출력" 등',
       '',
       '*** 마크다운 표 작성 규칙 (반드시 준수) ***',
-      '1. 각 행은 반드시 별도의 줄로 작성한다. 절대 한 줄에 여러 행을 이어붙이지 말 것.',
-      '2. 정렬 구분자 행은 정확히 `|---|---|...|` 또는 `| :--- | :--- |` 형태만 사용한다. 그 사이에 한국어/영어 단어("ability", "able" 등)를 절대 끼워넣지 말 것.',
-      '3. 표 시작 전후에 빈 줄을 한 줄씩 둔다.',
-      '4. 올바른 예:',
+      '1. 각 행 끝(닫는 `|`) 다음에는 반드시 줄바꿈(\\n) 문자를 넣고 다음 행을 새 줄에서 시작한다. 절대 한 줄에 헤더·구분자·본문 행을 이어붙이지 말 것.',
+      '2. 정렬 구분자 행은 정확히 `|---|---|...|` 또는 `| :--- | :--- |` / `| :---: | ---: |` 만 허용한다. `:---/`, `---/`, `:--/`, `-/-`, ` :---:/` 처럼 슬래시(`/`) 가 끼면 안 되고, 한국어/영어 단어(예: "ability", "able") 도 절대 끼워넣지 말 것.',
+      '3. 표 시작 전과 끝 뒤에 각각 빈 줄을 한 줄씩 둔다. 표 본문 내부에는 빈 줄을 넣지 않는다.',
+      '4. 모든 행은 정확히 같은 수의 `|` 컬럼 구분자를 가져야 한다 (헤더 N개 → 구분자 N개 → 각 본문 행 N개).',
+      '5. 셀 안에 줄바꿈이 필요하면 `<br>` 을 사용 (실제 줄바꿈 금지). 셀 안의 `|` 는 `\\|` 로 이스케이프.',
+      '6. 올바른 예:',
       '   ',
       '   | 이름 | 설명 |',
       '   | :--- | :--- |',
       '   | A | 설명1 |',
       '   | B | 설명2 |',
       '   ',
-      '5. 잘못된 예 (한 줄에 모두): `| 이름 | 설명 | | :--- | :--- | | A | ... |`  ← 절대 금지',
+      '7. 잘못된 예 1 — 한 줄에 모두: `| 이름 | 설명 | | :--- | :--- | | A | ... |`  ← 절대 금지',
+      '8. 잘못된 예 2 — 슬래시 섞인 구분자: `| :---/ | :---/ |`  ← 절대 금지 (`/` 빼야 함)',
+      '9. 잘못된 예 3 — 컬럼 수 불일치: 헤더 5개인데 구분자 4개  ← 절대 금지',
+      '10. 위 규칙 중 하나라도 자신 없으면 표 대신 글머리표(`-`) 로 항목을 풀어 작성한다. 깨진 표보다 풀어쓴 리스트가 낫다.',
       '',
       '- 항목 수가 6개 이상이거나 속성이 2개 이상이면 표가 글머리표보다 우선.',
       '- 단순 한 줄 답이나 흐름 설명은 표 대신 자연스러운 문장/짧은 글머리표를 쓴다.',
+      '- 순서·단계·우선순위가 의미 있는 항목(절차, 방법론, 권장 순서, 순위, 시간 순)은 `1.`, `2.`, `3.` 형태의 번호 매기기 리스트(마크다운 ordered list)를 적극 활용한다. 순서가 무의미하면 `-` 글머리표 유지.',
       '- 코드/명령은 언어 표기된 ``` 코드 블록 사용.',
       '- 출처 인용 번호 [1], [2] 등은 본문에 그대로 둔다.',
       '- 추측·과장 금지.',
@@ -1185,6 +1214,11 @@ export class ChatService {
       endpoint?: string;
       // 클라이언트가 연결을 끊거나 Stop 버튼을 누르면 abort.
       signal?: AbortSignal;
+      // Settings 의 User Name 값. AuthService 캐시에서 미리 조회해 넘김.
+      // 비어있으면 (null) AI 에 이름 안내 주입 안 함.
+      userName?: string | null;
+      // 대화 모드 — thread 모드에서는 사용자 이름을 AI 에 알리지 않음.
+      kind?: 'chat' | 'thread';
     } = {},
   ): AsyncGenerator<StreamPart> {
     // URL/path 형식의 images 는 base64 로 환원해 Ollama 에 전달.
@@ -1192,6 +1226,7 @@ export class ChatService {
     // 위에서 augmented 를 새 배열로 교체했기 때문에 reference 비교(augmented === messages) 가
     // 항상 false 라 Tavily 검색 분기가 안 탔던 버그 → URL/검색 모드 진입 여부를 별도 플래그로 추적.
     let augmentedByUrl = false;
+    let augmentedBySearch = false;
 
     // 메시지 안의 URL은 자동 감지하여 페이지 내용을 읽고 답변에 활용.
     const lastUserAuto = [...messages].reverse().find((m) => m.role === 'user');
@@ -1413,13 +1448,20 @@ export class ChatService {
 
     // ====== Tavily 키워드 검색 모드 ======
     // URL 없음 + 검색 의도 키워드 감지 + Tavily 키 있을 때만 발동.
+    // 첨부 이미지가 있으면 기본 행동은 비전 분석 → "검색해/찾아봐/search for" 같은 명시적
+    // 요청이 있을 때만 Tavily 가 추가로 발동 (이미지가 단서일 뿐, 일반 의문문에 반응 안 함).
     const tavilyKeyForSearch = await this.getTavilyKey();
+    const shouldRunSearch = lastUserAuto?.content
+      ? lastUserHasImages
+        ? looksLikeExplicitSearchRequest(lastUserAuto.content)
+        : looksLikeSearchIntent(lastUserAuto.content)
+      : false;
     if (
       !augmentedByUrl &&
       autoDirectUrls.length === 0 &&
       tavilyKeyForSearch &&
-      lastUserAuto?.content &&
-      looksLikeSearchIntent(lastUserAuto.content)
+      shouldRunSearch &&
+      lastUserAuto?.content
     ) {
       // 사용자 메시지 그대로 검색하면 대명사·맥락 손실로 엉뚱한 결과가 나옴.
       // LLM 으로 대화 맥락을 반영한 1~2개 쿼리로 재작성. 실패하면 원문으로 폴백.
@@ -1433,12 +1475,17 @@ export class ChatService {
         options.model,
       );
       this.logger.log(
-        `[search] reformulated queries: ${JSON.stringify(reformulated)}`,
+        `[search] reformulated: ${JSON.stringify(reformulated)}`,
       );
       const queries =
-        reformulated.length > 0 ? reformulated : [lastUserAuto.content.trim()];
+        reformulated.queries.length > 0
+          ? reformulated.queries
+          : [lastUserAuto.content.trim()];
+      const inferredTopic = reformulated.topic;
+      const inferredCountry = reformulated.country;
+      const inferredTimeRange = reformulated.timeRange;
       this.logger.log(
-        `[search] final queries to Tavily: ${JSON.stringify(queries)}`,
+        `[search] final to Tavily: queries=${JSON.stringify(queries)}, topic=${inferredTopic}, country=${inferredCountry}, timeRange=${inferredTimeRange}`,
       );
 
       try {
@@ -1459,7 +1506,12 @@ export class ChatService {
         const aggResults: SearchResult[] = [];
         const aggImages: SearchImage[] = [];
         for (const q of queries) {
-          const r = await this.searchWeb(q, { sources: sourcesPerQuery });
+          const r = await this.searchWeb(q, {
+            sources: sourcesPerQuery,
+            topic: inferredTopic,
+            country: inferredCountry,
+            timeRange: inferredTimeRange,
+          });
           for (const row of r.results) {
             if (seenUrls.has(row.url)) continue;
             seenUrls.add(row.url);
@@ -1558,20 +1610,41 @@ export class ChatService {
             ),
             ...messages,
           ];
+          augmentedBySearch = true;
         }
       } catch (e) {
-        const msg = e instanceof Error ? e.message : '검색 실패';
-        this.logger.warn(`Tavily 검색 실패: ${msg}`);
-        yield { type: 'status', text: `검색 실패: ${msg}` };
+        // Tavily 키 만료/한도/네트워크 장애 등 — 검색은 포기하되 일반 응답 흐름은 그대로 진행.
+        const msg = e instanceof Error ? e.message : '알 수 없음';
+        this.logger.warn(`Tavily 검색 실패 (검색 없이 계속 진행): ${msg}`);
+        yield {
+          type: 'status',
+          text: 'Tavily 사용 불가 — 검색 없이 응답합니다',
+        };
       }
     }
 
-    // URL 직접 모드/검색 모드면 system message가 이미 prepend되어 augmented가 변경됨.
-    // 그 외에는 기본 system prompt를 prepend.
+    // URL 직접 모드/검색 모드에서 system message 를 성공적으로 prepend 했는지 플래그로 추적.
+    // (augmented 는 resolveMessageImages 로 항상 새 배열이라 reference 비교 불가)
+    // Tavily 실패 등으로 augmentation 이 안 됐으면 기본 system prompt 를 적용.
     let finalMessages =
-      augmented !== messages
+      augmentedByUrl || augmentedBySearch
         ? augmented
         : [this.defaultSystemPrompt, ...augmented];
+
+    // Chat 모드일 때만 사용자 이름 안내 주입 — Thread 모드에서는 이름을 전혀 알리지 않음.
+    if (options.kind !== 'thread' && options.userName && options.userName.trim().length > 0) {
+      const safeName = options.userName.trim().slice(0, 64);
+      const userInfoPrompt: ChatMessage = {
+        role: 'system',
+        content: [
+          `대화 상대(사용자)의 이름은 "${safeName}" 입니다.`,
+          `- 자연스러운 흐름에서 이름을 한두 번 호명해도 좋습니다 (예: "${safeName} 님, ...").`,
+          '- 매 문장마다 이름을 반복하거나 어색하게 끼워넣지는 마세요.',
+          '- 사용자가 본인을 다른 호칭으로 부르라고 명시하면 그 호칭을 우선합니다.',
+        ].join('\n'),
+      };
+      finalMessages = [userInfoPrompt, ...finalMessages];
+    }
 
     // 사용자가 이미지를 첨부한 경우 비전 인용 규칙을 추가 system 메시지로 주입.
     // 통합 인용 번호: 첨부 이미지가 [1]..[M], 웹 검색결과는 [M+1]..[M+N] 으로 이어짐.

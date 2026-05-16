@@ -12,28 +12,19 @@ import SaveConfirmModal from './SaveConfirmModal';
 import TagCloudPanel from './TagCloudPanel';
 import DashboardPanel from './DashboardPanel';
 import DeleteConfirmModal from './DeleteConfirmModal';
+import DeleteMessagePairConfirmModal from './DeleteMessagePairConfirmModal';
 import Toaster, { type Toast } from './Toaster';
 import {
   ArrowDown,
   ArrowUp,
-  Check,
   ChevronRight,
-  ChevronsUpDown,
-  Cpu,
+  PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import { extractArtifacts, type Artifact } from '@/lib/artifacts';
+import { type Artifact } from '@/lib/artifacts';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 
@@ -123,6 +114,13 @@ export interface Message {
     tokensPerSec: number;
     promptTokens?: number;
   };
+  // 포커 이미지 판넬에서 사용자가 PIN 한 이미지 URL — 다음 방문 시에도 자동 확대 노출.
+  // metadata 로 DB 영속 → 페이지 이탈 후 복귀해도 유지.
+  pinnedImageUrl?: string;
+  // Image Edit 모달에서 사용자가 정한 이미지 순서 — URL 배열. 포커 이미지 판넬은 이 순서대로 노출.
+  // 비어있으면(undefined) 자연 순서(첨부 → readPages → searchImages) 그대로.
+  // metadata.imageOrder 로 DB 영속.
+  imageOrder?: string[];
 }
 
 export interface Conversation {
@@ -137,6 +135,8 @@ export interface Conversation {
   folderId?: string | null;
   // 서버에서 누적된 해시태그 (메시지 메타에서 합집합) — 메시지를 안 가져온 conversation 도 hashtag 는 알 수 있게.
   hashtags?: string[];
+  // 사용자가 우측 패널 Hashtags 에서 배제한 태그 — 그래프/표시에서 제외. 영속(server-side).
+  excludedHashtags?: string[];
   // 페이지네이션 상태
   messagesLoaded?: boolean; // 한 번이라도 메시지를 fetch 했는지
   hasMoreMessages?: boolean; // 더 과거 메시지가 DB에 남아있는지
@@ -275,9 +275,6 @@ export default function ChatRoom() {
   const [mountedArtifact, setMountedArtifact] = useState<Artifact | null>(
     null,
   );
-  const [closedArtifactId, setClosedArtifactId] = useState<string | null>(
-    null,
-  );
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [defaultModel, setDefaultModel] = useState<string | null>(null);
@@ -357,8 +354,20 @@ export default function ChatRoom() {
   const [collapsedTurns, setCollapsedTurns] = useState<Set<string>>(
     () => new Set(),
   );
+  // Message Manager 에서 삭제할 때 부드러운 접힘 모션을 위해 잠시 표시 — 메시지 id 집합.
+  // 실제 제거 직전 isHiddenByCollapse 와 같이 동작.
+  const [deletingMessageIds, setDeletingMessageIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  // 재정렬 직후 새 위치에서 잠시 접혀있다 펼쳐지는(unfold) 모션을 위해 사용.
+  // double-RAF 으로 add → remove 처리해 grid-rows 트랜지션을 트리거.
+  const [unfoldingMessageIds, setUnfoldingMessageIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   useEffect(() => {
     setCollapsedTurns(new Set());
+    setDeletingMessageIds(new Set());
+    setUnfoldingMessageIds(new Set());
   }, [activeId]);
 
   useEffect(() => {
@@ -385,21 +394,6 @@ export default function ChatRoom() {
     };
   }, []);
 
-  // LoginScreen 이 email/password 로그인/가입 성공 후 호출 — /auth/me 재조회로 user state 갱신.
-  // (Google SSO 진입은 LoginScreen 안에서 직접 window.location 으로 처리)
-  const handleLogin = useCallback(async () => {
-    try {
-      const res = await fetch(`${API_URL}/auth/me`, { credentials: 'include' });
-      if (!res.ok) {
-        setUser(null);
-        return;
-      }
-      const json = (await res.json()) as AuthUser;
-      setUser(json);
-    } catch {
-      setUser(null);
-    }
-  }, []);
   const doLogout = useCallback(async () => {
     try {
       await fetch(`${API_URL}/auth/logout`, { credentials: 'include' });
@@ -423,6 +417,11 @@ export default function ChatRoom() {
   const [visibleUserMessageId, setVisibleUserMessageId] = useState<
     string | null
   >(null);
+  // 스크롤로 viewport 상단을 지나친 user 헤딩 정보 — chat 헤더 안에 대제목 밑에 표시.
+  const [headerSubheading, setHeaderSubheading] = useState<{
+    ordinal: number;
+    content: string;
+  } | null>(null);
   // conversationsRef 를 매 렌더에서 동기화 — 비동기 closure 가 stale 닫힘 안 보게.
   useEffect(() => {
     conversationsRef.current = conversations;
@@ -473,6 +472,11 @@ export default function ChatRoom() {
     else doScroll();
   }
 
+  // dataUrl → 원본 source URL 매핑. 포커카드의 Attach 버튼 dim 판단에 사용.
+  const dataUrlToSourceRef = useRef<Map<string, string>>(new Map());
+  const [attachedSourceUrls, setAttachedSourceUrls] = useState<Set<string>>(
+    () => new Set(),
+  );
   async function attachImageFromUrl(url: string) {
     try {
       const res = await fetch(
@@ -493,12 +497,37 @@ export default function ChatRoom() {
           return '';
         }
       })();
+      dataUrlToSourceRef.current.set(json.dataUrl, url);
       inputBarRef.current?.attachImageDataUrls([json.dataUrl], [name]);
     } catch (e) {
       const msg = e instanceof Error ? e.message : '오류';
       alert(`이미지 첨부 실패: ${msg}`);
     }
   }
+  // InputBar 의 현재 dataUrl 목록을 받아 → 살아남은 source URL 집합으로 재계산.
+  // 사용자가 InputBar 에서 × 로 제거하거나 전송 후 빈 목록이 오면 set 도 비워짐.
+  // useCallback — 정체성이 매 렌더마다 변하면 InputBar useEffect 가 무한 재발화하므로 고정.
+  const handleAttachedChange = useCallback((dataUrls: string[]) => {
+    const live = new Set(dataUrls);
+    const m = dataUrlToSourceRef.current;
+    for (const k of [...m.keys()]) {
+      if (!live.has(k)) m.delete(k);
+    }
+    setAttachedSourceUrls((prev) => {
+      // 같은 멤버면 prev 그대로 — 불필요한 재렌더 회피.
+      if (prev.size === m.size) {
+        let same = true;
+        for (const v of m.values()) {
+          if (!prev.has(v)) {
+            same = false;
+            break;
+          }
+        }
+        if (same) return prev;
+      }
+      return new Set(m.values());
+    });
+  }, []);
 
   // AI Endpoint 가 바뀔 때 모델 목록을 재갱신. 실패 시 errorMessage 를 노출 (Settings UI 에서 사용).
   const [aiEndpointError, setAiEndpointError] = useState<string | null>(null);
@@ -868,19 +897,26 @@ export default function ChatRoom() {
       );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const rows = (await res.json()) as ServerMessage[];
-      const msgs: Message[] = rows.map((r) => ({
-        id: r.id,
-        role: r.role,
-        content: r.content,
-        thinking: r.thinking ?? undefined,
-        ...(r.metadata ?? {}),
-        // 서버 row 의 실제 createdAt 을 항상 사용 — metadata 에 들어있던 예전 짧은 형식(time)을 덮어씀.
-        time: formatTime(r.createdAt),
-        // 진행 중 플래그는 DB 에 저장되더라도 새로고침 후엔 무의미 → 항상 false 로 초기화.
-        // 옛날 데이터에 이 플래그가 박혀 "Creating hashtags..." / "..." 가 영구적으로 남는 버그 방지.
-        hashtagsGenerating: false,
-        followupGenerating: false,
-      })) as Message[];
+      const msgs: Message[] = rows.map((r) => {
+        // followup(재질문) 은 ephemeral — 현재 페이지 세션에서만 유효, 영속 안 함.
+        // 옛 데이터에 잔존할 수 있으니 로드 시점에 필터링.
+        const meta = { ...(r.metadata ?? {}) } as Record<string, unknown>;
+        delete meta.followup;
+        delete meta.followupGenerating;
+        return {
+          id: r.id,
+          role: r.role,
+          content: r.content,
+          thinking: r.thinking ?? undefined,
+          ...meta,
+          // 서버 row 의 실제 createdAt 을 항상 사용 — metadata 에 들어있던 예전 짧은 형식(time)을 덮어씀.
+          time: formatTime(r.createdAt),
+          // 진행 중 플래그는 DB 에 저장되더라도 새로고침 후엔 무의미 → 항상 false 로 초기화.
+          // 옛날 데이터에 이 플래그가 박혀 "Creating hashtags..." 가 영구적으로 남는 버그 방지.
+          hashtagsGenerating: false,
+          followupGenerating: false,
+        } as Message;
+      });
       // 받아온 row 수가 페이지 가득이면 과거가 더 있을 가능성 있음.
       return { msgs, hasMore: rows.length >= MSG_PAGE };
     },
@@ -925,6 +961,83 @@ export default function ChatRoom() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId]);
+
+  // 폴링이 필요한 메시지 id — 활성 thread 의 마지막 메시지가 빈 assistant 인 경우만.
+  // 안정적 id 라서 useEffect 가 무한 재실행되지 않음 (다른 conversations 변경엔 반응 X).
+  const pollingPlaceholderMsgId = useMemo(() => {
+    if (!activeId) return null;
+    const conv = conversations.find((c) => c.id === activeId);
+    if (!conv || !conv.messagesLoaded) return null;
+    const last = conv.messages[conv.messages.length - 1];
+    if (!last || last.role !== 'assistant') return null;
+    if (last.content && last.content.length > 0) return null;
+    return last.id;
+  }, [activeId, conversations]);
+
+  // 백엔드에서 백그라운드 처리 중인 assistant 메시지 — 마지막 메시지가 빈 placeholder 면
+  // (예: 사용자가 질문 후 즉시 새로고침) 주기적으로 DB 조회해 응답이 완료됐는지 확인.
+  // pending=true(현재 페이지에서 스트리밍 중) 일 땐 폴링 불필요 — SSE 가 직접 업데이트.
+  useEffect(() => {
+    if (!pollingPlaceholderMsgId || !activeId || pending) return;
+    const targetMsgId = pollingPlaceholderMsgId;
+    const targetConvId = activeId;
+    let cancelled = false;
+    let tries = 0;
+    const MAX_TRIES = 60; // 약 3분 (3초 × 60) — 그 후엔 폴링 중지, 사용자 수동 새로고침 안내.
+    const tick = async () => {
+      if (cancelled) return;
+      tries += 1;
+      if (tries > MAX_TRIES) {
+        cancelled = true;
+        return;
+      }
+      try {
+        const res = await fetch(
+          `${API_URL}/conversations/${targetConvId}/messages?limit=5`,
+          { credentials: 'include' },
+        );
+        if (!res.ok) return;
+        const rows = (await res.json()) as ServerMessage[];
+        const updated = rows.find((r) => r.id === targetMsgId);
+        if (!updated) return;
+        if (!updated.content || updated.content.length === 0) return;
+        // 응답이 도착 — 로컬 state 에 반영하고 폴링 중지.
+        const meta = { ...(updated.metadata ?? {}) } as Record<string, unknown>;
+        delete meta.followup;
+        delete meta.followupGenerating;
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === targetConvId
+              ? {
+                  ...c,
+                  messages: c.messages.map((m) =>
+                    m.id === targetMsgId
+                      ? {
+                          ...m,
+                          content: updated.content,
+                          thinking: updated.thinking ?? m.thinking,
+                          ...meta,
+                          time: formatTime(updated.createdAt),
+                        }
+                      : m,
+                  ),
+                }
+              : c,
+          ),
+        );
+        cancelled = true;
+      } catch {
+        // 다음 주기에서 재시도
+      }
+    };
+    // 즉시 한 번 + 이후 주기적으로.
+    void tick();
+    const interval = window.setInterval(tick, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [pollingPlaceholderMsgId, activeId, pending]);
 
   // 스크롤이 상단 근처(< 200px)에 닿으면 더 과거 메시지를 prepend.
   // 추가 도중에 시각적으로 점프하지 않도록 scrollHeight 차이만큼 scrollTop 보정.
@@ -974,27 +1087,38 @@ export default function ChatRoom() {
   // 스크롤 중일 때 입력창을 잠시 숨기기 위한 플래그. scroll 이벤트가 멈추고
   // ~250ms 가 지나면 false 로 복귀.
   const [isScrolling, setIsScrolling] = useState(false);
+  // stopTimer 를 useEffect 클로저 내부에 두면 streaming 중 loadOlderMessages 정체성 변화로
+  // effect 가 재등록될 때마다 클로저가 새로 만들어져 250ms 타이머가 영원히 못 끝나는 버그.
+  // ref 로 빼서 effect 재실행과 무관하게 살아남음.
+  const scrollStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // loadOlderMessages 의 최신 정체성을 ref 로 추적 — onScroll 클로저에서 호출만 하기 위함.
+  const loadOlderRef = useRef(loadOlderMessages);
+  useEffect(() => {
+    loadOlderRef.current = loadOlderMessages;
+  }, [loadOlderMessages]);
 
   // 메시지 영역 스크롤 감지 — 위로 가면 과거 메시지 fetch + 사용자 스크롤 중 표시.
   // 자동 스크롤(프로그래밍)으로 발생한 이벤트는 입력창을 숨기지 않는다.
+  // deps 를 [] 로 비워 mount 시 1회만 등록 → streaming 중 빈번한 re-render 와 무관.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    let stopTimer: ReturnType<typeof setTimeout> | null = null;
     const onScroll = () => {
-      if (el.scrollTop < 200) void loadOlderMessages();
+      if (el.scrollTop < 200) void loadOlderRef.current();
       // 자동 스크롤 윈도우 안이면 isScrolling 토글 생략.
       if (Date.now() < programmaticScrollRef.current) return;
       setIsScrolling(true);
-      if (stopTimer) clearTimeout(stopTimer);
-      stopTimer = setTimeout(() => setIsScrolling(false), 250);
+      if (scrollStopTimerRef.current) clearTimeout(scrollStopTimerRef.current);
+      scrollStopTimerRef.current = setTimeout(() => {
+        setIsScrolling(false);
+        scrollStopTimerRef.current = null;
+      }, 250);
     };
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => {
       el.removeEventListener('scroll', onScroll);
-      if (stopTimer) clearTimeout(stopTimer);
     };
-  }, [loadOlderMessages]);
+  }, []);
 
   // 백엔드에 conversation 메타가 없으면 만든다 (첫 메시지 전송 직전에 호출).
   const ensureConversationOnServer = useCallback(
@@ -1038,9 +1162,22 @@ export default function ChatRoom() {
         const conv = conversationsRef.current.find((c) => c.id === convId);
         const m = conv?.messages.find((mm) => mm.id === msgId);
         if (!m) return null;
-        const { id: _id, role: _role, content, thinking, ...rest } = m;
+        // followup/followupGenerating 은 ephemeral — DB 에 영속하지 않음.
+        const {
+          id: _id,
+          role: _role,
+          content,
+          thinking,
+          followup: _fp,
+          followupGenerating: _fg,
+          hashtagsGenerating: _hg,
+          ...rest
+        } = m;
         void _id;
         void _role;
+        void _fp;
+        void _fg;
+        void _hg;
         return JSON.stringify({
           content,
           thinking: thinking ?? null,
@@ -1079,8 +1216,8 @@ export default function ChatRoom() {
       if (msgs.length === 0) return true;
       const payload = {
         messages: msgs.map((m) => {
-          // 진행 중 임시 플래그는 DB 에 저장하지 않음.
-          // 그렇지 않으면 새로고침 후 무한히 "Creating hashtags..." / "..." 로 남는 버그.
+          // 진행 중 임시 플래그(_hg/_fg) 및 followup(재질문) 은 ephemeral — DB 저장 제외.
+          // 그렇지 않으면 새로고침 후 무한히 "Creating hashtags..." / "..." 로 남거나 재질문이 부활.
           const {
             id,
             role,
@@ -1088,10 +1225,12 @@ export default function ChatRoom() {
             thinking,
             hashtagsGenerating: _hg,
             followupGenerating: _fg,
+            followup: _fp,
             ...rest
           } = m;
           void _hg;
           void _fg;
+          void _fp;
           return {
             id,
             role,
@@ -1207,10 +1346,16 @@ export default function ChatRoom() {
     }
     // 자동 스크롤 시작 — onScroll 핸들러가 isScrolling 을 토글하지 않도록 짧게 표시.
     programmaticScrollRef.current = Date.now() + (jumpInstant ? 50 : 600);
-    // 첫 진입(switched / firstLoadAfterMount) 일 땐 마지막 사용자 발화 위치로 스크롤.
-    // 이후 답변 내용이 그 아래로 펼쳐지므로 사용자가 자기 질문부터 자연스럽게 읽을 수 있음.
-    // 마지막 user 메시지가 없거나 ref 가 아직 마운트되지 않았으면 기존대로 하단 점프 fallback.
+    // 첫 진입(switched / firstLoadAfterMount):
+    //  - Thread: 문서처럼 위에서부터 읽도록 최상단으로 점프.
+    //  - Chat: 마지막 user 발화 위치 → 답변이 아래로 펼쳐지므로 본인 질문부터 자연스럽게 읽힘.
+    //  - 마지막 user 메시지가 없거나 ref 가 아직 마운트되지 않았으면 하단 점프 fallback (chat 한정).
     if (jumpInstant) {
+      const isThread = (active?.kind ?? 'thread') === 'thread';
+      if (isThread) {
+        el.scrollTo({ top: 0, behavior: 'auto' });
+        return;
+      }
       const lastUserId = (() => {
         const msgs = active?.messages ?? [];
         for (let i = msgs.length - 1; i >= 0; i--) {
@@ -1228,13 +1373,17 @@ export default function ChatRoom() {
     }
     el.scrollTo({
       top: el.scrollHeight,
-      behavior: jumpInstant ? 'auto' : 'smooth',
+      // forceFollow(=send 직후) 도 instant — smooth 애니메이션 도중 streaming chunk 가 도착해
+      // 다음 effect 가 거리 가드에 막혀 스크롤이 멈추는 경쟁 상태 회피.
+      behavior: jumpInstant || forceFollow ? 'auto' : 'smooth',
     });
     // pending 도 의존 — 스트리밍 종료 후 마지막 렌더에서도 한번 더 따라 내려가도록.
   }, [active?.id, active?.messages, pending]);
 
   // 스크롤에 따른 "현재 보이는 user 메시지" 추적 — Message Navigator 의 하이라이트 항목과 동기화.
   // viewport 상단(80px 마진) 위에 있고 그 중 가장 viewport top 에 가까운 user 메시지를 선택.
+  // 동시에 chat 헤더에 표시할 sub-heading (bottom 이 viewport top 위로 완전히 올라간 헤딩) 도 같이 갱신.
+  const isThread = (active?.kind ?? 'thread') === 'thread';
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -1246,23 +1395,41 @@ export default function ChatRoom() {
       const containerTop = el.getBoundingClientRect().top;
       let bestId: string | null = null;
       let bestOffset = -Infinity;
+      // sub-heading 후보: bottom 이 container top 위로 완전히 올라간 헤딩 중 가장 최근.
+      let subId: string | null = null;
+      let subOffset = -Infinity;
       for (const m of userMsgs) {
         const node = messageRefs.current.get(m.id);
         if (!node) continue;
         const r = node.getBoundingClientRect();
         const offset = r.top - containerTop;
-        // 메시지 top 이 컨테이너 top 보다 살짝 위(80px) 까지 내려와 있고,
-        // 그 중 가장 컨테이너 top 에 가까운 것 선택. → 사용자가 막 읽고 있는 user 발화.
         if (offset <= 80 && offset > bestOffset) {
           bestOffset = offset;
           bestId = m.id;
         }
+        const bottomOffset = r.bottom - containerTop;
+        if (bottomOffset < 0 && offset > subOffset) {
+          subOffset = offset;
+          subId = m.id;
+        }
       }
-      // 위로 더 올라가서 첫 user 메시지보다 위에 있으면 첫 항목으로 표시.
       if (bestId === null && userMsgs.length > 0) {
         bestId = userMsgs[0].id;
       }
       setVisibleUserMessageId(bestId);
+      // Thread 모드에서만 헤더 sub-heading 노출.
+      if (!isThread || subId === null) {
+        setHeaderSubheading(null);
+      } else {
+        const idx = userMsgs.findIndex((x) => x.id === subId);
+        const m = idx >= 0 ? userMsgs[idx] : null;
+        if (m) {
+          setHeaderSubheading({
+            ordinal: idx + 1,
+            content: m.content,
+          });
+        }
+      }
     };
     const onScroll = () => {
       cancelAnimationFrame(raf);
@@ -1276,47 +1443,127 @@ export default function ChatRoom() {
       el.removeEventListener('scroll', onScroll);
       window.removeEventListener('resize', onScroll);
     };
-  }, [active?.id, active?.messages]);
+  }, [active?.id, active?.messages, isThread]);
 
-  const userQuestions = useMemo(() => {
-    if (!active) return [] as { id: string; content: string }[];
-    return active.messages
-      .filter((m) => m.role === 'user')
-      .map((m) => ({
-        id: m.id,
-        content: (m.content ?? '').replace(/\s+/g, ' ').trim().slice(0, 200),
-      }));
+  // thread 모드에서 user 발화를 소제목(1, 2, 3 ...)으로 노출하기 위한 ordinal 맵.
+  // 현재 thread 의 통합 hashtag — conversation.hashtags 가 단일 출처.
+  // 더 이상 message metadata 에서 모으지 않음.
+  const threadHashtags = useMemo(() => {
+    if (!active || (active.kind ?? 'thread') !== 'thread') return [];
+    return active.hashtags ?? [];
   }, [active]);
 
-  // 비전이 처리 중인 user 메시지 id — 가장 최근 user 메시지가 이미지를 가지고 있고
-  // 그에 해당하는 assistant 응답이 아직 비어 있을 때.
-  const visionInFlightUserId = useMemo<string | null>(() => {
-    if (!active) return null;
-    const msgs = active.messages;
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      const m = msgs[i];
-      if (m.role === 'user') {
-        if (!m.images || m.images.length === 0) return null;
-        const next = msgs[i + 1];
-        // 답변이 아직 안 도착했거나 비어있으면 비전 처리 중으로 본다.
-        if (!next || next.role !== 'assistant' || !next.content?.trim()) {
-          return m.id;
-        }
-        return null;
+  // 우측 Hashtags 섹션의 × 버튼 핸들러 — 해당 태그를 conversation.hashtags 에서 제거 +
+  // excludedHashtags(blacklist) 에 추가해 AI 가 재추가하지 않게. 백엔드 PATCH 로 영속.
+  function toggleExcludedHashtag(tag: string) {
+    if (!activeId) return;
+    const convId = activeId;
+    let nextHashtags: string[] = [];
+    let nextExcluded: string[] = [];
+    setConversations((prev) =>
+      prev.map((c) => {
+        if (c.id !== convId) return c;
+        const curHashtags = c.hashtags ?? [];
+        const curExcluded = c.excludedHashtags ?? [];
+        const key = tag.toLowerCase();
+        nextHashtags = curHashtags.filter((t) => t.toLowerCase() !== key);
+        nextExcluded = curExcluded.some((t) => t.toLowerCase() === key)
+          ? curExcluded
+          : [...curExcluded, tag];
+        return {
+          ...c,
+          hashtags: nextHashtags,
+          excludedHashtags: nextExcluded,
+        };
+      }),
+    );
+    void fetch(`${API_URL}/conversations/${convId}`, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        hashtags: nextHashtags,
+        excludedHashtags: nextExcluded,
+      }),
+    }).catch((e) => {
+      console.error('[exclude hashtag] failed', e);
+    });
+  }
+
+  // 우측 Hashtags 섹션 Edit 모드의 Add 핸들러 — 수동으로 추가한 태그는
+  // excludedHashtags 에서도 제거(un-blacklist)해서 AI 가 다음 응답에서 다시 후보로 고려할 수 있게.
+  function addHashtag(tag: string) {
+    if (!activeId) return;
+    const convId = activeId;
+    const raw = tag.trim();
+    if (!raw) return;
+    let nextHashtags: string[] = [];
+    let nextExcluded: string[] = [];
+    setConversations((prev) =>
+      prev.map((c) => {
+        if (c.id !== convId) return c;
+        const curHashtags = c.hashtags ?? [];
+        const curExcluded = c.excludedHashtags ?? [];
+        const key = raw.toLowerCase();
+        nextHashtags = curHashtags.some((t) => t.toLowerCase() === key)
+          ? curHashtags
+          : [...curHashtags, raw];
+        nextExcluded = curExcluded.filter((t) => t.toLowerCase() !== key);
+        return {
+          ...c,
+          hashtags: nextHashtags,
+          excludedHashtags: nextExcluded,
+        };
+      }),
+    );
+    void fetch(`${API_URL}/conversations/${convId}`, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        hashtags: nextHashtags,
+        excludedHashtags: nextExcluded,
+      }),
+    }).catch((e) => {
+      console.error('[add hashtag] failed', e);
+    });
+  }
+
+  const userOrdinalByMsgId = useMemo(() => {
+    const m = new Map<string, number>();
+    if (!active) return m;
+    let n = 0;
+    for (const msg of active.messages) {
+      if (msg.role === 'user') {
+        n += 1;
+        m.set(msg.id, n);
       }
     }
-    return null;
+    return m;
   }, [active]);
 
-  const latestArtifact = useMemo<Artifact | null>(() => {
-    if (!active) return null;
-    for (let i = active.messages.length - 1; i >= 0; i--) {
-      const msg = active.messages[i];
-      if (msg.role !== 'assistant') continue;
-      const arts = extractArtifacts(msg.content, msg.id);
-      if (arts.length > 0) return arts[arts.length - 1];
+  // Message Navigator 용 — 각 user 메시지 + 그 다음 assistant 메시지를 한 쌍(pair)으로 매핑.
+  // pairAssistantId 는 사용자 질문 바로 뒤에 오는 assistant 응답 id. 없으면 undefined.
+  const userQuestions = useMemo(() => {
+    if (!active) return [] as Array<{
+      id: string;
+      content: string;
+      pairAssistantId?: string;
+    }>;
+    const msgs = active.messages;
+    const out: Array<{ id: string; content: string; pairAssistantId?: string }> = [];
+    for (let i = 0; i < msgs.length; i++) {
+      const m = msgs[i];
+      if (m.role !== 'user') continue;
+      const next = msgs[i + 1];
+      out.push({
+        id: m.id,
+        content: (m.content ?? '').replace(/\s+/g, ' ').trim().slice(0, 200),
+        pairAssistantId:
+          next && next.role === 'assistant' ? next.id : undefined,
+      });
     }
-    return null;
+    return out;
   }, [active]);
 
   // 자동으로 마지막 artifact를 우측 패널에 띄우지 않는다 — 사용자가 인라인
@@ -1324,7 +1571,6 @@ export default function ChatRoom() {
 
   useEffect(() => {
     setActiveArtifact(null);
-    setClosedArtifactId(null);
   }, [activeId]);
 
   useEffect(() => {
@@ -1335,13 +1581,6 @@ export default function ChatRoom() {
     const t = setTimeout(() => setMountedArtifact(null), 320);
     return () => clearTimeout(t);
   }, [activeArtifact]);
-
-  function patchActive(updater: (c: Conversation) => Conversation) {
-    if (!activeId) return;
-    setConversations((prev) =>
-      prev.map((c) => (c.id === activeId ? updater(c) : c)),
-    );
-  }
 
   // References 패널의 이미지 카드에서 사용자 제거. 메시지 metadata 의
   // searchImages 와 readPages[].images 둘 다에서 해당 URL 을 필터링하고 backend 에 PATCH.
@@ -1376,9 +1615,84 @@ export default function ChatRoom() {
     if (!nextMessage) return;
     const m = nextMessage as Message;
     // backend 에 PATCH — content/thinking 은 변경 없음, metadata 만 동기화.
-    const { id: _id, role: _role, content, thinking, ...rest } = m;
+    // followup/followupGenerating/hashtagsGenerating 은 ephemeral.
+    const {
+      id: _id,
+      role: _role,
+      content,
+      thinking,
+      followup: _fp,
+      followupGenerating: _fg,
+      hashtagsGenerating: _hg,
+      ...rest
+    } = m;
     void _id;
     void _role;
+    void _fp;
+    void _fg;
+    void _hg;
+    void patchMessageRaw(
+      activeId,
+      messageId,
+      content,
+      thinking ?? null,
+      rest as Record<string, unknown>,
+    );
+  }
+
+  // Image Edit 모달에서 사용자가 reorder + delete 를 한번에 적용.
+  // orderedUrls: 모달이 최종적으로 정한 URL 순서 (deleted 된 URL 은 빠진 상태).
+  // 동작:
+  //  1) 현재 메시지의 combinedImages 에 있는 URL 중 orderedUrls 에 없는 것은 삭제 대상.
+  //  2) searchImages / readPages[].images 에서 삭제 URL 제거.
+  //  3) imageOrder = orderedUrls 로 저장 → 판넬은 이 순서대로 렌더.
+  function reorderMessageImages(messageId: string, orderedUrls: string[]) {
+    if (!activeId) return;
+    const keep = new Set(orderedUrls);
+    let nextMessage: Message | null = null;
+    setConversations((prev) =>
+      prev.map((c) => {
+        if (c.id !== activeId) return c;
+        return {
+          ...c,
+          messages: c.messages.map((m) => {
+            if (m.id !== messageId) return m;
+            const nextSearch = (m.searchImages ?? []).filter((img) =>
+              keep.has(img.url),
+            );
+            const nextReadPages = (m.readPages ?? []).map((p) => ({
+              ...p,
+              images: (p.images ?? []).filter((i) => keep.has(i.src)),
+            }));
+            const updated: Message = {
+              ...m,
+              searchImages: nextSearch.length > 0 ? nextSearch : undefined,
+              readPages: nextReadPages,
+              imageOrder: orderedUrls.length > 0 ? orderedUrls : undefined,
+            };
+            nextMessage = updated;
+            return updated;
+          }),
+        };
+      }),
+    );
+    if (!nextMessage) return;
+    const m = nextMessage as Message;
+    const {
+      id: _id,
+      role: _role,
+      content,
+      thinking,
+      followup: _fp,
+      followupGenerating: _fg,
+      hashtagsGenerating: _hg,
+      ...rest
+    } = m;
+    void _id;
+    void _role;
+    void _fp;
+    void _fg;
+    void _hg;
     void patchMessageRaw(
       activeId,
       messageId,
@@ -1389,7 +1703,8 @@ export default function ChatRoom() {
   }
 
   function newConversation() {
-    const c = makeConversation(t('bot.greeting'), 'thread');
+    // Thread 는 문서 작성용 → 채팅과 다른 인사말 사용.
+    const c = makeConversation(t('bot.greeting.thread'), 'thread');
     setConversations((prev) => [c, ...prev]);
     setActiveId(c.id);
   }
@@ -1449,10 +1764,170 @@ export default function ChatRoom() {
     });
   }
 
-  // user msg와 그 다음 user msg 직전까지의 assistant 응답을 모두 삭제
-  function deleteTurn(userMsgId: string) {
+  // Message Navigator 삭제 confirm 모달 상태 — { userMsgId, content, hasPairedAnswer }.
+  const [pairDeletePending, setPairDeletePending] = useState<{
+    userMsgId: string;
+    content: string;
+    hasPairedAnswer: boolean;
+  } | null>(null);
+
+  // 포커 이미지 PIN/UNPIN — 메시지 metadata.pinnedImageUrl 갱신 + DB 영속.
+  // null 이면 PIN 해제. 페이지 재방문 시 자동 확대 복원에 사용.
+  function togglePinImage(messageId: string, url: string | null) {
     if (!activeId) return;
-    if (!window.confirm('이 질문과 답변을 모두 삭제할까요?')) return;
+    const convId = activeId;
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.id === convId
+          ? {
+              ...c,
+              messages: c.messages.map((m) =>
+                m.id === messageId
+                  ? { ...m, pinnedImageUrl: url ?? undefined }
+                  : m,
+              ),
+            }
+          : c,
+      ),
+    );
+    // persistMessageMetadata 는 conversationsRef 에서 최신 메시지를 읽는데,
+    // setConversations 직후엔 ref 가 아직 갱신 전 → 다음 tick 으로 미뤄 ref 동기화 후 PATCH.
+    setTimeout(() => void persistMessageMetadata(convId, messageId), 0);
+  }
+
+  // Message Manager 에서 user 메시지 본문 편집 — 로컬 즉시 반영 + 백엔드 PATCH.
+  function editUserMessageContent(userMsgId: string, nextContent: string) {
+    if (!activeId) return;
+    const convId = activeId;
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.id === convId
+          ? {
+              ...c,
+              messages: c.messages.map((m) =>
+                m.id === userMsgId ? { ...m, content: nextContent } : m,
+              ),
+              updatedAt: Date.now(),
+            }
+          : c,
+      ),
+    );
+    void fetch(
+      `${API_URL}/conversations/${convId}/messages/${userMsgId}`,
+      {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: nextContent }),
+      },
+    ).catch((e) => {
+      console.error('[edit message] failed', e);
+    });
+  }
+
+  // 질문 1개 삭제 요청 — 확인 모달 띄움. 확인 시 실제 삭제는 deleteTurn 재사용 (기존 로직).
+  function requestDeletePair(userMsgId: string) {
+    if (!active) return;
+    const idx = active.messages.findIndex((m) => m.id === userMsgId);
+    if (idx < 0) return;
+    const userMsg = active.messages[idx];
+    const next = active.messages[idx + 1];
+    setPairDeletePending({
+      userMsgId,
+      content: (userMsg.content ?? '').trim().slice(0, 400),
+      hasPairedAnswer: !!(next && next.role === 'assistant'),
+    });
+  }
+
+  // Message Navigator 드래그 앤 드롭 — 질문 순서대로 user 메시지 id 배열을 받아
+  // 각 user 뒤에 따라오던 assistant 묶음(turn)을 그대로 같이 옮긴 뒤
+  // 백엔드 PATCH /messages/reorder 로 position 일괄 갱신.
+  function reorderQuestions(orderedUserIds: string[]) {
+    if (!active || !activeId) return;
+    const convId = activeId;
+    const msgs = active.messages;
+    // 첫 user 메시지 이전의 모든 메시지(보통 greeting) 는 그대로 맨 앞에 유지.
+    let firstUserIdx = msgs.findIndex((m) => m.role === 'user');
+    if (firstUserIdx < 0) firstUserIdx = msgs.length;
+    const leading = msgs.slice(0, firstUserIdx);
+    // 각 user 메시지 + 그 뒤 (다음 user 직전까지의) assistant 묶음을 turn 으로 그룹핑.
+    const turnByUserId = new Map<string, typeof msgs>();
+    for (let i = firstUserIdx; i < msgs.length; i++) {
+      if (msgs[i].role !== 'user') continue;
+      let end = msgs.length;
+      for (let j = i + 1; j < msgs.length; j++) {
+        if (msgs[j].role === 'user') {
+          end = j;
+          break;
+        }
+      }
+      turnByUserId.set(msgs[i].id, msgs.slice(i, end));
+    }
+    // 새 순서대로 turn 펼치기. 누락된 user id 가 있으면 안전을 위해 원래 순서를 따라 부족분 보충.
+    const seen = new Set<string>();
+    const nextOrder: typeof msgs = [...leading];
+    for (const uid of orderedUserIds) {
+      const turn = turnByUserId.get(uid);
+      if (!turn || seen.has(uid)) continue;
+      seen.add(uid);
+      nextOrder.push(...turn);
+    }
+    for (const [uid, turn] of turnByUserId) {
+      if (seen.has(uid)) continue;
+      nextOrder.push(...turn);
+    }
+    // 이동된 user 메시지 id 추출 — 이전 user 순서와 새 순서를 비교해 위치가 달라진 것만.
+    const prevUserOrder = msgs.filter((m) => m.role === 'user').map((m) => m.id);
+    const movedUserIds = orderedUserIds.filter(
+      (id, i) => prevUserOrder[i] !== id,
+    );
+    // 이동된 user 의 turn 에 속한 메시지 id 전부 수집 → unfold 애니메이션 대상.
+    const animateIds: string[] = [];
+    for (const uid of movedUserIds) {
+      const turn = turnByUserId.get(uid);
+      if (!turn) continue;
+      for (const m of turn) animateIds.push(m.id);
+    }
+    // 로컬 상태 즉시 반영 (낙관적 업데이트). 동시에 unfolding 마킹으로 새 위치에선 접힌 상태로 첫 paint.
+    setConversations((prev) =>
+      prev.map((c) => (c.id === convId ? { ...c, messages: nextOrder } : c)),
+    );
+    if (animateIds.length > 0) {
+      setUnfoldingMessageIds((prev) => {
+        const next = new Set(prev);
+        for (const id of animateIds) next.add(id);
+        return next;
+      });
+      // double-RAF — 첫 번째에서 접힌 상태가 paint, 두 번째에서 펼침 트랜지션 발화.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setUnfoldingMessageIds((prev) => {
+            const next = new Set(prev);
+            for (const id of animateIds) next.delete(id);
+            return next;
+          });
+        });
+      });
+    }
+    // 백엔드에 reorder 요청 — 실패해도 로컬은 유지되니 콘솔만 남김.
+    const orderedIds = nextOrder.map((m) => m.id);
+    void fetch(
+      `${API_URL}/conversations/${convId}/messages/reorder`,
+      {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderedIds }),
+      },
+    ).catch((e) => {
+      console.error('[reorder] failed', e);
+    });
+  }
+
+  // 실제 메시지 제거 + 백엔드 DELETE — 애니메이션 없음 (즉시 사라짐).
+  // turn 삭제 버튼(MessageBubble 내부) 에서 호출. Message Manager 는 deletePairWithAnimation 사용.
+  function performDeletePair(userMsgId: string) {
+    if (!activeId) return;
     const convId = activeId;
     let removedIds: string[] = [];
     setConversations((prev) =>
@@ -1492,6 +1967,45 @@ export default function ChatRoom() {
         body: JSON.stringify({ ids: removedIds }),
       }).catch(() => {});
     }
+  }
+
+  // Message Manager 에서 호출 — 먼저 deletingMessageIds 에 추가해 접힘 애니메이션이
+  // 재생되고, transition duration(300ms) 후 실제 제거. isHiddenByCollapse 와 같은
+  // grid-template-rows 트랜지션을 재사용.
+  function deletePairConfirmed(userMsgId: string) {
+    if (!activeId) return;
+    const conv = conversationsRef.current.find((c) => c.id === activeId);
+    if (!conv) return;
+    const idx = conv.messages.findIndex((m) => m.id === userMsgId);
+    if (idx < 0) return;
+    let endIdx = conv.messages.length;
+    for (let i = idx + 1; i < conv.messages.length; i++) {
+      if (conv.messages[i].role === 'user') {
+        endIdx = i;
+        break;
+      }
+    }
+    const targetIds = conv.messages.slice(idx, endIdx).map((m) => m.id);
+    // 1) 접힘 모션 트리거.
+    setDeletingMessageIds((prev) => {
+      const next = new Set(prev);
+      for (const id of targetIds) next.add(id);
+      return next;
+    });
+    // 2) 트랜지션이 끝난 뒤 실제 제거 + 잔여 플래그 정리.
+    window.setTimeout(() => {
+      performDeletePair(userMsgId);
+      setDeletingMessageIds((prev) => {
+        const next = new Set(prev);
+        for (const id of targetIds) next.delete(id);
+        return next;
+      });
+    }, 320);
+  }
+
+  // 인-버블 휴지통 버튼도 Message Manager 와 동일하게 전용 confirm 모달 + 접힘 애니메이션 경로 사용.
+  function deleteTurn(userMsgId: string) {
+    requestDeletePair(userMsgId);
   }
 
   function setActiveModel(model: string) {
@@ -1711,9 +2225,17 @@ export default function ChatRoom() {
 
     // (URL 자동 감지 + 비전 분석만 사용 — 별도의 검색 토글/사전 평가 없음)
 
+    // 스트림 시작 전에 conversation 을 서버에 보장 → 백엔드가 user/assistant 메시지를 즉시 DB 에 저장 가능.
+    try {
+      await ensureConversationOnServer(active);
+    } catch (e) {
+      console.warn('[stream] ensure conversation failed', e);
+    }
+
     try {
       const res = await fetch(`${API_URL}/chat/stream`, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         signal: ctrl.signal,
         body: JSON.stringify({
@@ -1722,6 +2244,19 @@ export default function ChatRoom() {
           visionModel: visionModel ?? undefined,
           useVision,
           endpoint: aiEndpoint || undefined,
+          // 백엔드가 스트림 시작 시점에 user 메시지 + assistant placeholder 를 DB 저장하고,
+          // 종료 시 최종 content/thinking 을 업데이트 → 프론트가 disconnect 해도 유실 안 됨.
+          kind: active.kind ?? 'thread',
+          persist: {
+            conversationId: targetConvId,
+            userMessage: {
+              id: userMsg.id,
+              content: userMsg.content,
+              images: storedImages.length ? storedImages : undefined,
+              imageNames: imageNames.length ? imageNames : undefined,
+            },
+            assistantMessageId: botId,
+          },
         }),
       });
 
@@ -1946,6 +2481,20 @@ export default function ChatRoom() {
                 ),
                 updatedAt: Date.now(),
               }));
+            } else if (json.type === 'hashtags' && Array.isArray(json.tags)) {
+              // 백엔드가 답변 직후 생성/병합한 hashtag 를 push — 우측 패널 실시간 갱신.
+              const incoming = (json.tags as unknown[]).filter(
+                (t): t is string => typeof t === 'string',
+              );
+              const targetId =
+                typeof json.conversationId === 'string'
+                  ? json.conversationId
+                  : targetConvId;
+              setConversations((prev) =>
+                prev.map((c) =>
+                  c.id === targetId ? { ...c, hashtags: incoming } : c,
+                ),
+              );
             } else if (json.type === 'metric') {
               patchConv((c) => ({
                 ...c,
@@ -2016,15 +2565,9 @@ export default function ChatRoom() {
           console.error('[persist] background save failed', e);
         }
       })();
-      // Chat 종류는 hashtag/follow-up 등 메타 자동 생성 건너뜀.
+      // Chat 종류는 follow-up 등 메타 자동 생성 건너뜀.
+      // hashtag 생성은 백엔드 /chat/stream 의 finally 에서 Thread 단위로 conversation.hashtags 에 저장.
       if ((active.kind ?? 'thread') === 'thread') {
-        // 응답이 완성된 후 비동기로 해시태그 / 후속 질문 생성 (실패는 무시)
-        void generateHashtagsFor(
-          botId,
-          active.id,
-          accumulatedContent,
-          active.model || defaultModel || undefined,
-        );
         // 후속 질문 생성에 직전 turn 컨텍스트(최근 6개)도 같이 전달.
         // user msg와 bot msg를 제외한 이전 대화를 history 로 보낸다.
         const followupHistory = active.messages
@@ -2040,8 +2583,8 @@ export default function ChatRoom() {
           active.model || defaultModel || undefined,
         );
       }
-      // 완료 알림 — 사용자가 다른 thread/Dashboard 로 갔어도 페이지 어디서든 보임.
-      // 이미 활성 thread를 보고 있으면 noisy 하므로 알림 생략.
+      // 완료 알림 — 사용자가 응답이 도착한 thread 를 직접 보고 있으면 noisy 하므로 생략.
+      // 다른 thread/Dashboard 로 이동한 경우에만 토스트로 알림.
       if (activeIdRef.current !== targetConvId) {
         const finalConv = conversationsRef.current.find(
           (c) => c.id === targetConvId,
@@ -2085,36 +2628,12 @@ export default function ChatRoom() {
       );
     };
 
-    // Step 1: 생성 시작 placeholder.
+    // Step 1: 생성 시작 placeholder (메모리 only — followup 은 영속하지 않음).
     setGenerating(true);
 
     // 30초 타임아웃 — 응답이 안 오거나 hang 되면 abort 해서 stuck 상태 방지.
-    // 타임아웃 시 in-memory 플래그뿐 아니라 DB metadata 에서도 followupGenerating 을 제거.
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 30_000);
-    const clearStuckOnBackend = async () => {
-      const conv = conversationsRef.current.find((c) => c.id === convId);
-      const m = conv?.messages.find((mm) => mm.id === messageId);
-      if (!m) return;
-      const {
-        id: _id,
-        role: _role,
-        content,
-        thinking,
-        followupGenerating: _fg,
-        ...rest
-      } = m;
-      void _id;
-      void _role;
-      void _fg;
-      await patchMessageRaw(
-        convId,
-        messageId,
-        content,
-        thinking ?? null,
-        rest as Record<string, unknown>,
-      );
-    };
 
     try {
       const res = await fetch(`${API_URL}/chat/followups`, {
@@ -2126,7 +2645,6 @@ export default function ChatRoom() {
       });
       if (!res.ok) {
         setGenerating(false);
-        await clearStuckOnBackend();
         return;
       }
       const json = (await res.json()) as {
@@ -2135,40 +2653,10 @@ export default function ChatRoom() {
       };
       if (!Array.isArray(json.options) || json.options.length === 0) {
         setGenerating(false);
-        await clearStuckOnBackend();
         return;
       }
 
-      // Step 2: 화면 노출 전 백엔드에 먼저 저장.
-      const conv = conversationsRef.current.find((c) => c.id === convId);
-      const m = conv?.messages.find((mm) => mm.id === messageId);
-      if (m) {
-        const merged: Message = {
-          ...m,
-          followup: { question: json.question, options: json.options },
-          followupGenerating: undefined,
-        };
-        const {
-          id: _id,
-          role: _role,
-          content,
-          thinking,
-          followupGenerating: _fg,
-          ...rest
-        } = merged;
-        void _id;
-        void _role;
-        void _fg;
-        await patchMessageRaw(
-          convId,
-          messageId,
-          content,
-          thinking ?? null,
-          rest as Record<string, unknown>,
-        );
-      }
-
-      // Step 3: 저장 후 화면에 followup 노출 + 진행 플래그 끔.
+      // Step 2: 메모리에만 followup 반영 — DB 저장 없음 (페이지 떠나면 사라짐).
       setConversations((prev) =>
         prev.map((c) =>
           c.id === convId
@@ -2192,7 +2680,6 @@ export default function ChatRoom() {
       );
     } catch {
       setGenerating(false);
-      await clearStuckOnBackend();
     } finally {
       window.clearTimeout(timeout);
     }
@@ -2227,128 +2714,6 @@ export default function ChatRoom() {
       }
     }
     return false;
-  }
-
-  async function generateHashtagsFor(
-    messageId: string,
-    convId: string,
-    text: string,
-    model?: string,
-  ) {
-    const trimmed = text.trim();
-    if (!trimmed || trimmed.length < 10) return;
-    // Step 1: 생성 시작 표시 — 답변 옆 hashtag 영역에 "Creating hashtags..." 가 보이도록 플래그 on.
-    setConversations((prev) =>
-      prev.map((c) =>
-        c.id === convId
-          ? {
-              ...c,
-              messages: c.messages.map((m) =>
-                m.id === messageId ? { ...m, hashtagsGenerating: true } : m,
-              ),
-            }
-          : c,
-      ),
-    );
-    try {
-      const res = await fetch(`${API_URL}/chat/hashtags`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: trimmed, model }),
-      });
-      if (!res.ok) {
-        clearGenerating();
-        return;
-      }
-      const json = (await res.json()) as {
-        hashtags: string[];
-        summary?: string;
-      };
-      const hasTags =
-        Array.isArray(json.hashtags) && json.hashtags.length > 0;
-      const hasSummary =
-        typeof json.summary === 'string' && json.summary.trim().length > 0;
-      if (!hasTags && !hasSummary) {
-        clearGenerating();
-        return;
-      }
-
-      // Step 2: 화면 갱신 전에 백엔드에 먼저 영속.
-      const conv = conversationsRef.current.find((c) => c.id === convId);
-      const m = conv?.messages.find((mm) => mm.id === messageId);
-      if (m) {
-        const merged: Message = {
-          ...m,
-          ...(hasTags ? { hashtags: json.hashtags } : {}),
-          ...(hasSummary
-            ? { replySummary: json.summary?.trim() }
-            : {}),
-          // 영속 시점에는 진행 플래그가 의미 없으므로 metadata 에 담지 않음.
-          hashtagsGenerating: undefined,
-        };
-        const {
-          id: _id,
-          role: _role,
-          content,
-          thinking,
-          hashtagsGenerating: _hg,
-          ...rest
-        } = merged;
-        void _id;
-        void _role;
-        void _hg;
-        await patchMessageRaw(
-          convId,
-          messageId,
-          content,
-          thinking ?? null,
-          rest as Record<string, unknown>,
-        );
-      }
-
-      // Step 3: 저장 성공 후 화면에 hashtag 노출 + 진행 플래그 끔.
-      setConversations((prev) =>
-        prev.map((c) =>
-          c.id === convId
-            ? {
-                ...c,
-                messages: c.messages.map((m) =>
-                  m.id === messageId
-                    ? {
-                        ...m,
-                        ...(hasTags ? { hashtags: json.hashtags } : {}),
-                        ...(hasSummary
-                          ? { replySummary: json.summary?.trim() }
-                          : {}),
-                        hashtagsGenerating: false,
-                      }
-                    : m,
-                ),
-              }
-            : c,
-        ),
-      );
-    } catch {
-      clearGenerating();
-    }
-
-    function clearGenerating() {
-      setConversations((prev) =>
-        prev.map((c) =>
-          c.id === convId
-            ? {
-                ...c,
-                messages: c.messages.map((m) =>
-                  m.id === messageId
-                    ? { ...m, hashtagsGenerating: false }
-                    : m,
-                ),
-              }
-            : c,
-        ),
-      );
-    }
   }
 
   if (!authChecked) {
@@ -2440,7 +2805,6 @@ export default function ChatRoom() {
             }}
             onToggleFolder={toggleFolder}
             onCollapse={() => setSidebarOpen(false)}
-            subtitle="v0.2.0"
             user={user}
             onLogin={() => {
               window.location.href = `${API_URL}/auth/google`;
@@ -2474,17 +2838,24 @@ export default function ChatRoom() {
         ) : (
         <>
         <header className="flex h-[68px] shrink-0 items-center gap-3 border-b border-border px-4">
-          {!sidebarOpen && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 shrink-0"
-              onClick={() => setSidebarOpen(true)}
-              title={t('sidebar.expand')}
-            >
+          {/* 사이드바 토글 — 항상 표시되며 open/close 상태에 따라 아이콘 바뀜.
+              우측 Summary 토글과 동일한 사이즈(h-9 w-9, icon h-4 w-4) 로 대칭 배치. */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 shrink-0"
+            onClick={() => setSidebarOpen((v) => !v)}
+            title={
+              sidebarOpen ? t('sidebar.collapse') : t('sidebar.expand')
+            }
+            aria-pressed={sidebarOpen}
+          >
+            {sidebarOpen ? (
+              <PanelLeftClose className="h-4 w-4" />
+            ) : (
               <PanelLeftOpen className="h-4 w-4" />
-            </Button>
-          )}
+            )}
+          </Button>
           <div className="min-w-0 flex-1">
             {editingTitle && active ? (
               <input
@@ -2507,13 +2878,13 @@ export default function ChatRoom() {
                     setEditingTitle(false);
                   }
                 }}
-                className="w-full truncate rounded-sm bg-transparent px-1 -mx-1 text-[15px] font-semibold outline-none ring-2 ring-primary/40 focus:ring-primary"
+                className="w-full truncate rounded-sm bg-transparent px-1 -mx-1 text-[17px] font-semibold outline-none ring-2 ring-primary/40 focus:ring-primary"
                 placeholder={t('header.newChat')}
               />
             ) : (
               <div
                 className={cn(
-                  'truncate text-[15px] font-semibold',
+                  'truncate text-[17px] font-semibold',
                   active && 'cursor-text rounded-sm px-1 -mx-1 hover:bg-accent/30',
                 )}
                 onClick={() => {
@@ -2528,41 +2899,18 @@ export default function ChatRoom() {
                 {active?.title || t('header.newChat')}
               </div>
             )}
-            {active && (active.kind ?? 'thread') === 'thread' && (() => {
-              const seen = new Set<string>();
-              const tags: string[] = [];
-              for (const m of active.messages) {
-                if (m.role !== 'assistant' || !m.hashtags) continue;
-                for (const tag of m.hashtags) {
-                  const key = tag.trim();
-                  if (!key || seen.has(key)) continue;
-                  seen.add(key);
-                  tags.push(key);
-                }
-              }
-              if (tags.length === 0) return null;
-              return (
-                <div className="mt-0.5 flex flex-wrap items-center gap-1 overflow-hidden text-[11.5px] text-muted-foreground">
-                  {tags.slice(0, 12).map((tag, i) => (
-                    <span
-                      key={i}
-                      className="shrink-0 rounded-sm border border-primary/30 bg-primary/10 px-1.5 py-[1px] text-[10.5px] font-medium text-primary"
-                      title={tag}
-                    >
-                      {tag}
-                    </span>
-                  ))}
-                  {tags.length > 12 && (
-                    <span
-                      className="shrink-0 text-[10.5px] text-muted-foreground"
-                      title={tags.slice(12).join(' ')}
-                    >
-                      +{tags.length - 12}
-                    </span>
-                  )}
-                </div>
-              );
-            })()}
+            {/* 스크롤로 viewport top 을 지나친 user 헤딩을 대제목 밑에 sub-line 으로 표시.
+                Thread 모드 전용 + 첫 헤딩 이상 스크롤된 경우만 노출.
+                앞에 ↳ 화살표로 하위 뎁스(대제목의 자식) 시각화. */}
+            {headerSubheading && (
+              <div className="mt-0.5 flex items-center gap-1 truncate text-[12.5px] leading-tight text-muted-foreground">
+                <span aria-hidden className="shrink-0 text-primary/70">↳</span>
+                <span className="shrink-0 font-semibold text-primary tabular-nums">
+                  {headerSubheading.ordinal}.
+                </span>
+                <span className="truncate">{headerSubheading.content}</span>
+              </div>
+            )}
           </div>
           {/* 우측 Summary/TagCloud 패널 토글 — 모바일에선 패널 자체가 hidden 이므로 버튼도 숨김. */}
           <Button
@@ -2630,10 +2978,20 @@ export default function ChatRoom() {
             )}
           >
             <div>
-              {(active?.messages ?? []).map((m, idx) => {
+              {(() => {
+                const msgs = active?.messages ?? [];
+                if (msgs.length === 0) return null;
+                // 메시지를 turn 단위(user heading + 그 이후 assistant 들) 로 묶어 각 turn 을 <section> 으로 감쌈.
+                // 효과: sticky user 헤딩의 containing block 이 turn 으로 한정 → 다음 user heading 이 viewport top
+                // 으로 들어오기 시작하면 이전 sticky 가 자연스럽게 위로 밀려 사라짐 (겹침 방지).
+                const renderMessage = (m: Message, idx: number) => {
                 const isCollapsibleUser =
                   m.role === 'user' && turnHasResponse.has(m.id);
-                const isHiddenByCollapse = hiddenIds.has(m.id);
+                // 접힘으로 가려진 메시지 OR 삭제 모션 OR 재정렬 후 unfold 직전(잠깐 접힌) 메시지 — 동일 collapse 트랜지션 사용.
+                const isDeleting = deletingMessageIds.has(m.id);
+                const isUnfolding = unfoldingMessageIds.has(m.id);
+                const isHiddenByCollapse =
+                  hiddenIds.has(m.id) || isDeleting || isUnfolding;
                 const isCollapsedSelf =
                   isCollapsibleUser && collapsedTurns.has(m.id);
                 const responsesCount =
@@ -2673,11 +3031,18 @@ export default function ChatRoom() {
                       <div className="min-h-0">
                         <MessageBubble
                           message={m}
+                          convKind={active?.kind ?? 'thread'}
+                          userOrdinal={userOrdinalByMsgId.get(m.id)}
+                          // greeting = 첫 user 메시지 전의 assistant 인사말 — 편집 탭 등 메타 UI 숨김.
+                          isGreeting={
+                            m.role === 'assistant' &&
+                            msgs.slice(0, idx).every((mm) => mm.role !== 'user')
+                          }
+                          onEditContent={editUserMessageContent}
+                          onPinImage={togglePinImage}
+                          attachedSourceUrls={attachedSourceUrls}
                           onOpenArtifact={(a) => {
                             setActiveArtifact(a);
-                            setClosedArtifactId((c) =>
-                              c === a.id ? null : c,
-                            );
                           }}
                           activeArtifactId={activeArtifact?.id ?? null}
                           onAttachImage={attachImageFromUrl}
@@ -2685,27 +3050,17 @@ export default function ChatRoom() {
                           onFollowup={(text) => {
                             void send(text, [], []);
                           }}
-                          isCollapsibleTurn={isCollapsibleUser}
                           isCollapsed={
                             isCollapsibleUser && collapsedTurns.has(m.id)
-                          }
-                          onToggleCollapse={
-                            isCollapsibleUser
-                              ? () => toggleTurnCollapse(m.id)
-                              : undefined
                           }
                           onRemoveImage={(url) =>
                             removeMessageImage(m.id, url)
                           }
-                          isVisionInFlight={visionInFlightUserId === m.id}
+                          onReorderImages={(orderedUrls) =>
+                            reorderMessageImages(m.id, orderedUrls)
+                          }
                           precedingUserImages={precedingUserImages}
                           precedingUserImageNames={precedingUserImageNames}
-                          onRemovePrecedingUserImage={
-                            precedingUser
-                              ? (url) =>
-                                  removeMessageImage(precedingUser.id, url)
-                              : undefined
-                          }
                           onDeleteTurn={
                             m.role === 'user'
                               ? () => deleteTurn(m.id)
@@ -2727,7 +3082,34 @@ export default function ChatRoom() {
                     )}
                   </div>
                 );
-              })}
+                };
+                // 그룹화: 첫 user 메시지 이전은 leading (greeting 등), 이후엔 각 user 가 새 turn 의 시작.
+                const elements: React.ReactNode[] = [];
+                let firstUser = msgs.findIndex((mm) => mm.role === 'user');
+                if (firstUser === -1) firstUser = msgs.length;
+                for (let i = 0; i < firstUser; i++) {
+                  elements.push(renderMessage(msgs[i], i));
+                }
+                let i = firstUser;
+                while (i < msgs.length) {
+                  const start = i;
+                  i++;
+                  while (i < msgs.length && msgs[i].role !== 'user') i++;
+                  const turnMsgs: Array<{ msg: Message; idx: number }> = [];
+                  for (let j = start; j < i; j++) {
+                    turnMsgs.push({ msg: msgs[j], idx: j });
+                  }
+                  elements.push(
+                    <section
+                      key={`turn-${msgs[start].id}`}
+                      className="relative"
+                    >
+                      {turnMsgs.map(({ msg, idx: j }) => renderMessage(msg, j))}
+                    </section>,
+                  );
+                }
+                return elements;
+              })()}
             </div>
           </div>
         </div>
@@ -2762,10 +3144,8 @@ export default function ChatRoom() {
                 disabled={pending}
                 isStreaming={pending}
                 onStop={stopStreaming}
-                models={models}
-                activeModel={activeModel}
-                onSelectModel={setActiveModel}
                 liveTokRate={liveTokRate}
+                onAttachedChange={handleAttachedChange}
               />
             </div>
           </div>
@@ -2792,7 +3172,6 @@ export default function ChatRoom() {
             <ArtifactPanel
               artifact={mountedArtifact}
               onClose={() => {
-                setClosedArtifactId(activeArtifact?.id ?? mountedArtifact.id);
                 setActiveArtifact(null);
               }}
             />
@@ -2821,6 +3200,9 @@ export default function ChatRoom() {
             questions={userQuestions}
             activeQuestionId={visibleUserMessageId}
             onSelectQuestion={(id) => scrollToMessage(id)}
+            onReorderQuestions={reorderQuestions}
+            onDeleteQuestion={requestDeletePair}
+            onEditQuestion={editUserMessageContent}
             threads={conversations.map((c) => {
               // 1) 서버에서 받은 누적 해시태그 (페이지 새로고침 직후에도 사용 가능)
               // 2) 로컬에 로드된 메시지의 hashtag (방금 사용자가 추가한 최신 데이터 반영)
@@ -2833,18 +3215,32 @@ export default function ChatRoom() {
                 seen.add(k);
                 out.push(t);
               };
+              // hashtags 는 conversation 컬럼 단일 출처 — 사용자가 × 한 태그는 이미 제거됨.
               for (const t of c.hashtags ?? []) push(t);
-              for (const m of c.messages) {
-                for (const t of m.hashtags ?? []) push(t);
-              }
               return { id: c.id, title: c.title, hashtags: out };
             })}
             activeThreadId={activeId}
+            activeKind={active?.kind ?? 'thread'}
             onSelectThread={(id) => setActiveId(id)}
+            threadHashtags={threadHashtags}
+            onExcludeHashtag={toggleExcludedHashtag}
+            onAddHashtag={addHashtag}
           />
         </div>
       </div>
 
+
+      <DeleteMessagePairConfirmModal
+        open={pairDeletePending !== null}
+        questionPreview={pairDeletePending?.content ?? ''}
+        hasPairedAnswer={pairDeletePending?.hasPairedAnswer ?? false}
+        onCancel={() => setPairDeletePending(null)}
+        onConfirm={() => {
+          const target = pairDeletePending;
+          setPairDeletePending(null);
+          if (target) deletePairConfirmed(target.userMsgId);
+        }}
+      />
 
       <SettingsModal
         open={settingsOpen}

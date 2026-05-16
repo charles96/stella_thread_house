@@ -74,6 +74,9 @@
     --bubble-user: 30 64% 65%;
     --bubble-user-foreground: 24 50% 12%;
 
+    /* References ↔ 답변 연결 도트의 투명 halo — 다크에선 흰색 톤. */
+    --ref-connector-halo: 0 0% 100% / 0.18;
+
     --radius: 0.625rem;
   }
 
@@ -116,6 +119,9 @@
     --bubble-bot-foreground: 24 30% 15%;
     --bubble-user: 30 60% 48%;
     --bubble-user-foreground: 0 0% 100%;
+
+    /* white 테마는 기존 golden 톤 유지 — primary at 18%. */
+    --ref-connector-halo: 30 60% 48% / 0.18;
 
     --radius: 0.625rem;
   }

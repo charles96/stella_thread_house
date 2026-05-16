@@ -309,14 +309,15 @@ export default function ThreadGraph({
               const my = (a.y + b.y) / 2;
               return (
                 <g key={i}>
-                  {/* 실제 시각 라인 */}
+                  {/* 실제 시각 라인 — muted-foreground 톤(다크/라이트 양쪽에서 충분히 보임).
+                      이전 --border 는 다크 테마에서 lightness 22% 라 너무 어두워 잘 안 보였음. */}
                   <line
                     x1={a.x}
                     y1={a.y}
                     x2={b.x}
                     y2={b.y}
-                    stroke="hsl(var(--border))"
-                    strokeOpacity={0.7}
+                    stroke="hsl(var(--muted-foreground))"
+                    strokeOpacity={0.6}
                     strokeWidth={w}
                   />
                   {/* 라인 hover 영역 확장 — 두꺼운 투명 hit-area, native title 동일 */}

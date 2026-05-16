@@ -13,7 +13,6 @@ import {
   MessageSquare,
   MessageSquareText,
   MoreHorizontal,
-  PanelLeftClose,
   Pencil,
   Plus,
   Settings as SettingsIcon,
@@ -34,6 +33,7 @@ import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import type { AuthUser, Conversation, Folder } from './ChatRoom';
 import { useEffect, useRef, useState } from 'react';
+import { version } from '../../package.json';
 
 // 사이드바 내 conversation 드래그 식별용 커스텀 MIME. kind 별로 분리해
 // thread 폴더에 chat 을 떨어뜨리는 등 cross-kind 드롭을 원천 차단.
@@ -60,7 +60,6 @@ interface Props {
   onDeleteFolder: (id: string) => void;
   onToggleFolder: (id: string) => void;
   onCollapse: () => void;
-  subtitle?: string;
   user: AuthUser | null;
   onLogin: () => void;
   onLogout: () => void;
@@ -100,7 +99,6 @@ export default function Sidebar({
   onDeleteFolder,
   onToggleFolder,
   onCollapse,
-  subtitle,
   user,
   onLogin,
   onLogout,
@@ -160,18 +158,10 @@ export default function Sidebar({
                 <path d="M8 .2C3.6.2 0 3.8 0 8.2c0 3.5 2.3 6.5 5.5 7.6.4.1.5-.2.5-.4v-1.4c-2.2.5-2.7-1.1-2.7-1.1-.4-.9-.9-1.2-.9-1.2-.7-.5.1-.5.1-.5.8.1 1.2.8 1.2.8.7 1.2 1.9.9 2.4.7.1-.5.3-.9.5-1.1-1.8-.2-3.6-.9-3.6-3.9 0-.9.3-1.6.8-2.1-.1-.2-.4-1 .1-2.2 0 0 .7-.2 2.2.8.6-.2 1.3-.3 2-.3s1.4.1 2 .3c1.5-1 2.2-.8 2.2-.8.4 1.1.2 2 .1 2.2.5.6.8 1.3.8 2.1 0 3-1.8 3.7-3.6 3.9.3.3.5.7.5 1.5v2.2c0 .2.1.5.5.4 3.2-1.1 5.5-4.1 5.5-7.6C16 3.8 12.4.2 8 .2z" />
               </svg>
             </a>
-            <span>v0.2.0</span>
+            <span>v{version}</span>
           </span>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 shrink-0"
-          onClick={onCollapse}
-          title={t('sidebar.collapse')}
-        >
-          <PanelLeftClose className="h-4 w-4" />
-        </Button>
+        {/* 사이드바 접기 버튼은 메인 헤더(chat 제목 좌측)로 이동 — 여기서는 제거. */}
       </div>
 
       {/* 모바일에선 Dashboard 미노출 — 사용자는 thread/chat/settings 만 접근. */}

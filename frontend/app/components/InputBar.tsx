@@ -9,25 +9,9 @@ import {
   KeyboardEvent,
   ChangeEvent,
 } from 'react';
-import {
-  Check,
-  Cpu,
-  Eye,
-  ImagePlus,
-  SendHorizonal,
-  Square,
-  X,
-} from 'lucide-react';
+import { ImagePlus, SendHorizonal, Square, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import {
   Tooltip,
   TooltipContent,
@@ -103,10 +87,9 @@ interface InputBarProps {
   isStreaming?: boolean;
   // Stop 버튼 클릭 시 호출
   onStop?: () => void;
-  models?: Array<{ name: string; family?: string; parameterSize?: string }>;
-  activeModel?: string;
-  onSelectModel?: (name: string) => void;
   liveTokRate?: number | null;
+  // 현재 첨부된 이미지의 dataUrl 배열을 알려줌 — 부모는 dataUrl ↔ source URL 매핑을 통해 추적.
+  onAttachedChange?: (dataUrls: string[]) => void;
 }
 
 const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
@@ -115,10 +98,8 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
     disabled,
     isStreaming = false,
     onStop,
-    models = [],
-    activeModel,
-    onSelectModel,
     liveTokRate,
+    onAttachedChange,
   },
   ref,
 ) {
@@ -134,6 +115,10 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
   useEffect(() => {
     setVisionOn(images.length > 0);
   }, [images.length]);
+  // 첨부 이미지 변화를 부모에 통보 — Attach 버튼 dim 등 외부 동기화용.
+  useEffect(() => {
+    onAttachedChange?.(images);
+  }, [images, onAttachedChange]);
   const fileRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -267,29 +252,6 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
           </TooltipTrigger>
           <TooltipContent side="top">{t('input.attachTooltip')}</TooltipContent>
         </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              onClick={() => setVisionOn((v) => !v)}
-              disabled={disabled || images.length > 0}
-              aria-label={
-                visionOn ? t('input.visionOn') : t('input.vision')
-              }
-              className={cn(
-                'h-10 w-10 shrink-0 rounded-full border border-primary/40 bg-card text-primary shadow-md hover:bg-accent hover:text-primary disabled:opacity-100 disabled:border-border disabled:bg-card disabled:text-muted-foreground/60',
-                visionOn &&
-                  'border-primary bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground disabled:bg-primary disabled:text-primary-foreground',
-              )}
-              aria-pressed={visionOn}
-            >
-              <Eye className="h-4 w-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="top">{t('input.visionTooltip')}</TooltipContent>
-        </Tooltip>
         <input
           ref={fileRef}
           type="file"
@@ -317,87 +279,28 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
           )}
         />
 
-        {onSelectModel && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                className="h-10 w-10 shrink-0 rounded-full border border-primary/40 bg-card shadow-md hover:bg-accent disabled:opacity-100 disabled:border-border disabled:bg-card disabled:[&_svg]:text-muted-foreground/60"
-                disabled={disabled || models.length === 0}
-                title={
-                  activeModel
-                    ? `${t('header.modelSelect')} · ${activeModel}`
-                    : t('header.modelSelect')
-                }
-                aria-label={t('header.modelSelect')}
-              >
-                <Cpu className="h-4 w-4 text-primary" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" side="top" className="w-[300px]">
-              <DropdownMenuLabel>{t('header.modelSelect')}</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              {models.length === 0 && (
-                <div className="px-2 py-3 text-xs text-muted-foreground">
-                  {t('header.noModel')}
-                </div>
-              )}
-              {models.map((m) => {
-                const selected = m.name === activeModel;
-                return (
-                  <DropdownMenuItem
-                    key={m.name}
-                    onSelect={() => onSelectModel(m.name)}
-                    className="flex items-start gap-2"
-                  >
-                    <Check
-                      className={cn(
-                        'mt-0.5 h-3.5 w-3.5',
-                        selected ? 'opacity-100 text-primary' : 'opacity-0',
-                      )}
-                    />
-                    <div className="flex min-w-0 flex-1 flex-col">
-                      <span className="truncate text-[13px] font-medium">
-                        {m.name}
-                      </span>
-                      {(m.parameterSize || m.family) && (
-                        <span className="text-[11px] text-muted-foreground">
-                          {[m.family, m.parameterSize]
-                            .filter(Boolean)
-                            .join(' · ')}
-                        </span>
-                      )}
-                    </div>
-                  </DropdownMenuItem>
-                );
-              })}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
-
-        {/* 스트리밍 중에는 Send 버튼이 Stop으로 토글된다. 같은 자리, 다른 동작/스타일. */}
+        {/* 스트리밍 중에는 Send 버튼이 Stop으로 토글된다. 같은 자리, 다른 동작/스타일.
+            items-end 컨테이너라 h-8 버튼은 h-10 아이콘 버튼 대비 중심선이 4px 낮음 → mb-1 로 보정. */}
         {isStreaming && onStop ? (
           <Button
             type="button"
             variant="destructive"
             onClick={onStop}
             size="icon"
-            className="h-10 w-10 shrink-0 rounded-full"
+            className="mb-1 h-8 w-8 shrink-0 rounded-full"
             title="Stop"
             aria-label="Stop"
           >
-            <Square className="h-3.5 w-3.5 fill-current" />
+            <Square className="h-3 w-3 fill-current" />
           </Button>
         ) : (
           <Button
             type="button"
             onClick={submit}
             disabled={sendDisabled}
-            className="h-10 shrink-0 gap-1.5 rounded-full px-5"
+            className="mb-1 h-8 shrink-0 gap-1 rounded-full px-3 text-[12px]"
           >
-            <SendHorizonal className="h-4 w-4" />
+            <SendHorizonal className="h-3.5 w-3.5" />
             {t('input.send')}
           </Button>
         )}

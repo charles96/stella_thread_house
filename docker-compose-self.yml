@@ -7,8 +7,6 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-stella}
       POSTGRES_USER: ${POSTGRES_USER:-stella}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-stella_dev_pass}
-    ports:
-      - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/18/docker
     networks:
@@ -20,17 +18,8 @@ services:
       retries: 20
       start_period: 10s
 
-  # backend(NestJS :4100) + frontend(Next.js :3100) 을 하나의 이미지에 통합.
-  # 컨테이너 안에서 concurrently 가 두 프로세스를 동시에 실행 (Dockerfile 참고).
-  # 단독 개발용 Dockerfile 은 backend/Dockerfile, frontend/Dockerfile 에 그대로 남아있음.
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      platforms:
-        - linux/amd64
-        - linux/arm64
-    image: stella-th-app
+    image: registry.webnori.com/stella-th:1.0.0
     container_name: stella-th-app
     restart: unless-stopped
     ports:
@@ -44,21 +33,12 @@ services:
       TH_ADMIN_EMAIL_ID: ${TH_ADMIN_EMAIL_ID}
       TH_ADMIN_PASSWORD: ${TH_ADMIN_PASSWORD:-changeme1234}
       DATABASE_URL: postgres://${POSTGRES_USER:-stella}:${POSTGRES_PASSWORD:-stella_dev_pass}@postgres:5432/${POSTGRES_DB:-stella}
-      # OLLAMA_URL — 부팅 시 system_config 의 'ai' row 가 비어있으면 이 값으로 시드.
-      # 이후엔 Settings > AI 에서 admin 이 변경한 DB 값이 우선.
       OLLAMA_URL: ${OLLAMA_URL}
-      # TAVILY_API_KEY — 부팅 시 'tavily' row 가 비어있으면 이 값으로 시드.
-      # 이후 Settings > AI > Tools 에서 admin 이 변경한 DB 값이 우선.
-      # (root .env 또는 shell env 에서 ${TAVILY_API_KEY} 주입.
-      #  backend/.env 에도 같은 키가 있으면 environment 가 우선이라 root 값이 이김.)
       TAVILY_API_KEY: ${TAVILY_API_KEY}
       UPLOAD_DIR: /app/backend/uploads
-      # 서버 로그 출력 디렉토리 — SystemLogger 가 server-YYYY-MM-DD.log 형식으로 일자별 회전.
       LOG_DIR: /app/backend/logs
     volumes:
-      # 첨부 이미지 영구 저장 — 재빌드/재기동에도 유지.
       - attachments-data:/app/backend/uploads
-      # 서버 로그 영속 — 컨테이너 재기동/재빌드해도 과거 로그 유지.
       - logs-data:/app/backend/logs
     depends_on:
       postgres:
@@ -66,10 +46,6 @@ services:
     networks:
       - stella-net
     healthcheck:
-      # backend(/chat/models) + frontend(/) 둘 다 살아있어야 healthy.
-      # 127.0.0.1 명시 — alpine wget 은 localhost 를 ::1(IPv6) 로 먼저 시도하는데
-      # Next.js standalone 은 0.0.0.0(IPv4) 에만 리스닝하므로 IPv6 시도가 실패함.
-      # /auth/setup-status — DB 조회만 — 외부 Ollama 연결성에 의존하지 않음.
       test: ["CMD-SHELL", "(wget -q --spider http://127.0.0.1:4100/auth/setup-status && wget -q --spider http://127.0.0.1:3100/) || exit 1"]
       interval: 10s
       timeout: 5s

@@ -1,6 +1,13 @@
 'use client';
 
-import { Children, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Children,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import type { ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -18,8 +25,11 @@ import {
   Eye,
   ExternalLink,
   Globe,
+  GripVertical,
   ImageIcon,
   ImagePlus,
+  Images,
+  Pencil,
   Pin,
   PinOff,
   Sparkles,
@@ -27,7 +37,6 @@ import {
   X,
 } from 'lucide-react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { Button } from '@/components/ui/button';
 import {
   Tooltip,
   TooltipContent,
@@ -107,6 +116,32 @@ function CopyButton({ text }: { text: string }) {
       )}
     </button>
   );
+}
+
+// 사용자가 Image Edit 모달에서 정한 imageOrder(URL 배열) 기준으로 이미지 배열을 정렬.
+// order 에 등장하는 URL 은 그 순서대로 앞에 배치, 나머지(새로 추가된 것 등)는 자연 순서로 뒤에.
+function applyImageOrder(
+  images: SearchImage[],
+  order: string[] | undefined,
+): SearchImage[] {
+  if (!order || order.length === 0) return images;
+  const byUrl = new Map<string, SearchImage>();
+  for (const img of images) byUrl.set(img.url, img);
+  const ordered: SearchImage[] = [];
+  for (const url of order) {
+    const img = byUrl.get(url);
+    if (img) {
+      ordered.push(img);
+      byUrl.delete(url);
+    }
+  }
+  for (const img of images) {
+    if (byUrl.has(img.url)) {
+      ordered.push(img);
+      byUrl.delete(img.url);
+    }
+  }
+  return ordered;
 }
 
 function imageDedupKey(u: string): string {
@@ -460,11 +495,6 @@ function ReadPageRow({ page: p, index }: { page: RefItem; index: number }) {
           Tavily
         </span>
       )}
-      {extracted && okFlag && (
-        <span className="shrink-0 tabular-nums text-[10.5px] text-muted-foreground">
-          {(p.chars ?? 0).toLocaleString()}자
-        </span>
-      )}
     </li>
   );
 }
@@ -474,17 +504,17 @@ function ImageScatter({
   cardOverlap,
   onCardClick,
   onInvalid,
-  onRemove,
   indexed = false,
   forcePoker = false,
   page: externalPage,
   onPageChange,
+  onTotalPagesChange,
+  hideInlinePagination = false,
 }: {
   images: SearchImage[];
   cardOverlap: number;
   onCardClick: (globalIndex: number) => void;
   onInvalid: (src: string) => void;
-  onRemove?: (url: string) => void;
   // true 면 각 카드 좌상단에 1-based 인덱스 배지 노출 (본문 [N] 인용과 매칭).
   indexed?: boolean;
   // true 면 이미지가 1장이어도 single-image fallback 대신 포커 카드 UI 사용.
@@ -492,6 +522,10 @@ function ImageScatter({
   // 부모에서 page state 를 lift-up 하면 unmount/remount 후에도 페이지 보존.
   page?: number;
   onPageChange?: (next: number) => void;
+  // 부모가 totalPages 를 알아서 외부 컨트롤(< >) 을 렌더할 수 있도록 알림.
+  onTotalPagesChange?: (n: number) => void;
+  // true 면 스캐터 상단의 inline < > 버튼 숨김 (부모가 다른 위치에 렌더하는 경우).
+  hideInlinePagination?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [perPage, setPerPage] = useState(7);
@@ -539,7 +573,107 @@ function ImageScatter({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalPages]);
+  // 부모에 totalPages 변화 알림 — 외부 < > 컨트롤 위해.
+  useEffect(() => {
+    onTotalPagesChange?.(totalPages);
+  }, [totalPages, onTotalPagesChange]);
   const safePage = Math.min(page, totalPages - 1);
+
+  // 결정적 의사 jitter (회전·세로 오프셋) — 슬라이드 애니메이션 effect 에서도 참조하므로 위로 선언.
+  const angles = [-13, -7, -3, 4, -9, 8, 12, -5, 10, 2];
+
+  // 이미지 로드 상태 — loaded set 에 onLoad 발화된 URL 누적.
+  // 아래 슬라이드 애니메이션 effect 가 이 set 의 변화를 감지해 새로 로드된 카드를 등장 애니메이션.
+  const [loaded, setLoaded] = useState<Set<string>>(() => new Set());
+  const markLoaded = (src: string) => {
+    setLoaded((prev) => {
+      if (prev.has(src)) return prev;
+      const next = new Set(prev);
+      next.add(src);
+      return next;
+    });
+    setImageState(src, { loaded: true });
+  };
+
+  // 페이지 이동 시 현재 보이는 카드들이 Reference documents 영역(아래) 에서 위로 슬라이드 + 페이드인.
+  // 첫 렌더는 기존 first-appear animate-in 이 처리하므로 skip.
+  // translateY 는 OUTER wrapper 에만 적용 — INNER 의 rotation 은 별도 transform layer 라
+  // 슬라이드 중에도 각 카드의 회전 각도가 그대로 유지됨.
+  // stagger 패턴: 지그재그 — 짝수 위치(0,2,4…) 가 먼저 한 웨이브, 그 다음 홀수 위치(1,3,5…) 가
+  // 두 번째 웨이브로 솟아옴. 두 웨이브가 교차되며 카드가 좌↔우로 번갈아 튀어나오는 시각 효과.
+  const cardWrapperRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+  const firstPageRunRef = useRef(true);
+
+  // 공통 슬라이드 애니메이션 — 카드의 회전 각도 방향대로 아래에서 자기 자리로 진입.
+  // 페이지 이동, 이미지 로드 완료 두 케이스에서 재사용.
+  // 시작 전에 기존 애니메이션을 cancel → 빠른 < > 클릭이나 페이지 이동 + 로드 effect 가
+  // 같은 카드에 연속으로 트리거될 때 두 keyframe 이 겹쳐 transform 이 어색하게 보간되는 현상 방지.
+  const animateCardSlide = (idx: number, delay = 0) => {
+    const el = cardWrapperRefs.current.get(idx);
+    if (!el) return;
+    // 기존 진행 중인 애니메이션 취소 (있다면).
+    el.getAnimations().forEach((a) => {
+      try {
+        a.cancel();
+      } catch {
+        // ignore
+      }
+    });
+    const rot = angles[idx % angles.length];
+    const rad = (rot * Math.PI) / 180;
+    const sx = -Math.sin(rad) * 80;
+    const sy = Math.cos(rad) * 80;
+    el.animate(
+      [
+        { transform: `translate(${sx}px, ${sy}px)`, opacity: 0 },
+        { transform: 'translate(0, 0)', opacity: 1 },
+      ],
+      {
+        duration: 380,
+        delay,
+        easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
+        fill: 'backwards',
+      },
+    );
+  };
+
+  // 이미지 로드 완료 감지 — 새로 loaded 에 추가된 URL 의 카드를 tilt-slide-up 으로 등장.
+  const prevLoadedRef = useRef<Set<string>>(new Set());
+  useLayoutEffect(() => {
+    const newlyLoadedIdxs: number[] = [];
+    loaded.forEach((url) => {
+      if (prevLoadedRef.current.has(url)) return;
+      const idx = images.findIndex((im) => im.url === url);
+      if (idx < 0) return;
+      const cardPage = Math.floor(idx / PER_PAGE);
+      if (cardPage !== safePage) return; // 현재 페이지 카드만 애니메이션
+      newlyLoadedIdxs.push(idx);
+    });
+    prevLoadedRef.current = new Set(loaded);
+    newlyLoadedIdxs.forEach((idx) => animateCardSlide(idx));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, images, PER_PAGE, safePage]);
+
+  useLayoutEffect(() => {
+    if (firstPageRunRef.current) {
+      firstPageRunRef.current = false;
+      return;
+    }
+    const visibleIdxs: number[] = [];
+    cardWrapperRefs.current.forEach((_, idx) => {
+      if (Math.floor(idx / PER_PAGE) === safePage) visibleIdxs.push(idx);
+    });
+    visibleIdxs.sort((a, b) => a - b);
+    const STAGGER = 60; // 같은 웨이브 내 카드 간 간격
+    const WAVE_OFFSET = 180; // 홀수 웨이브가 짝수 웨이브 시작 후 지연될 시간
+    visibleIdxs.forEach((idx, pos) => {
+      const wave = pos % 2;
+      const positionInWave = Math.floor(pos / 2);
+      const delay = wave * WAVE_OFFSET + positionInWave * STAGGER;
+      animateCardSlide(idx, delay);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [safePage, PER_PAGE]);
 
   // 이전에 한 번이라도 렌더된 이미지 URL — 등장 애니메이션은 처음 등장에만 적용.
   // 페이지 이동(<, >)으로 다시 보일 때는 애니메이션 없이 즉시 노출.
@@ -572,28 +706,9 @@ function ImageScatter({
     });
     setImageState(src, { orient: kind });
   };
-  const [loaded, setLoaded] = useState<Set<string>>(() => {
-    const set = new Set<string>();
-    for (const [url, s] of hydrateImageStates(images.map((i) => i.url))) {
-      if (s.loaded) set.add(url);
-    }
-    return set;
-  });
-  const markLoaded = (src: string) => {
-    setLoaded((prev) => {
-      if (prev.has(src)) return prev;
-      const next = new Set(prev);
-      next.add(src);
-      return next;
-    });
-    setImageState(src, { loaded: true });
-  };
-
+  // loaded / angles 는 위에서 이미 선언됨 (슬라이드 애니메이션 effect 가 참조).
   const canPrev = safePage > 0;
   const canNext = safePage < totalPages - 1;
-
-  // 결정적 의사 jitter (회전·세로 오프셋)
-  const angles = [-13, -7, -3, 4, -9, 8, 12, -5, 10, 2];
   const yJitter = [0, -6, 4, -2, 6, -8, 1, -4, 5, -3];
 
   // 이미지가 1개일 때는 포커 카드 회전 없이 큰 이미지 한 장으로 표시.
@@ -723,7 +838,7 @@ function ImageScatter({
 
   return (
     <div ref={containerRef} className="mb-2">
-      {totalPages > 1 && (
+      {!hideInlinePagination && totalPages > 1 && (
         <div className="mb-1 flex items-center justify-end gap-1 text-muted-foreground">
           <button
             type="button"
@@ -747,7 +862,10 @@ function ImageScatter({
       )}
 
       <div
-        className="flex flex-nowrap items-end pb-2 pt-8"
+        // min-h 로 카드 행 높이 고정 — 페이지에 따라 가로/세로 카드 mix 가 달라도
+        // Reference documents 등 아래 컨텐츠가 흔들리지 않도록 최대 케이스 높이 미리 확보.
+        // 계산: pt-8(32) + 세로 카드 h-28(112) + 회전/jitter 여유(~20) + pb-2(8) ≈ 172px → 170 으로 라운드.
+        className="flex min-h-[170px] flex-nowrap items-end pb-2 pt-8"
         style={{ overflowY: 'visible' }}
       >
         {/* 페이지 이동 시 off-page 이미지를 DOM 에서 제거하지 않고 hidden 으로만 숨김.
@@ -779,6 +897,11 @@ function ImageScatter({
           return (
             <div
               key={`${img.url || img.linkUrl || globalIndex}`}
+              ref={(el) => {
+                // 페이지 이동 슬라이드 애니메이션을 위해 globalIndex 별로 wrapper ref 관리.
+                if (el) cardWrapperRefs.current.set(globalIndex, el);
+                else cardWrapperRefs.current.delete(globalIndex);
+              }}
               style={{
                 marginLeft: ml,
                 display: onPage ? undefined : 'none',
@@ -790,13 +913,16 @@ function ImageScatter({
                   'animate-in fade-in zoom-in-50 slide-in-from-top-16 duration-500 ease-out',
               )}
             >
-            {/* Transform wrapper — 카드와 × 버튼이 같은 회전·hover 변환을 공유. */}
+            {/* Transform wrapper — 카드와 × 버튼이 같은 회전·hover 변환을 공유.
+                transform-gpu + backface-visibility:hidden — 카드를 GPU 합성 layer 로 promote
+                해서 회전/스케일 변경 시 CPU 재계산 없이 합성기에서 처리. */}
             <div
               style={{
                 transform: `rotate(${rot}deg) translateY(${ty}px)`,
+                backfaceVisibility: 'hidden',
               }}
               className={cn(
-                'group relative origin-bottom transition-transform duration-300 ease-out',
+                'group relative origin-bottom transition-transform duration-300 ease-out transform-gpu',
                 'group-hover/card:z-50 group-hover/card:!translate-y-[-12px] group-hover/card:!rotate-0 group-hover/card:!scale-[1.18]',
               )}
             >
@@ -805,23 +931,13 @@ function ImageScatter({
                 {globalIndex + 1}
               </span>
             )}
+            <Tooltip>
+              <TooltipTrigger asChild>
             <button
               type="button"
               onClick={handleClick}
-              title={[
-                img.kind === 'youtube'
-                  ? `YouTube · ${img.linkUrl ?? ''}`
-                  : img.kind === 'x'
-                    ? `X · ${img.linkUrl ?? ''}`
-                    : (img.sourceTitle ?? '크게 보기'),
-                img.analysis?.description
-                  ? `\n[AI 분석 · ${img.analysis.relevant ? '관련' : '무관'}]\n${img.analysis.description}`
-                  : '',
-              ]
-                .filter(Boolean)
-                .join('')}
               className={cn(
-                'block overflow-hidden rounded-lg bg-secondary/40 shadow-[0_6px_10px_rgba(0,0,0,0.5)] transition-[box-shadow,opacity] duration-300 ease-out group-hover/card:shadow-[0_16px_22px_rgba(0,0,0,0.6)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+                'block overflow-hidden rounded-lg bg-secondary/40 shadow-[0_6px_10px_rgba(0,0,0,0.5)] transition-opacity duration-300 ease-out group-hover/card:shadow-[0_16px_22px_rgba(0,0,0,0.6)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
                 // 비율 기반 카드 dim — YouTube/X 또는 가로형 이미지는 가로 카드(112×88), 세로형은 세로 카드(88×112).
                 img.kind === 'youtube' ||
                   img.kind === 'x' ||
@@ -829,8 +945,6 @@ function ImageScatter({
                   ? 'h-[5.5rem] w-28'
                   : 'h-28 w-[5.5rem]',
                 isLoaded ? 'opacity-100' : 'opacity-0',
-                // 로딩이 완료된 카드만 팝콘 터지듯 살짝 튀는 등장 모션.
-                // 처음 보는 카드(=캐시 hit 아님)일 때만 애니메이션 — 다른 thread 갔다 돌아와도 재실행 X.
                 isLoaded && isFirstAppear && 'animate-card-pop',
                 img.analyzing && 'vision-glow',
               )}
@@ -867,7 +981,7 @@ function ImageScatter({
                     );
                     markLoaded(img.url);
                   }}
-                  className="relative h-full w-full cursor-zoom-in object-fill"
+                  className="relative h-full w-full cursor-zoom-in object-cover"
                 />
               )}
               {img.kind === 'youtube' && (
@@ -901,121 +1015,40 @@ function ImageScatter({
                 </span>
               )}
             </button>
-            {/* × 는 일반 이미지 카드에서만 노출 — YouTube/X 카드는 영상·외부 링크라 "삭제" 의미가 약함.
-                또한 removable === false 로 명시된 카드(예: 사용자 첨부 이미지) 도 제외. */}
-            {onRemove &&
-              !isXEmpty &&
-              img.kind !== 'youtube' &&
-              img.kind !== 'x' &&
-              img.removable !== false && (
-                <button
-                  type="button"
-                  onMouseDown={(e) => {
-                    // 클릭 시 포커스 이동으로 페이지가 스크롤되는 현상 방지.
-                    e.preventDefault();
-                  }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onRemove(img.url);
-                  }}
-                  title="이미지 제거"
-                  aria-label="이미지 제거"
-                  className="absolute right-1 top-1 z-[2] flex h-5 w-5 items-center justify-center rounded-full border border-primary/40 bg-card text-primary shadow-md transition-colors hover:bg-primary hover:text-primary-foreground"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              )}
+              </TooltipTrigger>
+              {(() => {
+                // 풍선 도움말 — alt(sourceTitle) 우선. kind 라벨 / AI 분석 설명도 함께 노출.
+                const lines: string[] = [];
+                const head =
+                  img.kind === 'youtube'
+                    ? `YouTube · ${img.linkUrl ?? ''}`
+                    : img.kind === 'x'
+                      ? `X · ${img.linkUrl ?? ''}`
+                      : img.sourceTitle ?? '';
+                if (head) lines.push(head);
+                if (img.analysis?.description) {
+                  lines.push(
+                    `[AI 분석 · ${img.analysis.relevant ? '관련' : '무관'}]`,
+                  );
+                  lines.push(img.analysis.description);
+                }
+                if (lines.length === 0) return null;
+                return (
+                  <TooltipContent
+                    side="top"
+                    sideOffset={6}
+                    className="max-w-xs whitespace-pre-line break-words"
+                  >
+                    {lines.join('\n')}
+                  </TooltipContent>
+                );
+              })()}
+            </Tooltip>
+            {/* 카드별 × 삭제 버튼 제거 — 삭제는 Content Edit 모달 또는 확대 뷰의 Delete 버튼에서 처리. */}
             </div>
             </div>
           );
         })}
-      </div>
-    </div>
-  );
-}
-
-function ImageGroup({
-  index,
-  group,
-  cardOverlap,
-  onCardClick,
-  onInvalid,
-}: {
-  index: number;
-  group: { sourceUrl: string; sourceTitle?: string; images: SearchImage[] };
-  cardOverlap: number;
-  onCardClick: (img: SearchImage) => void;
-  onInvalid: (src: string) => void;
-}) {
-  const angles = [-9, -5, -2, 2, 5, 9, -7, 4];
-  const hasSource = !!group.sourceUrl;
-  return (
-    <div className="rounded-lg border border-border/60 bg-secondary/20 px-3 pb-4 pt-3">
-      <div className="mb-2 flex items-center gap-2">
-        <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-md bg-primary/15 px-1.5 text-[11px] font-semibold text-primary">
-          {index}
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-[13px] font-medium text-foreground">
-            {group.sourceTitle ?? group.sourceUrl ?? '검색 이미지'}
-          </div>
-          {hasSource && (
-            <a
-              href={group.sourceUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex max-w-full items-center gap-1 truncate text-[11px] text-muted-foreground hover:text-foreground"
-              title={group.sourceUrl}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <ExternalLink className="h-3 w-3 shrink-0" />
-              <span className="truncate">{group.sourceUrl}</span>
-            </a>
-          )}
-        </div>
-        <span className="shrink-0 text-[11px] text-muted-foreground">
-          {group.images.length}장
-        </span>
-      </div>
-      <div
-        className="overflow-x-auto pb-1 pt-6"
-        style={{ overflowY: 'visible' }}
-      >
-        <div className="flex flex-nowrap items-center pl-2">
-          {group.images.map((img, i) => {
-            const rot = angles[i % angles.length];
-            const ml = i === 0 ? 0 : -cardOverlap;
-            return (
-              <button
-                key={`${i}-${img.url}`}
-                type="button"
-                onClick={() => onCardClick(img)}
-                title={img.sourceTitle ?? group.sourceTitle ?? '크게 보기'}
-                style={{
-                  transform: `rotate(${rot}deg)`,
-                  marginLeft: ml,
-                }}
-                className="group relative h-28 w-[5.5rem] shrink-0 origin-bottom overflow-hidden rounded-lg drop-shadow-[0_6px_8px_rgba(0,0,0,0.45)] transition-[transform,filter] duration-200 ease-out hover:z-50 hover:!translate-y-[-10px] hover:!rotate-0 hover:!scale-[1.18] hover:drop-shadow-[0_14px_18px_rgba(0,0,0,0.55)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={img.url}
-                  alt={img.sourceTitle ?? `이미지 ${i + 1}`}
-                  loading="lazy"
-                  referrerPolicy="no-referrer"
-                  onError={() => onInvalid(img.url)}
-                  onLoad={(e) => {
-                    const el = e.currentTarget as HTMLImageElement;
-                    if (el.naturalWidth < 200 || el.naturalHeight < 200) {
-                      onInvalid(img.url);
-                    }
-                  }}
-                  className="h-full w-full cursor-zoom-in object-fill"
-                />
-              </button>
-            );
-          })}
-        </div>
       </div>
     </div>
   );
@@ -1080,10 +1113,12 @@ function ArtifactCard({
 
 const markdownClass = cn(
   'prose-sm max-w-none break-words text-bubble-bot-foreground',
-  '[&_h1]:mt-2 [&_h1]:mb-1 [&_h1]:text-[17px] [&_h1]:font-bold',
-  '[&_h2]:mt-2 [&_h2]:mb-1 [&_h2]:text-base [&_h2]:font-bold',
-  '[&_h3]:mt-2 [&_h3]:mb-1 [&_h3]:text-[15px] [&_h3]:font-bold',
-  '[&_h4]:font-bold [&_h5]:font-bold [&_h6]:font-bold',
+  // 헤딩 레벨별 색 — h4(=기본 폰트색) 에서 시작해 큰 제목일수록 흰색으로 수렴.
+  // 크기도 위계가 한눈에 보이도록 22 / 18 / 16 / 본문(14.5) px 로 차이 확대.
+  '[&_h1]:mt-3 [&_h1]:mb-1.5 [&_h1]:text-[22px] [&_h1]:font-bold [&_h1]:leading-tight [&_h1]:text-white',
+  '[&_h2]:mt-2.5 [&_h2]:mb-1 [&_h2]:text-[18px] [&_h2]:font-bold [&_h2]:leading-snug [&_h2]:text-zinc-50',
+  '[&_h3]:mt-2 [&_h3]:mb-1 [&_h3]:text-[16px] [&_h3]:font-bold [&_h3]:leading-snug [&_h3]:text-zinc-100',
+  '[&_h4]:mt-1.5 [&_h4]:font-bold [&_h4]:text-foreground [&_h5]:font-bold [&_h5]:text-foreground [&_h6]:font-bold [&_h6]:text-foreground',
   '[&_p]:my-1.5',
   '[&_ul]:my-1.5 [&_ul]:list-disc [&_ul]:pl-5',
   '[&_ol]:my-1.5 [&_ol]:list-decimal [&_ol]:pl-5',
@@ -1112,15 +1147,18 @@ export default function MessageBubble({
   onAttachImage,
   isFresh = false,
   onFollowup,
-  isCollapsibleTurn = false,
   isCollapsed = false,
-  onToggleCollapse,
   onDeleteTurn,
   onRemoveImage,
-  isVisionInFlight = false,
+  onReorderImages,
   precedingUserImages,
   precedingUserImageNames,
-  onRemovePrecedingUserImage,
+  convKind = 'thread',
+  userOrdinal,
+  onEditContent,
+  onPinImage,
+  attachedSourceUrls,
+  isGreeting = false,
 }: {
   message: Message;
   onOpenArtifact?: (a: Artifact) => void;
@@ -1128,27 +1166,139 @@ export default function MessageBubble({
   onAttachImage?: (url: string) => void;
   isFresh?: boolean;
   onFollowup?: (text: string) => void;
-  // user msg에 응답이 있어 접기/펼치기가 가능한 turn인지
-  isCollapsibleTurn?: boolean;
-  // 현재 접힘 상태인지
+  // 현재 접힘 상태인지 — turn 삭제 버튼이 접힘 상태에선 강제 노출되도록 사용.
   isCollapsed?: boolean;
-  // 접힘/펼침 토글 (user msg 클릭 시 호출)
-  onToggleCollapse?: () => void;
   // 이 user msg의 turn(질문+답변) 삭제
   onDeleteTurn?: () => void;
   // References 이미지 카드에서 × 버튼으로 제거
   onRemoveImage?: (url: string) => void;
-  // 첨부 이미지가 비전으로 처리 중인지 — true 면 페이드 펄스.
-  isVisionInFlight?: boolean;
+  // Image Edit 모달에서 일괄 reorder + delete 적용. orderedUrls 가 최종 순서이며,
+  // 현재 combinedImages 에 있던 URL 중 빠진 것은 삭제 대상으로 간주.
+  onReorderImages?: (orderedUrls: string[]) => void;
   // assistant 메시지의 경우, 직전 user 메시지에 첨부된 이미지 — References 위에 노출.
   precedingUserImages?: string[];
   // 위 이미지의 원본 파일명 (있는 경우) — References 라벨에서 사용.
   precedingUserImageNames?: string[];
-  // 위 이미지 카드의 × 버튼으로 직전 user 메시지에서 해당 이미지를 제거.
-  onRemovePrecedingUserImage?: (url: string) => void;
+  // 'thread' 면 user 발화를 소제목(번호 + 본문, 좌측 정렬)으로 렌더 — 'chat' 은 기존 버블 유지.
+  convKind?: 'thread' | 'chat';
+  // user 발화 순번(1-based) — 소제목 모드에서 prefix.
+  userOrdinal?: number;
+  // 쓰레드 소제목 인라인 편집 — 호출 측에서 백엔드 PATCH + 로컬 state 갱신.
+  onEditContent?: (id: string, content: string) => void;
+  // 포커 이미지 PIN/UNPIN — 메시지 metadata.pinnedImageUrl 영속.
+  onPinImage?: (messageId: string, url: string | null) => void;
+  // 현재 InputBar 에 첨부된 이미지의 원본 source URL 집합 — Attach 버튼 dim 판단에 사용.
+  attachedSourceUrls?: Set<string>;
+  // 첫 user 메시지 전 leading 인사말(greeting) — View/Edit 탭, follow-up 등 메타 UI 숨김.
+  isGreeting?: boolean;
 }) {
   const { t } = useI18n();
   const isUser = message.role === 'user';
+  // 쓰레드 소제목 인라인 편집 상태 — false 면 read-only.
+  // contenteditable span 으로 구현: inline 흐름을 유지해 ordinal/주변 텍스트가 시각적으로 이동하지 않음.
+  const [headingEditing, setHeadingEditing] = useState(false);
+  const headingEditableRef = useRef<HTMLSpanElement>(null);
+  // 편집 진입 시점에 캡처한 원본 본문 — message.content 가 mid-edit 으로 바뀌어도
+  // useEffect 가 사용자 입력을 덮어쓰지 않도록 별도 보관.
+  const headingInitialRef = useRef<string>('');
+  useEffect(() => {
+    if (!headingEditing) return;
+    const el = headingEditableRef.current;
+    if (!el) return;
+    // 초기값 주입 (uncontrolled — 이후 사용자 입력은 DOM 이 진실).
+    // 의존성은 [headingEditing] 만 — message.content 가 변해도 사용자 입력을 잃지 않음.
+    el.textContent = headingInitialRef.current;
+    el.focus();
+    // 캐럿을 끝으로.
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+  }, [headingEditing]);
+  function startHeadingEdit() {
+    headingInitialRef.current = message.content ?? '';
+    setHeadingEditing(true);
+  }
+  function commitHeadingEdit() {
+    const el = headingEditableRef.current;
+    const next = (el?.textContent ?? '').trim();
+    if (next && next !== (message.content ?? '').trim()) {
+      onEditContent?.(message.id, next);
+    }
+    setHeadingEditing(false);
+  }
+  function cancelHeadingEdit() {
+    setHeadingEditing(false);
+  }
+  // assistant 답변 마크다운 편집 상태 — Preview/Edit 탭으로 토글.
+  // onEditContent 핸들러는 user 메시지의 heading 편집과 동일하게 PATCH /messages/:id 로 영속.
+  const [answerEditing, setAnswerEditing] = useState(false);
+  const [answerDraft, setAnswerDraft] = useState('');
+  const answerEditRef = useRef<HTMLTextAreaElement>(null);
+  const answerBubbleRef = useRef<HTMLDivElement>(null);
+  // Preview↔Edit 토글 시 textarea ↔ markdown 렌더 높이 차이로 버블 BOTTOM 이 움직임 →
+  // 버블 아래 붙어 있는 Edit/Preview 탭(사용자 클릭 위치) 도 같이 이동해서 "화면이 움직임" 처럼 느껴짐.
+  // BOTTOM 위치를 기록해두고 토글 후 useLayoutEffect 에서 동일 BOTTOM 으로 scrollTop 보정 →
+  // 사용자가 클릭한 탭이 그대로 같은 screen Y 에 머무름.
+  const answerToggleScrollRef = useRef<number | null>(null);
+  const captureBubbleTop = () => {
+    answerToggleScrollRef.current =
+      answerBubbleRef.current?.getBoundingClientRect().bottom ?? null;
+  };
+  // useLayoutEffect — 페인트 전에 scrollTop 조정해서 사용자 눈엔 점프가 안 보임.
+  useLayoutEffect(() => {
+    const prevBottom = answerToggleScrollRef.current;
+    if (prevBottom === null || !answerBubbleRef.current) return;
+    const newBottom = answerBubbleRef.current.getBoundingClientRect().bottom;
+    const diff = newBottom - prevBottom;
+    answerToggleScrollRef.current = null;
+    if (Math.abs(diff) < 1) return;
+    // 가장 가까운 scroll container 찾아서 scrollTop 보정. 없으면 window.
+    let el: HTMLElement | null = answerBubbleRef.current.parentElement;
+    while (el) {
+      const style = getComputedStyle(el);
+      if (
+        (style.overflowY === 'auto' || style.overflowY === 'scroll') &&
+        el.scrollHeight > el.clientHeight
+      ) {
+        el.scrollTop += diff;
+        return;
+      }
+      el = el.parentElement;
+    }
+    window.scrollBy({ top: diff });
+  }, [answerEditing]);
+  // 편집 진입 시 focus — autoFocus 는 브라우저가 자동 scrollIntoView 를 트리거해서
+  // 화면이 위로 점프함. focus({ preventScroll: true }) 로 화면 위치 유지.
+  useEffect(() => {
+    if (!answerEditing) return;
+    const el = answerEditRef.current;
+    if (!el) return;
+    el.focus({ preventScroll: true });
+    // 캐럿을 끝으로.
+    const len = el.value.length;
+    el.setSelectionRange(len, len);
+  }, [answerEditing]);
+  function startAnswerEdit() {
+    captureBubbleTop();
+    setAnswerDraft(message.content ?? '');
+    setAnswerEditing(true);
+  }
+  function commitAnswerEdit() {
+    captureBubbleTop();
+    const next = answerDraft;
+    if (next.trim() !== (message.content ?? '').trim()) {
+      onEditContent?.(message.id, next);
+    }
+    setAnswerEditing(false);
+  }
+  function cancelAnswerEdit() {
+    captureBubbleTop();
+    setAnswerEditing(false);
+    setAnswerDraft('');
+  }
   const [override, setOverride] = useState<boolean | null>(null);
   const [contentEverArrived, setContentEverArrived] = useState(
     !isUser && !!message.content,
@@ -1317,10 +1467,6 @@ export default function MessageBubble({
     return arr;
   }, [imageGroups]);
 
-  function indexOfImage(img: SearchImage): number {
-    return flatOrder.findIndex((x) => x.url === img.url);
-  }
-
   const galleryImages = useMemo<SearchImage[]>(() => {
     if (isUser) {
       return (message.images ?? []).map((u) => ({ url: u }));
@@ -1328,7 +1474,6 @@ export default function MessageBubble({
     return flatOrder;
   }, [isUser, message.images, flatOrder]);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
-  const openLightbox = (i: number) => setLightboxIndex(i);
   const closeLightbox = () => setLightboxIndex(null);
 
   const readPageImagesFlat = useMemo<SearchImage[]>(() => {
@@ -1378,9 +1523,77 @@ export default function MessageBubble({
     }
     return out;
   }, [isUser, message.readPages, message.searchImages, invalidSrcs]);
+
+  // Content Edit 모달이 사용하는 통합 항목 리스트 (첨부 + readPages 이미지 + searchImages + X-empty 카드).
+  // 포커이미지판넬에 노출되는 모든 콘텐츠를 빠짐없이 모달에 표시하기 위해 readPageImagesFlat 의
+  // X-empty(이미지 URL 없는 트윗) 도 별도 패스로 포함.
+  // message.imageOrder 가 있으면 그 순서대로 정렬, 없으면 자연 순서.
+  const combinedImagesForEdit = useMemo<SearchImage[]>(() => {
+    const attached: SearchImage[] = (precedingUserImages ?? []).map((src) => ({
+      url: src,
+      removable: false,
+    }));
+    // readPageImagesFlat 가 이미 제외한 X-empty(linkUrl 만 있는) 항목도 회수.
+    const seenForExtra = new Set<string>();
+    for (const im of readPageImagesFlat) {
+      if (im.linkUrl) seenForExtra.add(`${im.kind ?? 'image'}:${im.linkUrl}`);
+      if (im.url) seenForExtra.add(`u:${im.url}`);
+    }
+    const extras: SearchImage[] = [];
+    for (const p of message.readPages ?? []) {
+      for (const im of p.images ?? []) {
+        if (!(im.kind === 'x' && !im.src)) continue;
+        const key = im.linkUrl
+          ? `${im.kind}:${im.linkUrl}`
+          : `u:${im.src}`;
+        if (seenForExtra.has(key)) continue;
+        seenForExtra.add(key);
+        extras.push({
+          url: im.linkUrl ?? '', // X-empty 는 linkUrl 을 키로 사용.
+          sourceUrl: im.linkUrl ?? p.url,
+          sourceTitle: im.alt || p.title,
+          kind: im.kind,
+          linkUrl: im.linkUrl,
+        });
+      }
+    }
+    const natural = [...attached, ...readPageImagesFlat, ...extras];
+    return applyImageOrder(natural, message.imageOrder);
+  }, [precedingUserImages, readPageImagesFlat, message.readPages, message.imageOrder]);
   const [readPageLightbox, setReadPageLightbox] = useState<number | null>(null);
+  // 사용자가 단일 이미지의 자동 PIN 을 수동으로 해제한 URL 집합 — 시각 PIN 표시만 끄고 이미지는 그대로 노출 유지.
+  // 컴포넌트 unmount 시 리셋 (페이지 새로고침하면 다시 auto-PIN). 영속하지 않음.
+  const [autoPinOverrideUrls, setAutoPinOverrideUrls] = useState<Set<string>>(
+    () => new Set(),
+  );
   // 포커 카드 클릭 시 라이트박스 대신 채팅 화면 안에서 인라인 확대.
   // 값은 combinedImages 의 인덱스 (attached + readPages 합친 순서).
+  // Reference documents 헤더의 Image Edit 토글 — 이미지 일괄 삭제 모달의 진입점.
+  const [imageEditMode, setImageEditMode] = useState(false);
+  // 모달 내 체크 선택 — URL 단위. 삭제 대상.
+  const [imageEditSelection, setImageEditSelection] = useState<Set<string>>(
+    () => new Set(),
+  );
+  // 모달에서 사용자가 임시로 편집 중인 URL 순서. Apply 시점에 onReorderImages 로 commit.
+  // 초기화는 imageEditMode 가 처음 true 가 되는 순간 1회 — 도중에 새 이미지가 도착해도 reset 하지 않음.
+  const [editingOrderUrls, setEditingOrderUrls] = useState<string[]>([]);
+  const [draggingUrl, setDraggingUrl] = useState<string | null>(null);
+  const [dragOverUrl, setDragOverUrl] = useState<string | null>(null);
+  const editingOrderInit = useRef(false);
+  useEffect(() => {
+    if (imageEditMode) {
+      if (!editingOrderInit.current) {
+        setEditingOrderUrls(combinedImagesForEdit.map((i) => i.url));
+        editingOrderInit.current = true;
+      }
+    } else {
+      editingOrderInit.current = false;
+      setImageEditSelection(new Set());
+      setEditingOrderUrls([]);
+      setDraggingUrl(null);
+      setDragOverUrl(null);
+    }
+  }, [imageEditMode, combinedImagesForEdit]);
   const [expandedImageIndex, setExpandedImageIndex] = useState<number | null>(
     null,
   );
@@ -1407,10 +1620,17 @@ export default function MessageBubble({
   // ImageScatter 의 현재 페이지를 부모에서 보존 — 확대 보기/삭제 후 ImageScatter 가
   // unmount→remount 되어도 페이지가 0 으로 리셋되지 않게.
   const [scatterPage, setScatterPage] = useState(0);
+  // ImageScatter 의 totalPages 를 lift-up — Stella 이름 행 우측에 < > 버튼 노출하기 위함.
+  const [scatterTotalPages, setScatterTotalPages] = useState(1);
+  // 사용자가 Close 버튼을 한 번이라도 눌렀는지 — 마운트 lifetime 동안 자동 확대 effect 를 완전 차단.
+  // autoPinOverrideUrls 와 별개의 안전장치: pinnedImageUrl 의 URL 표현이 expanded.url 과
+  // 미세하게 달라서 Set 검사를 못 잡는 케이스를 커버.
+  const userClosedRef = useRef(false);
   // 1장만 있을 때 자동 클릭 트리거 — 같은 url 에 대해선 한번만 발화 (사용자가 닫으면 다시 안 열림).
   const autoExpandedKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (isUser) return;
+    if (userClosedRef.current) return;
     const attached = (precedingUserImages ?? []).length;
     const total = attached + readPageImagesFlat.length;
     if (total === 1 && expandedImageIndex === null) {
@@ -1423,6 +1643,10 @@ export default function MessageBubble({
         setExpandedImageIndex(0);
       }
     } else if (total !== 1) {
+      // 이미지가 복수로 늘어났을 때 자동 확대된 상태라면 포커 스캐터로 복귀.
+      if (autoExpandedKeyRef.current !== null && expandedImageIndex !== null) {
+        setExpandedImageIndex(null);
+      }
       autoExpandedKeyRef.current = null;
     }
   }, [
@@ -1430,6 +1654,28 @@ export default function MessageBubble({
     precedingUserImages,
     readPageImagesFlat,
     expandedImageIndex,
+  ]);
+  // 메시지 metadata 에 저장된 pinnedImageUrl 을 마운트 시 (또는 갱신 시) 복원.
+  // 인덱스는 반드시 화면에 실제 노출되는 `combinedImagesForEdit` 순서 (imageOrder 적용됨) 기준.
+  // 자연 순서 (attached + readPages) 로 indexOf 하면 imageOrder 가 설정된 메시지에서
+  // 다른 이미지가 expanded 돼서 "PIN 이 안 된 것처럼 보이는" 버그가 발생한다.
+  // 사용자가 명시적으로 UNPIN 한 URL(autoPinOverrideUrls) 은 복원 대상에서 제외.
+  const pinnedImageUrl = message.pinnedImageUrl;
+  useEffect(() => {
+    if (isUser || !pinnedImageUrl) return;
+    if (autoPinOverrideUrls.has(pinnedImageUrl)) return;
+    const idx = combinedImagesForEdit.findIndex(
+      (im) => im.url === pinnedImageUrl,
+    );
+    if (idx >= 0 && expandedImageIndex !== idx) {
+      setExpandedImageIndex(idx);
+    }
+  }, [
+    isUser,
+    pinnedImageUrl,
+    combinedImagesForEdit,
+    expandedImageIndex,
+    autoPinOverrideUrls,
   ]);
   const mdComponents = useMemo<Components>(() => {
     return {
@@ -1568,14 +1814,18 @@ export default function MessageBubble({
     <>
     <div
       className={cn(
-        'flex gap-3 my-2 min-w-0 max-w-full',
-        isUser ? 'justify-end' : 'justify-start',
+        'flex gap-3 min-w-0 max-w-full',
+        // user/thread 소제목은 sticky 상태에서 chat 헤더와 바로 붙도록 위 마진 제거.
+        // 그 외(chat 모드 user, 모든 assistant) 는 기존 my-2.
+        isUser && convKind === 'thread' ? 'mb-2' : 'my-2',
+        // 쓰레드 모드의 user 발화는 소제목처럼 좌측 풀폭으로 — 그 외(chat 모드 user, 모든 assistant) 는 기존대로.
+        isUser && convKind !== 'thread' ? 'justify-end' : 'justify-start',
         isFresh &&
           isUser &&
           'animate-in fade-in slide-in-from-bottom-8 zoom-in-95 duration-500 ease-out',
       )}
     >
-      {!isUser && (
+      {!isUser && convKind !== 'thread' && (
         <Avatar>
           <AvatarFallback>S</AvatarFallback>
         </Avatar>
@@ -1583,7 +1833,13 @@ export default function MessageBubble({
       <div
         className={cn(
           'flex flex-col',
-          isUser ? 'max-w-[92%]' : 'min-w-0 flex-1',
+          isUser
+            ? convKind === 'thread'
+              ? 'min-w-0 flex-1'
+              : 'max-w-[92%]'
+            : 'min-w-0 flex-1',
+          // 쓰레드 모드의 assistant 컬럼은 user 헤딩(좌측 풀폭) 아래로 들여쓰기 — 응답·포커카드·References 모두 동일 폭으로.
+          !isUser && convKind === 'thread' && 'pl-12',
         )}
       >
         {!isUser && (
@@ -1595,6 +1851,35 @@ export default function MessageBubble({
               <span className="text-[10.5px] tabular-nums text-muted-foreground">
                 {message.time}
               </span>
+            )}
+            {/* 포커 이미지 페이지네이션 — 행 맨 우측. ImageScatter 내부 inline 버튼은 hide.
+                특정 이미지를 pin/확대한 상태(expandedImageIndex !== null) 에선 스캐터가 보이지 않으므로 < > 도 숨김. */}
+            {scatterTotalPages > 1 && expandedImageIndex === null && (
+              <div className="ml-auto flex items-center gap-1 self-center pr-2 text-muted-foreground">
+                <button
+                  type="button"
+                  onClick={() =>
+                    scatterPage > 0 && setScatterPage(scatterPage - 1)
+                  }
+                  disabled={scatterPage <= 0}
+                  aria-label="이전 페이지"
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-secondary disabled:pointer-events-none disabled:opacity-30"
+                >
+                  <span className="text-base">&lt;</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    scatterPage < scatterTotalPages - 1 &&
+                    setScatterPage(scatterPage + 1)
+                  }
+                  disabled={scatterPage >= scatterTotalPages - 1}
+                  aria-label="다음 페이지"
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-secondary disabled:pointer-events-none disabled:opacity-30"
+                >
+                  <span className="text-base">&gt;</span>
+                </button>
+              </div>
             )}
           </div>
         )}
@@ -1609,11 +1894,11 @@ export default function MessageBubble({
           const attachedSlice: SearchImage[] = (precedingUserImages ?? []).map(
             (src) => ({ url: src, removable: false }),
           );
-          const combinedImages: SearchImage[] = [
-            ...attachedSlice,
-            ...readPageImagesFlat,
-          ];
-          const attachedCount = attachedSlice.length;
+          // 자연 순서(첨부 → readPages) 를 imageOrder 가 있으면 그 순서대로 재배열.
+          const combinedImages: SearchImage[] = applyImageOrder(
+            [...attachedSlice, ...readPageImagesFlat],
+            message.imageOrder,
+          );
           const hasAny = combinedImages.length > 0;
           // 1장 / N장 모두 동일 흐름: 항상 포커 카드 → 클릭 → 확대 → 닫기 → 포커 카드.
           const usePoker = true;
@@ -1621,7 +1906,28 @@ export default function MessageBubble({
             expandedImageIndex !== null
               ? combinedImages[expandedImageIndex] ?? null
               : null;
-          if (!hasAny) return null;
+          if (!hasAny) {
+            // Processing pages 상태(hasStatusPending)에서는 이미지가 올지 미확정이므로 공간 미확보.
+            // References 가 표시되는 순간(hasReadPagesData)부터 이미지 최대폭을 미리 확보해
+            // 이미지 도착 시 References 가 아래로 밀리지 않도록 함.
+            const hasImageExpected =
+              isStreaming &&
+              (hasReadPagesData || hasPrecedingUserImages);
+            return hasImageExpected ? (
+              <div aria-hidden className="mb-2 min-h-[170px]" />
+            ) : null;
+          }
+          // PIN 시각 상태 — 명시적 PIN 이거나, 이미지가 1장이라 자동 확대된 경우.
+          // 1장 케이스라도 사용자가 UNPIN 클릭으로 자동 PIN 을 해제한 URL 은 시각 PIN 끔 (autoPinOverrideUrls).
+          const isSingleAuto = combinedImages.length === 1;
+          const isExplicitlyPinned = expanded
+            ? message.pinnedImageUrl === expanded.url
+            : false;
+          const isAutoPinActive =
+            !!expanded &&
+            isSingleAuto &&
+            !autoPinOverrideUrls.has(expanded.url);
+          const isPinnedEffective = isExplicitlyPinned || isAutoPinActive;
           // 확대 모드 — 스캐터 자리에 큰 이미지 한 장. 클릭하면 다시 스캐터로 복귀.
           if (expanded) {
             const youtubeId = (() => {
@@ -1638,7 +1944,14 @@ export default function MessageBubble({
 
             const stuck = isYouTube && isYoutubePinned;
             return (
-              <div className="mb-6 animate-in fade-in zoom-in-95 duration-200 max-w-full overflow-x-clip">
+              // pin 상태(stuck) 에서는 animate-in 의 transform 이 fixed 자손의 containing block 을
+              // wrapper 로 바꿔서 스크롤 시 fixed iframe 이 살짝 따라 움직이는 깜빡임 발생 → 끔.
+              <div
+                className={cn(
+                  'mb-6 max-w-full overflow-x-clip',
+                  !stuck && 'animate-in fade-in zoom-in-95 duration-200',
+                )}
+              >
                 {/* placeholder — 핀 모드일 때 wrapper 가 fixed 로 빠지므로 같은 높이를 차지해 layout 흔들림 방지. */}
                 {stuck && reservedHeight > 0 && (
                   <div style={{ height: reservedHeight }} aria-hidden />
@@ -1646,7 +1959,11 @@ export default function MessageBubble({
                 <div
                   className={cn(
                     'flex justify-center',
-                    stuck && 'fixed top-[76px] z-30 transition-none',
+                    // top-[68px] — chat 헤더(68px) 바로 아래에 붙음.
+                    // will-change-transform + translate3d(0,0,0) — GPU compositor layer 로 promote 해
+                    // 스크롤 중 iframe 의 thumbnail repaint 깜빡임 방지.
+                    stuck &&
+                      'fixed top-[68px] z-30 transition-none [transform:translate3d(0,0,0)] will-change-transform [backface-visibility:hidden] [contain:layout_paint]',
                   )}
                   style={
                     stuck && pinnedLeft !== null
@@ -1663,7 +1980,7 @@ export default function MessageBubble({
                       ? stuck
                         ? ''
                         : 'w-full max-w-[800px]'
-                      : 'inline-block max-w-full',
+                      : 'inline-block max-w-[90%]',
                   )}
                   style={
                     isYouTube && stuck && pinnedWidth !== null
@@ -1671,52 +1988,192 @@ export default function MessageBubble({
                       : undefined
                   }
                 >
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setExpandedImageIndex(null);
-                      setIsYoutubePinned(false);
-                    }}
-                    title={t('image.postit.close')}
-                    className="absolute right-1 top-3 z-20 inline-flex -rotate-6 items-center gap-1 rounded-md border border-primary/40 bg-card px-2 py-0.5 text-[11px] font-medium text-primary shadow-md transition-transform hover:rotate-0 hover:bg-primary hover:text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  {/* 우측 포스트잇 버튼 그룹 (Close / Attach / Delete / PIN).
+                      PiP 버튼은 wrapper 밖에 별도 렌더 — PiP 모드에서도 unpip 가능해야 함.
+                      숨김 조건:
+                        · 현재 expanded 미디어 URL 에 대한 삭제 확인 오버레이 표시 중
+                        · YouTube 미디어 + PiP 모드 (unpip 외 다른 액션 의미 없음)
+                      `isYoutubePinned` 만 보면 다른 카드로 이동한 뒤에도 stale 상태가 남아
+                      버튼이 비활성으로 보일 수 있어 반드시 `isYouTube` 와 함께 검사.
+                      absolute 자식들의 containing block 은 상위 `relative pr-20` 이므로
+                      이 wrapper div 가 끼어들어도 위치 재계산 영향 없음. */}
+                  <div
+                    className={cn(
+                      'transition-opacity duration-150',
+                      (pendingDeleteUrl === expanded.url ||
+                        (isYouTube && isYoutubePinned)) &&
+                        'pointer-events-none opacity-0',
+                    )}
+                    aria-hidden={
+                      pendingDeleteUrl === expanded.url ||
+                      (isYouTube && isYoutubePinned)
+                    }
                   >
-                    <X className="h-3 w-3" />
-                    {t('image.postit.close')}
-                  </button>
-                  {onRemoveImage &&
-                    expanded.kind !== 'youtube' &&
-                    expanded.kind !== 'x' &&
-                    expanded.removable !== false && (
+                  {(() => {
+                    // PIN(명시 + 단일 자동) 상태에선 Close 비활성화 — PIN 의 본 목적이 "노출 유지" 이므로
+                    // 사용자는 UNPIN 후 Close 해야 한다는 UX. dim + tooltip 으로 안내.
+                    const closeDisabled = isPinnedEffective;
+                    return (
                       <button
                         type="button"
-                        onMouseDown={(e) => e.preventDefault()}
+                        disabled={closeDisabled}
                         onClick={() => {
-                          // 즉시 삭제 대신 채팅창 안 확인 다이얼로그로 통일.
-                          setPendingDeleteUrl(expanded.url);
+                          if (closeDisabled) return;
+                          // 이 세션 동안 자동 확대 effect 일체 차단.
+                          userClosedRef.current = true;
+                          if (expanded?.url) {
+                            setAutoPinOverrideUrls((prev) => {
+                              if (prev.has(expanded.url)) return prev;
+                              const next = new Set(prev);
+                              next.add(expanded.url);
+                              return next;
+                            });
+                          }
+                          setExpandedImageIndex(null);
+                          setIsYoutubePinned(false);
+                          // pendingDeleteUrl 잔여 상태 방지 — 닫을 때 같이 클리어.
+                          setPendingDeleteUrl(null);
                         }}
-                        title={t('image.postit.delete')}
-                        className="absolute right-1 top-12 z-20 inline-flex rotate-3 items-center gap-1 rounded-md border border-destructive/50 bg-card px-2 py-0.5 text-[11px] font-medium text-destructive shadow-md transition-transform hover:rotate-0 hover:bg-destructive hover:text-destructive-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive"
+                        title={
+                          closeDisabled
+                            ? 'PIN 해제 후 닫기 가능'
+                            : t('image.postit.close')
+                        }
+                        className={cn(
+                          'absolute right-1 top-3 z-20 inline-flex -rotate-6 items-center gap-1 rounded-md border border-primary/40 bg-card px-2 py-0.5 text-[11px] font-medium text-primary shadow-md transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+                          closeDisabled
+                            ? 'cursor-not-allowed opacity-40'
+                            : 'hover:rotate-0 hover:bg-primary hover:text-primary-foreground',
+                        )}
                       >
-                        <Trash2 className="h-3 w-3" />
-                        {t('image.postit.delete')}
+                        <X className="h-3 w-3" />
+                        {t('image.postit.close')}
                       </button>
-                    )}
+                    );
+                  })()}
                   {onAttachImage &&
                     expanded.kind !== 'youtube' &&
-                    expanded.kind !== 'x' && (
-                      <button
-                        type="button"
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => {
-                          onAttachImage(expanded.url);
-                        }}
-                        title={t('image.postit.attach')}
-                        className="absolute right-1 top-[5.25rem] z-20 inline-flex -rotate-3 items-center gap-1 rounded-md border border-primary/40 bg-card px-2 py-0.5 text-[11px] font-medium text-primary shadow-md transition-transform hover:rotate-0 hover:bg-primary hover:text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                      >
-                        <ImagePlus className="h-3 w-3" />
-                        {t('image.postit.attach')}
-                      </button>
-                    )}
+                    expanded.kind !== 'x' &&
+                    (() => {
+                      // 이미 InputBar 에 같은 source URL 이 첨부돼 있으면 dim + 비활성.
+                      // 사용자가 InputBar 의 × 로 제거하면 자동으로 활성화.
+                      const isAttached =
+                        !!attachedSourceUrls?.has(expanded.url);
+                      return (
+                        <button
+                          type="button"
+                          disabled={isAttached}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => {
+                            if (isAttached) return;
+                            onAttachImage(expanded.url);
+                          }}
+                          title={
+                            isAttached
+                              ? '이미 첨부됨'
+                              : t('image.postit.attach')
+                          }
+                          className={cn(
+                            'absolute right-1 top-[5.25rem] z-20 inline-flex -rotate-3 items-center gap-1 rounded-md border border-primary/40 bg-card px-2 py-0.5 text-[11px] font-medium text-primary shadow-md transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+                            isAttached
+                              ? 'cursor-not-allowed opacity-40'
+                              : 'hover:rotate-0 hover:bg-primary hover:text-primary-foreground',
+                          )}
+                        >
+                          <ImagePlus className="h-3 w-3" />
+                          {t('image.postit.attach')}
+                        </button>
+                      );
+                    })()}
+                  {onRemoveImage &&
+                    expanded.removable !== false &&
+                    (() => {
+                      // PIN 상태(명시 + 단일 자동) 에선 사용자가 "보존" 의도이므로 dim + 비활성.
+                      const deleteDisabled = isPinnedEffective;
+                      return (
+                        <button
+                          type="button"
+                          disabled={deleteDisabled}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => {
+                            if (deleteDisabled) return;
+                            // 즉시 삭제 대신 채팅창 안 확인 다이얼로그로 통일.
+                            setPendingDeleteUrl(expanded.url);
+                          }}
+                          title={
+                            deleteDisabled
+                              ? 'PIN 해제 후 삭제 가능'
+                              : t('image.postit.delete')
+                          }
+                          className={cn(
+                            'absolute right-1 top-[7.5rem] z-20 inline-flex rotate-3 items-center gap-1 rounded-md border border-destructive/50 bg-card px-2 py-0.5 text-[11px] font-medium text-destructive shadow-md transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive',
+                            deleteDisabled
+                              ? 'cursor-not-allowed opacity-40'
+                              : 'hover:rotate-0 hover:bg-destructive hover:text-destructive-foreground',
+                          )}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                          {t('image.postit.delete')}
+                        </button>
+                      );
+                    })()}
+                  {/* PIN — 페이지 이탈 후 복귀해도 이 미디어(이미지/유튜브)가 자동 확대되도록
+                      message.metadata 에 영속. YouTube 의 PIP(floating 재생) 와 다른 개념. */}
+                  {onPinImage &&
+                    expanded.kind !== 'x' &&
+                    (() => {
+                      const isPinned = isPinnedEffective;
+                      return (
+                        <button
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => {
+                            if (isExplicitlyPinned) {
+                              // 명시적 PIN 해제 → DB 정리. 자동 PIN 도 같이 끄려면 override 에 추가.
+                              onPinImage(message.id, null);
+                              setAutoPinOverrideUrls((prev) => {
+                                const next = new Set(prev);
+                                next.add(expanded.url);
+                                return next;
+                              });
+                            } else if (isAutoPinActive) {
+                              // 자동 PIN 해제 — 시각 PIN 표시만 끄고 이미지는 그대로 노출 유지.
+                              // 이후 Close/Delete 버튼이 활성화돼 다른 액션 가능.
+                              setAutoPinOverrideUrls((prev) => {
+                                const next = new Set(prev);
+                                next.add(expanded.url);
+                                return next;
+                              });
+                            } else {
+                              // PIN 설정 → DB 저장. override 에 있었다면 제거 (다시 자동 PIN 인정).
+                              onPinImage(message.id, expanded.url);
+                              setAutoPinOverrideUrls((prev) => {
+                                if (!prev.has(expanded.url)) return prev;
+                                const next = new Set(prev);
+                                next.delete(expanded.url);
+                                return next;
+                              });
+                            }
+                          }}
+                          title={isPinned ? 'UNPIN' : 'PIN'}
+                          className={cn(
+                            'absolute right-1 top-12 z-20 inline-flex -rotate-2 items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-medium shadow-md transition-transform hover:rotate-0 focus-visible:outline-none focus-visible:ring-2',
+                            isPinned
+                              ? 'border-primary bg-primary text-primary-foreground focus-visible:ring-primary hover:bg-primary/90'
+                              : 'border-primary/40 bg-card text-primary focus-visible:ring-primary hover:bg-primary hover:text-primary-foreground',
+                          )}
+                        >
+                          {isPinned ? (
+                            <PinOff className="h-3 w-3" />
+                          ) : (
+                            <Pin className="h-3 w-3" />
+                          )}
+                          {isPinned ? 'UNPIN' : 'PIN'}
+                        </button>
+                      );
+                    })()}
+                  </div>
+                  {/* PiP(YouTube 핀) 버튼은 PiP 모드에서도 유일하게 노출돼야 하므로 wrapper 밖. */}
                   {isYouTube && (
                     <button
                       type="button"
@@ -1739,7 +2196,7 @@ export default function MessageBubble({
                           ? t('image.postit.unpin')
                           : t('image.postit.pin')
                       }
-                      className="absolute right-1 top-12 z-20 inline-flex rotate-3 items-center gap-1 rounded-md border border-primary/40 bg-card px-2 py-0.5 text-[11px] font-medium text-primary shadow-md transition-transform hover:rotate-0 hover:bg-primary hover:text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      className="absolute right-1 top-[5.25rem] z-20 inline-flex rotate-3 items-center gap-1 rounded-md border border-primary/40 bg-card px-2 py-0.5 text-[11px] font-medium text-primary shadow-md transition-transform hover:rotate-0 hover:bg-primary hover:text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                     >
                       {isYoutubePinned ? (
                         <PinOff className="h-3 w-3" />
@@ -1753,24 +2210,86 @@ export default function MessageBubble({
                   )}
 
                   {/* 미디어 자리 — iframe/img. sticky 모드면 부모 wrapper 자체가 sticky top:0 으로 따라옴.
-                      YouTube 는 부모(block) 의 폭을 그대로 따르도록 w-full, 이미지는 자연 크기 inline-block. */}
+                      YouTube 는 부모(block) 의 폭을 그대로 따르도록 w-full, 이미지는 자연 크기 inline-block.
+                      pendingDeleteUrl 매칭 시 이 박스 위에만 블러 + Delete 오버레이. */}
                   <div
                     className={cn(
                       'relative z-10 overflow-hidden rounded-lg shadow-[0_8px_24px_rgba(0,0,0,0.5)]',
                       isYouTube ? 'w-full' : 'inline-block max-w-full',
                     )}
                   >
+                    {pendingDeleteUrl === expanded.url && onRemoveImage && (
+                      <div
+                        className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-3 bg-black/55 px-6 text-center backdrop-blur-md animate-in fade-in duration-150"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPendingDeleteUrl(null);
+                        }}
+                      >
+                        <div className="flex items-center gap-2">
+                          <AlertTriangle className="h-5 w-5 text-destructive drop-shadow" />
+                          <h3 className="text-[15px] font-semibold text-white">
+                            {t('delete.image.title')}
+                          </h3>
+                        </div>
+                        <p className="max-w-sm text-[13px] leading-relaxed text-white/85">
+                          {t('delete.image.body')}
+                        </p>
+                        <div className="flex items-center gap-2 pt-1">
+                          <button
+                            type="button"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPendingDeleteUrl(null);
+                            }}
+                            className="rounded-md border border-white/40 bg-black/30 px-3 py-1.5 text-sm font-medium text-white hover:bg-black/50"
+                          >
+                            {t('delete.cancel')}
+                          </button>
+                          <button
+                            type="button"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onRemoveImage(expanded.url);
+                              setPendingDeleteUrl(null);
+                              setExpandedImageIndex(null);
+                            }}
+                            className="inline-flex items-center gap-1.5 rounded-md border border-destructive/60 bg-destructive px-3 py-1.5 text-sm font-semibold text-destructive-foreground shadow-xl hover:bg-destructive/90"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            {t('delete.confirm')}
+                          </button>
+                        </div>
+                        <button
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPendingDeleteUrl(null);
+                          }}
+                          aria-label={t('delete.cancel')}
+                          className="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-full border border-white/40 bg-black/55 text-white shadow-md hover:bg-black/75"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    )}
                     {youtubeId ? (
                       <div
                         ref={inlineVideoBoxRef}
-                        className="relative aspect-video w-full bg-black"
+                        className="relative aspect-video w-full bg-black transform-gpu [contain:paint] will-change-transform"
                       >
+                        {/* iframe 자체에도 GPU layer + key 로 안정성 확보 — 스크롤 중 thumbnail 재로딩 방지. */}
                         <iframe
+                          key={`yt-${youtubeId}`}
                           src={`https://www.youtube.com/embed/${youtubeId}`}
                           title={expanded.sourceTitle ?? 'YouTube'}
-                          className="absolute inset-0 h-full w-full"
+                          className="absolute inset-0 h-full w-full transform-gpu"
                           allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                           allowFullScreen
+                          loading="eager"
                         />
                       </div>
                     ) : (
@@ -1779,7 +2298,23 @@ export default function MessageBubble({
                         src={expanded.url}
                         alt={expanded.sourceTitle ?? '이미지'}
                         referrerPolicy="no-referrer"
-                        className="block h-auto max-h-[480px] w-auto max-w-full object-contain"
+                        // PIN 상태에서만 클릭하면 원본을 새 탭에서 열기 — Close/Delete 가 dim 된 PIN UX 와 일관.
+                        onClick={
+                          isPinnedEffective
+                            ? () => {
+                                window.open(
+                                  expanded.url,
+                                  '_blank',
+                                  'noopener,noreferrer',
+                                );
+                              }
+                            : undefined
+                        }
+                        title={isPinnedEffective ? '원본 새 탭에서 열기' : undefined}
+                        className={cn(
+                          'block h-auto max-h-[340px] w-auto max-w-full object-contain',
+                          isPinnedEffective && 'cursor-zoom-in',
+                        )}
                       />
                     )}
                   </div>
@@ -1799,15 +2334,8 @@ export default function MessageBubble({
               forcePoker={usePoker}
               page={scatterPage}
               onPageChange={setScatterPage}
-              onRemove={
-                onRemoveImage
-                  ? (url) => {
-                      if (attachedSlice.some((a) => a.url === url)) return;
-                      // 상세 라이트박스 거치지 않고 채팅창 안에서 바로 확인 다이얼로그.
-                      setPendingDeleteUrl(url);
-                    }
-                  : undefined
-              }
+              onTotalPagesChange={setScatterTotalPages}
+              hideInlinePagination
             />
           );
         })()}
@@ -1850,7 +2378,9 @@ export default function MessageBubble({
                   <span>{thinkingLabel}</span>
                 </>
               )}
-              {hasThinkingText && (
+              {/* 우측: 스트리밍 중엔 Thinking 토글, 스트리밍 종료 후엔 Image Edit 으로 교체.
+                  같은 자리에 한 가지만 표시 → 둘이 겹치지 않음. */}
+              {isStreaming && hasThinkingText ? (
                 <button
                   type="button"
                   onClick={toggle}
@@ -1860,7 +2390,8 @@ export default function MessageBubble({
                   <ThinkingIcon className="h-3 w-3 text-primary" />
                   <span>
                     {thinkingLabel}
-                    {isStreaming ? ` ${t('bot.thinkingWriting')}` : ''}
+                    {' '}
+                    {t('bot.thinkingWriting')}
                   </span>
                   {open ? (
                     <ChevronDown className="h-3 w-3" />
@@ -1868,7 +2399,30 @@ export default function MessageBubble({
                     <ChevronRight className="h-3 w-3" />
                   )}
                 </button>
-              )}
+              ) : onRemoveImage &&
+                combinedImagesForEdit.length > 3 ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => setImageEditMode((v) => !v)}
+                      aria-pressed={imageEditMode}
+                      className={cn(
+                        'ml-auto inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold shadow-sm transition-colors',
+                        imageEditMode
+                          ? 'border-primary bg-primary text-primary-foreground hover:bg-primary/90'
+                          : 'border-primary/50 bg-primary/15 text-primary hover:bg-primary hover:text-primary-foreground',
+                      )}
+                    >
+                      <Images className="h-3.5 w-3.5" />
+                      <span>{t('imageEdit.button')}</span>
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" sideOffset={4}>
+                    {t('imageEdit.buttonHint')}
+                  </TooltipContent>
+                </Tooltip>
+              ) : null}
             </div>
 
             {/* 1) 사용자 첨부 이미지 — Reference documents 와 동일 형식의 번호 리스트.
@@ -1916,7 +2470,7 @@ export default function MessageBubble({
               <TooltipProvider delayDuration={200}>
                 {/* BookOpen 아이콘 중앙(content-x ≈ 7px)에 맞춰 세로 가이드 라인.
                     ml-1.5(6px) + border-l(2px)로 위쪽 아이콘 중앙과 정렬, pl-3로 항목 본문은 충분히 들여씀. */}
-                <ul className="mt-1.5 ml-1.5 flex w-full flex-col gap-0.5 border-l-2 border-primary/30 pl-3">
+                <ul className="mt-1.5 ml-1.5 flex w-full min-h-[53px] flex-col gap-0.5 border-l-2 border-primary/30 pl-3">
                   {referencesList.map((r, i) => (
                     <ReadPageRow
                       key={r.url}
@@ -1977,8 +2531,8 @@ export default function MessageBubble({
           >
             <svg
               width="14"
-              height="34"
-              viewBox="0 0 14 34"
+              height="44"
+              viewBox="0 0 14 44"
               className="overflow-visible"
             >
               <defs>
@@ -1999,32 +2553,42 @@ export default function MessageBubble({
                 </filter>
               </defs>
               <g filter="url(#ref-connector-shadow)">
-                {/* 위쪽 halo + core 도트 — 패널 위에 살짝 걸치는 위치 */}
-                <circle cx="7" cy="5" r="5" fill="hsl(var(--primary) / 0.18)" />
-                <circle
-                  cx="7"
-                  cy="5"
-                  r="2.5"
-                  fill="hsl(var(--primary))"
-                  stroke="hsl(var(--background))"
-                  strokeWidth="1"
-                />
-                {/* 살짝 휘어진 곡선 — 가운데 부분에서 좌→우로 미세하게 흔들리는 S 곡선 */}
+                {/* 컨테이너 -my-2 (=−8px) + SVG height 44 → 실제 layout 박스 28px.
+                    상단 패널 하단 경계 = y=8, 하단 패널 상단 경계 = y=36 (44−8).
+                    이전(layout 18px) 보다 10px 더 늘려 AI 답변을 살짝 아래로 밀고,
+                    곡선·도트가 자연스럽게 길게 이어지도록.
+                    선·도트 색은 white 테마의 --primary (30 60% 48%) 톤으로 하드코딩 —
+                    다크에서도 동일한 진한 골든 톤 유지. */}
+                {/* 양 끝점 (7,8) / (7,36) 은 도트 중심과 일치 유지.
+                    이중 S 커브 — 위에서 오른쪽으로 휘었다가 가운데에서 다시 왼쪽으로 꺾여 내려옴.
+                    control point 들의 x 를 viewBox 좌우 끝(0/14) 까지 밀어 곡률 강조. */}
                 <path
-                  d="M 7 8 C 11 14, 3 20, 7 26"
-                  stroke="hsl(var(--primary) / 0.7)"
+                  d="M 7 8 C 14 13, 0 21, 7 22 C 14 23, 0 31, 7 36"
+                  stroke="hsl(30 60% 48% / 0.7)"
                   strokeWidth="1.6"
                   strokeLinecap="round"
                   fill="none"
                 />
-                {/* 아래쪽 halo + core 도트 */}
-                <circle cx="7" cy="29" r="5" fill="hsl(var(--primary) / 0.18)" />
+                {/* 위쪽 halo + core 도트 — cy=8 (Reference documents 패널 하단 경계).
+                    core 의 바깥쪽 stroke 는 흰색 고정 — 다크에서 코어 가장자리에 흰 링이 또렷이 보이도록
+                    (white 테마는 어차피 배경이 흰색이라 변화 없음). */}
+                <circle cx="7" cy="8" r="5" fill="hsl(var(--ref-connector-halo))" />
                 <circle
                   cx="7"
-                  cy="29"
+                  cy="8"
                   r="2.5"
-                  fill="hsl(var(--primary))"
-                  stroke="hsl(var(--background))"
+                  fill="hsl(30 60% 48%)"
+                  stroke="hsl(0 0% 100%)"
+                  strokeWidth="1"
+                />
+                {/* 아래쪽 halo + core 도트 — cy=36 (AI 답변 패널 상단 경계). */}
+                <circle cx="7" cy="36" r="5" fill="hsl(var(--ref-connector-halo))" />
+                <circle
+                  cx="7"
+                  cy="36"
+                  r="2.5"
+                  fill="hsl(30 60% 48%)"
+                  stroke="hsl(0 0% 100%)"
                   strokeWidth="1"
                 />
               </g>
@@ -2053,10 +2617,142 @@ export default function MessageBubble({
         <div
           className={cn(
             'flex flex-col',
-            isUser ? 'items-end' : 'items-stretch',
+            isUser
+              ? convKind === 'thread'
+                ? 'items-start'
+                : 'items-end'
+              : 'items-stretch',
           )}
         >
-          {message.content && isUser && (
+          {message.content && isUser && convKind === 'thread' && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+            <h2
+              id={`user-msg-${message.id}`}
+              // 헤딩 전체가 클릭 → 편집 트리거. 내부 button/link 의 stopPropagation 으로 자기 영역 분리.
+              onClick={
+                !headingEditing && onEditContent
+                  ? (e) => {
+                      // 텍스트 드래그 선택 중에는 편집 진입 무시.
+                      const sel = window.getSelection?.();
+                      if (sel && sel.toString().length > 0) return;
+                      e.stopPropagation();
+                      startHeadingEdit();
+                    }
+                  : undefined
+              }
+              className={cn(
+                // 일반 인라인 소제목 (sticky 제거, 헤더의 sub-heading 표시가 그 역할 대신).
+                'group/bubble relative mt-3 w-full max-w-full py-1 pl-6 pr-16 text-left text-[18px] font-semibold leading-snug tracking-tight text-foreground first:mt-0',
+                !headingEditing &&
+                  onEditContent &&
+                  'cursor-text rounded-sm transition-colors hover:bg-accent/40',
+              )}
+            >
+              {typeof userOrdinal === 'number' && (
+                <span aria-hidden className="mr-1 text-primary tabular-nums">
+                  {userOrdinal}.
+                </span>
+              )}
+              {headingEditing ? (
+                // contenteditable span — 인라인 흐름 그대로라 ordinal/주변 텍스트가 한 픽셀도 안 움직임.
+                // inline-block + width calc 로 행 끝까지 시각 영역 확장 — 짧은 글이어도 한 줄 전체 클릭 가능.
+                // ordinal(~2em) + 우측 액션(pr-16 ≈ 4em) 자리 확보.
+                // 초기 텍스트는 useEffect 에서 ref 로 주입 (uncontrolled).
+                // key 로 read-only span 과 분리 — React 가 DOM 재사용해서 잔존 텍스트가 합쳐지는 버그 방지.
+                <span
+                  key="heading-edit"
+                  ref={headingEditableRef}
+                  contentEditable
+                  suppressContentEditableWarning
+                  spellCheck={false}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      commitHeadingEdit();
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault();
+                      cancelHeadingEdit();
+                    }
+                  }}
+                  onPaste={(e) => {
+                    // 서식 없는 plain text 만 붙여넣기.
+                    e.preventDefault();
+                    const text = e.clipboardData.getData('text/plain');
+                    document.execCommand('insertText', false, text);
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  // ordinal (~2em) 자리만 빼고 우측은 pr-16 padding 이 이미 버튼 영역 확보 → 3em 만 reserve.
+                  style={{ width: 'calc(100% - 3em)' }}
+                  // align-top — inline-block 의 기본 baseline 은 마지막 라인 기준이라
+                  // 여러 줄이 되면 옆 ordinal 이 따라 내려감. top 으로 잡으면 첫 줄과 정렬 유지.
+                  className="inline-block max-w-full align-top whitespace-pre-wrap break-words rounded-sm bg-transparent outline-none ring-1 ring-primary/40 focus:ring-2 focus:ring-primary/60"
+                />
+              ) : (
+                <span key="heading-view" className="whitespace-pre-wrap break-words">
+                  {linkifyText(message.content)}
+                </span>
+              )}
+              {/* 우측 액션 버튼 묶음 — hover/편집 시 노출. 편집 모드일 땐 ✓/×, 그 외엔 휴지통. */}
+              <span className="absolute right-0 top-1 flex items-center gap-1">
+                {headingEditing ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        commitHeadingEdit();
+                      }}
+                      title="저장 (Enter)"
+                      aria-label="저장"
+                      className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md hover:bg-primary/90"
+                    >
+                      <Check className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        cancelHeadingEdit();
+                      }}
+                      title="취소 (Esc)"
+                      aria-label="취소"
+                      className="flex h-6 w-6 items-center justify-center rounded-full bg-secondary text-foreground shadow-md hover:bg-accent"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </>
+                ) : (
+                  onDeleteTurn && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDeleteTurn();
+                      }}
+                      title="이 질문과 답변 삭제"
+                      className={cn(
+                        'h-6 w-6 items-center justify-center rounded-full bg-destructive text-destructive-foreground shadow-md transition-opacity hover:bg-destructive/90',
+                        isCollapsed
+                          ? 'flex opacity-100'
+                          : 'hidden group-hover/bubble:flex',
+                      )}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )
+                )}
+              </span>
+            </h2>
+              </TooltipTrigger>
+              {!headingEditing && onEditContent && (
+                <TooltipContent side="bottom" sideOffset={4}>
+                  {t('thread.heading.editHint')}
+                </TooltipContent>
+              )}
+            </Tooltip>
+          )}
+          {message.content && isUser && convKind !== 'thread' && (
             <>
               <div className="group/bubble relative rounded-2xl rounded-tr-md bg-bubble-user px-3.5 py-2 text-[14.5px] leading-relaxed text-bubble-user-foreground shadow-sm">
                 <span className="whitespace-pre-wrap break-words">
@@ -2092,67 +2788,111 @@ export default function MessageBubble({
           {/* 어시스턴트 답변: 버블 그 자체 + 하단 우측에 포스트잇 해시태그 행 */}
           {message.content && !isUser && (
             <>
-              <div className="w-full min-w-0 max-w-full overflow-x-hidden rounded-2xl rounded-tl-md border border-border bg-bubble-bot px-3.5 py-2 text-[14.5px] leading-relaxed text-bubble-bot-foreground shadow-md">
-                <div className={cn(markdownClass, 'min-w-0 max-w-full')}>
-                  <ReactMarkdown
-                    remarkPlugins={[
-                      // 한국어에서 `~` 는 범위 구분자(예: "17세기 후반~18세기", "숙종~영조") 로
-                      // 자주 쓰여 GFM 의 단일-tilde strikethrough 가 오작동. 표준 `~~text~~` 만 허용.
-                      [remarkGfm, { singleTilde: false }],
-                      remarkMath,
-                    ]}
-                    rehypePlugins={[
-                      rehypeRaw,
-                      [rehypeKatex, { throwOnError: false, strict: false }],
-                    ]}
-                    components={mdComponents}
-                  >
-                    {renderedContent}
-                  </ReactMarkdown>
-                </div>
-              </div>
-              {message.hashtagsGenerating &&
-                !(message.hashtags && message.hashtags.length > 0) && (
-                  <div className="mt-2 flex justify-end self-end pl-8">
-                    <span className="inline-flex items-center gap-1.5 rounded-sm border border-border bg-secondary/60 px-2 py-0.5 text-[11px] font-medium text-muted-foreground shadow-[0_2px_4px_rgba(0,0,0,0.2)]">
-                      <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
-                      Creating hashtags...
-                    </span>
+              {/* relative z-[1] — 버블이 아래 탭 위에 올라가서 탭이 "뒷면에서 빠져나온" 느낌. */}
+              <div
+                ref={answerBubbleRef}
+                className="relative z-[1] w-full min-w-0 max-w-full overflow-x-hidden rounded-2xl rounded-tl-md border border-border bg-bubble-bot px-3.5 py-2 text-[14.5px] leading-relaxed text-bubble-bot-foreground shadow-md"
+              >
+                {answerEditing ? (
+                  <textarea
+                    ref={answerEditRef}
+                    value={answerDraft}
+                    onChange={(e) => setAnswerDraft(e.target.value)}
+                    rows={Math.max(
+                      6,
+                      Math.min(28, answerDraft.split('\n').length + 2),
+                    )}
+                    className="block w-full min-w-0 max-w-full resize-y bg-transparent font-mono text-[13px] leading-relaxed text-bubble-bot-foreground outline-none placeholder:text-muted-foreground"
+                    placeholder="마크다운으로 답변 편집…"
+                    spellCheck={false}
+                  />
+                ) : (
+                  <div className={cn(markdownClass, 'min-w-0 max-w-full')}>
+                    <ReactMarkdown
+                      remarkPlugins={[
+                        // 한국어에서 `~` 는 범위 구분자(예: "17세기 후반~18세기", "숙종~영조") 로
+                        // 자주 쓰여 GFM 의 단일-tilde strikethrough 가 오작동. 표준 `~~text~~` 만 허용.
+                        [remarkGfm, { singleTilde: false }],
+                        remarkMath,
+                      ]}
+                      rehypePlugins={[
+                        rehypeRaw,
+                        [rehypeKatex, { throwOnError: false, strict: false }],
+                      ]}
+                      components={mdComponents}
+                    >
+                      {renderedContent}
+                    </ReactMarkdown>
                   </div>
                 )}
-              {message.hashtags && message.hashtags.length > 0 && (
-                <div className="mt-2 flex flex-wrap justify-end gap-1.5 self-end pl-8">
-                  {message.hashtags.slice(0, 8).map((tag, i) => {
-                    const rotations = [-2, 1.5, -1, 2, -1.5, 1, -2.5, 0.5];
-                    const rot = rotations[i % rotations.length];
-                    return (
-                      <Tooltip key={i}>
-                        <TooltipTrigger asChild>
-                          <span
-                            style={{ transform: `rotate(${rot}deg)` }}
-                            className="inline-block max-w-[180px] cursor-default truncate whitespace-nowrap rounded-sm border border-primary/30 bg-primary/15 px-2 py-0.5 text-[11px] font-medium text-primary shadow-[0_2px_4px_rgba(0,0,0,0.25)] transition-transform duration-200 hover:!rotate-0 hover:!scale-110"
-                          >
-                            {tag}
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent side="top">{tag}</TooltipContent>
-                      </Tooltip>
-                    );
-                  })}
-                  {message.hashtags.length > 8 && (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span className="inline-block cursor-default whitespace-nowrap rounded-sm border border-border bg-secondary px-2 py-0.5 text-[11px] font-medium text-muted-foreground shadow-[0_2px_4px_rgba(0,0,0,0.25)]">
-                          +{message.hashtags.length - 8}
-                        </span>
-                      </TooltipTrigger>
-                      <TooltipContent side="top" className="max-w-[280px]">
-                        {message.hashtags.slice(8).join(' ')}
-                      </TooltipContent>
-                    </Tooltip>
+              </div>
+              {/* Preview / Edit — 답변 마크다운 직접 편집.
+                  Thread 모드 전용 + greeting 메시지 제외 (인사말은 편집 불필요).
+                  탭이 버블 뒤에서 살짝 빠져나온 폴더 탭 느낌:
+                  - 컨테이너 -mt-2 (=−8px) 로 위로 끌어올려 버블 하단과 겹치고
+                  - z-[0] 으로 버블(z-[1]) 아래에 위치
+                  - pt-3 으로 텍스트가 버블 가린 영역 아래에만 보이도록 */}
+              {onEditContent && convKind === 'thread' && !isGreeting && (
+                <div className="-mt-2 mr-3 flex items-start gap-1 self-end">
+                  {/* min-w 로 폭 정렬 + 아이콘+텍스트 모두 동일 간격 (gap-1, justify-center). */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (answerEditing) return; // 편집 중엔 Save/Cancel 로만 나가도록 — 우발적 손실 방지.
+                    }}
+                    disabled={answerEditing}
+                    title={t('message.preview')}
+                    className={cn(
+                      // transition-colors 제거 — active→disabled 페이드가 깜빡임처럼 보임. 즉시 전환.
+                      'relative z-[0] inline-flex min-w-[72px] items-center justify-center gap-1 rounded-b-md border border-t-0 px-3 pb-1 pt-3 text-[11px] font-medium shadow-[0_2px_4px_rgba(0,0,0,0.25)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+                      !answerEditing
+                        ? 'border-primary bg-primary text-primary-foreground'
+                        // 편집 중엔 같은 primary 톤 유지 + opacity 만 줄여 변화 폭을 작게 → 깜빡임 X.
+                        : 'cursor-not-allowed border-primary/40 bg-card text-primary opacity-50',
+                    )}
+                  >
+                    <BookOpen className="h-3 w-3" />
+                    {t('message.preview')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => !answerEditing && startAnswerEdit()}
+                    title={t('message.edit')}
+                    className={cn(
+                      'relative z-[0] inline-flex min-w-[72px] items-center justify-center gap-1 rounded-b-md border border-t-0 px-3 pb-1 pt-3 text-[11px] font-medium shadow-[0_2px_4px_rgba(0,0,0,0.25)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+                      answerEditing
+                        ? 'border-primary bg-primary text-primary-foreground'
+                        : 'border-primary/40 bg-card text-primary hover:bg-primary hover:text-primary-foreground',
+                    )}
+                  >
+                    <Pencil className="h-3 w-3" />
+                    {t('message.edit')}
+                  </button>
+                  {answerEditing && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={commitAnswerEdit}
+                        title={t('message.save')}
+                        className="relative z-[0] inline-flex min-w-[72px] items-center justify-center gap-1 rounded-b-md border border-t-0 border-emerald-500/50 bg-card px-3 pb-1 pt-3 text-[11px] font-medium text-emerald-500 shadow-[0_2px_4px_rgba(0,0,0,0.25)] transition-colors hover:bg-emerald-500 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                      >
+                        <Check className="h-3 w-3" />
+                        {t('message.save')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={cancelAnswerEdit}
+                        title={t('message.cancel')}
+                        className="relative z-[0] inline-flex min-w-[72px] items-center justify-center gap-1 rounded-b-md border border-t-0 border-destructive/50 bg-card px-3 pb-1 pt-3 text-[11px] font-medium text-destructive shadow-[0_2px_4px_rgba(0,0,0,0.25)] transition-colors hover:bg-destructive hover:text-destructive-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive"
+                      >
+                        <X className="h-3 w-3" />
+                        {t('message.cancel')}
+                      </button>
+                    </>
                   )}
                 </div>
               )}
+              {/* per-message hashtag 렌더는 제거 — Thread 단위로 우측 패널 Hashtags 섹션에서만 노출. */}
             </>
           )}
         </div>
@@ -2229,45 +2969,335 @@ export default function MessageBubble({
         />
       )}
 
-      {/* 검색 이미지 카드 × 클릭 → 채팅창 안에서 직접 삭제 확인. 라이트박스 거치지 않음. */}
-      {pendingDeleteUrl && onRemoveImage && (
+
+
+      {/* Image Edit 모달 — 드래그앤드롭 reorder + 체크박스 일괄 삭제를 Apply 한번에 commit. */}
+      {imageEditMode && onRemoveImage && (
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-150"
-          onClick={() => setPendingDeleteUrl(null)}
+          onClick={() => setImageEditMode(false)}
         >
           <div
-            className="w-full max-w-sm rounded-lg border border-border bg-card p-5 shadow-2xl animate-in zoom-in-95 duration-150"
+            className="flex max-h-[85vh] w-full max-w-3xl flex-col rounded-lg border border-border bg-card p-5 shadow-2xl animate-in zoom-in-95 duration-150"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="mb-3 flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-destructive" />
-              <h2 className="text-base font-semibold text-foreground">
-                {t('delete.image.title')}
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
+                <Pencil className="h-4 w-4 text-primary" />
+                <span>{t('imageEdit.title')}</span>
+                <span className="text-[12px] font-normal text-muted-foreground">
+                  ·{' '}
+                  {t('imageEdit.count').replace(
+                    '{n}',
+                    String(editingOrderUrls.length),
+                  )}
+                </span>
               </h2>
+              <button
+                type="button"
+                onClick={() => setImageEditMode(false)}
+                aria-label={t('imageEdit.close')}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                <X className="h-4 w-4" />
+              </button>
             </div>
-            <p className="mb-5 text-sm text-muted-foreground">
-              {t('delete.image.body')}
+            <p className="mb-3 text-[12px] text-muted-foreground">
+              {t('imageEdit.helpReorder')}
             </p>
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setPendingDeleteUrl(null)}
-                className="rounded-md border border-border bg-background px-3 py-1.5 text-sm hover:bg-accent"
-              >
-                {t('delete.cancel')}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  onRemoveImage(pendingDeleteUrl);
-                  setPendingDeleteUrl(null);
-                  // 확대 보기 중이었다면 같이 닫음.
-                  setExpandedImageIndex(null);
-                }}
-                className="rounded-md border border-destructive/50 bg-destructive px-3 py-1.5 text-sm font-medium text-destructive-foreground hover:bg-destructive/90"
-              >
-                {t('delete.confirm')}
-              </button>
+            <div className="-mx-1 flex-1 overflow-y-auto px-1">
+              <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5">
+                {editingOrderUrls.map((url, idx) => {
+                  const img = combinedImagesForEdit.find((i) => i.url === url);
+                  if (!img) return null;
+                  const removable = img.removable !== false;
+                  const selected = imageEditSelection.has(img.url);
+                  const isDragging = draggingUrl === img.url;
+                  const isDragOver =
+                    dragOverUrl === img.url && draggingUrl !== img.url;
+                  return (
+                    <div
+                      key={img.url}
+                      draggable
+                      onDragStart={(e) => {
+                        setDraggingUrl(img.url);
+                        e.dataTransfer.effectAllowed = 'move';
+                        try {
+                          e.dataTransfer.setData('text/plain', img.url);
+                        } catch {
+                          // some browsers throw on setData with certain types
+                        }
+                      }}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                        if (dragOverUrl !== img.url) setDragOverUrl(img.url);
+                      }}
+                      onDragLeave={() => {
+                        if (dragOverUrl === img.url) setDragOverUrl(null);
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const src = draggingUrl;
+                        setDraggingUrl(null);
+                        setDragOverUrl(null);
+                        if (!src || src === img.url) return;
+                        setEditingOrderUrls((prev) => {
+                          const next = prev.filter((u) => u !== src);
+                          const targetIdx = next.indexOf(img.url);
+                          if (targetIdx < 0) return prev;
+                          next.splice(targetIdx, 0, src);
+                          return next;
+                        });
+                      }}
+                      onDragEnd={() => {
+                        setDraggingUrl(null);
+                        setDragOverUrl(null);
+                      }}
+                      onClick={() => {
+                        if (!removable) return;
+                        setImageEditSelection((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(img.url)) next.delete(img.url);
+                          else next.add(img.url);
+                          return next;
+                        });
+                      }}
+                      title={
+                        removable
+                          ? img.sourceTitle ?? img.url
+                          : t('imageEdit.attachedTitle')
+                      }
+                      className={cn(
+                        'group/cell relative aspect-square overflow-hidden rounded-md border bg-secondary/40 transition-all',
+                        removable ? 'cursor-grab' : 'cursor-grab opacity-90',
+                        isDragging && 'opacity-30',
+                        selected
+                          ? 'border-primary ring-2 ring-primary'
+                          : isDragOver
+                            ? 'border-amber-400 ring-2 ring-amber-400'
+                            : 'border-border hover:border-primary/60',
+                      )}
+                    >
+                      {/* kind 별 셀 본체 — youtube/x 카드는 썸네일 위 브랜드 오버레이,
+                          썸네일 없는 X-empty 는 텍스트 기반 카드. 일반 이미지는 단순 img. */}
+                      {img.kind === 'youtube' && img.url ? (
+                        <>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={img.url}
+                            alt={img.sourceTitle ?? 'YouTube'}
+                            className="pointer-events-none h-full w-full object-cover"
+                            referrerPolicy="no-referrer"
+                            draggable={false}
+                            onError={(e) => {
+                              // YouTube 썸네일이 404 면 모서리에 YT 표시만 남기고 검은 배경 유지.
+                              (e.currentTarget as HTMLImageElement).style.visibility =
+                                'hidden';
+                            }}
+                          />
+                          <span
+                            className="pointer-events-none absolute left-1/2 top-1/2 inline-flex h-7 w-10 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded bg-red-600/95 text-white shadow-md"
+                            aria-hidden
+                          >
+                            <svg
+                              viewBox="0 0 24 24"
+                              className="h-4 w-4 fill-current"
+                            >
+                              <path d="M8 5v14l11-7z" />
+                            </svg>
+                          </span>
+                          <span className="pointer-events-none absolute right-1 top-1 rounded bg-red-600/95 px-1 py-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-white shadow-sm">
+                            YouTube
+                          </span>
+                        </>
+                      ) : img.kind === 'x' ? (
+                        // X: 썸네일 URL 이 있으면 이미지 + X 배지, 없으면 텍스트 기반 카드.
+                        img.url &&
+                        /^https?:\/\//i.test(img.url) &&
+                        !/^https?:\/\/(?:www\.|mobile\.)?(?:twitter\.com|x\.com)\//i.test(
+                          img.url,
+                        ) ? (
+                          <>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={img.url}
+                              alt={img.sourceTitle ?? 'X'}
+                              className="pointer-events-none h-full w-full object-cover"
+                              referrerPolicy="no-referrer"
+                              draggable={false}
+                              onError={(e) => {
+                                (e.currentTarget as HTMLImageElement).style.visibility =
+                                  'hidden';
+                              }}
+                            />
+                            <span className="pointer-events-none absolute right-1 top-1 inline-flex items-center gap-1 rounded bg-black/85 px-1.5 py-0.5 text-[9.5px] font-semibold text-white shadow-sm">
+                              <svg
+                                viewBox="0 0 24 24"
+                                aria-hidden
+                                className="h-2.5 w-2.5 fill-current"
+                              >
+                                <path d="M18.244 2H21l-6.62 7.563L22 22h-6.79l-4.51-5.835L5.5 22H2.74l7.077-8.087L2 2h6.93l4.083 5.395L18.244 2zm-1.184 18h1.59L7.06 4h-1.7l11.7 16z" />
+                              </svg>
+                              X
+                            </span>
+                          </>
+                        ) : (
+                          <div className="pointer-events-none flex h-full w-full flex-col items-center justify-center gap-1 bg-neutral-900 px-2 text-center text-white">
+                            <svg
+                              viewBox="0 0 24 24"
+                              aria-hidden
+                              className="h-5 w-5 fill-current"
+                            >
+                              <path d="M18.244 2H21l-6.62 7.563L22 22h-6.79l-4.51-5.835L5.5 22H2.74l7.077-8.087L2 2h6.93l4.083 5.395L18.244 2zm-1.184 18h1.59L7.06 4h-1.7l11.7 16z" />
+                            </svg>
+                            <span className="line-clamp-2 text-[10px] font-medium leading-tight text-white/85">
+                              {img.sourceTitle || 'X / Twitter'}
+                            </span>
+                          </div>
+                        )
+                      ) : (
+                        <>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={img.url}
+                            alt={img.sourceTitle ?? t('imageEdit.imageAlt')}
+                            className="pointer-events-none h-full w-full object-cover"
+                            referrerPolicy="no-referrer"
+                            draggable={false}
+                            onError={(e) => {
+                              (e.currentTarget as HTMLImageElement).style.visibility =
+                                'hidden';
+                            }}
+                          />
+                        </>
+                      )}
+                      {/* PIN 배지 — 메시지 metadata 의 pinnedImageUrl 과 일치하는 카드 위에 표시.
+                          좌하단에 노란 핀 아이콘으로 한 눈에 PIN 된 항목을 식별 가능. */}
+                      {message.pinnedImageUrl === img.url && (
+                        <span
+                          className="pointer-events-none absolute left-1 bottom-1 inline-flex items-center gap-0.5 rounded bg-amber-500/95 px-1 py-0.5 text-[9.5px] font-semibold text-white shadow-md"
+                          aria-label="PIN"
+                          title="PIN"
+                        >
+                          <Pin className="h-2.5 w-2.5" />
+                          PIN
+                        </span>
+                      )}
+                      {/* 순번 배지 — drop 시 새 위치를 알 수 있게. */}
+                      <span className="pointer-events-none absolute right-1 bottom-1 rounded bg-black/65 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-white shadow-sm">
+                        {idx + 1}
+                      </span>
+                      {removable && (
+                        <span
+                          className={cn(
+                            'pointer-events-none absolute left-1 top-1 inline-flex h-5 w-5 items-center justify-center rounded border-2 shadow-sm transition-colors',
+                            // 미선택 시에도 체크박스 자체는 불투명한 배경을 가져야 어떤 이미지 위에서도 또렷이 보임.
+                            // text-transparent 는 휴지통 아이콘만 안 보이게 — 체크박스 박스 자체는 또렷.
+                            selected
+                              ? 'border-destructive bg-destructive text-destructive-foreground'
+                              : 'border-white bg-neutral-900 text-transparent',
+                          )}
+                          aria-hidden
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </span>
+                      )}
+                      {!removable && (
+                        <span className="pointer-events-none absolute left-1 top-1 rounded bg-black/55 px-1 py-0.5 text-[9.5px] font-medium text-white/90">
+                          {t('imageEdit.attached')}
+                        </span>
+                      )}
+                      <span
+                        className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded bg-black/0 p-1 text-white/0 transition-opacity group-hover/cell:bg-black/45 group-hover/cell:text-white/90"
+                        aria-hidden
+                      >
+                        <GripVertical className="h-4 w-4" />
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
+              <div className="flex items-center gap-2 text-[12.5px] text-muted-foreground">
+                <span>
+                  {t('imageEdit.selected').replace(
+                    '{n}',
+                    String(imageEditSelection.size),
+                  )}
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setImageEditSelection(
+                      new Set(
+                        combinedImagesForEdit
+                          .filter((i) => i.removable !== false)
+                          .map((i) => i.url),
+                      ),
+                    )
+                  }
+                  className="rounded-md border border-border bg-background px-2 py-0.5 text-[11.5px] hover:bg-accent"
+                >
+                  {t('imageEdit.selectAll')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setImageEditSelection(new Set())}
+                  disabled={imageEditSelection.size === 0}
+                  className="rounded-md border border-border bg-background px-2 py-0.5 text-[11.5px] hover:bg-accent disabled:opacity-40"
+                >
+                  {t('imageEdit.clear')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setEditingOrderUrls(combinedImagesForEdit.map((i) => i.url))
+                  }
+                  className="rounded-md border border-border bg-background px-2 py-0.5 text-[11.5px] hover:bg-accent"
+                  title={t('imageEdit.resetOrderTitle')}
+                >
+                  {t('imageEdit.resetOrder')}
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setImageEditMode(false)}
+                  className="rounded-md border border-border bg-background px-3 py-1.5 text-sm hover:bg-accent"
+                >
+                  {t('imageEdit.cancel')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    // 최종 순서: 편집 순서에서 선택(삭제 대상) 제외.
+                    const finalOrder = editingOrderUrls.filter(
+                      (u) => !imageEditSelection.has(u),
+                    );
+                    if (onReorderImages) {
+                      onReorderImages(finalOrder);
+                    } else {
+                      // fallback: reorder callback 이 없으면 삭제만이라도 수행.
+                      for (const url of imageEditSelection) onRemoveImage(url);
+                    }
+                    setImageEditMode(false);
+                    setExpandedImageIndex(null);
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-primary/50 bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                >
+                  <Check className="h-3.5 w-3.5" />
+                  <span>
+                    {imageEditSelection.size > 0
+                      ? t('imageEdit.applyWithDelete').replace(
+                          '{n}',
+                          String(imageEditSelection.size),
+                        )
+                      : t('imageEdit.apply')}
+                  </span>
+                </button>
+              </div>
             </div>
           </div>
         </div>

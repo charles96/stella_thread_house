@@ -90,6 +90,21 @@ export class AttachmentsService {
     return { stream: fs.createReadStream(full), size: st.size, mime };
   }
 
+  // 한 메시지의 모든 첨부 파일 디렉토리를 통째로 삭제. 메시지/대화 삭제 시 디스크 정리용.
+  // 디렉토리가 없으면 no-op. 안전을 위해 baseDir 하위인지 재확인.
+  deleteForMessage(messageId: string): void {
+    try {
+      this.validateMessageId(messageId);
+    } catch {
+      return; // 잘못된 messageId 형식이면 조용히 무시 (DB에 없는 ID 일 수도).
+    }
+    const dir = this.resolveDir(messageId);
+    const rel = path.relative(this.baseDir, dir);
+    if (rel.startsWith('..') || path.isAbsolute(rel) || rel === '') return;
+    if (!fs.existsSync(dir)) return;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
   // base64 로 인코딩한 data URL 반환 — AI 호출 시 backend 가 image URL 을 base64 로 환원할 때 사용.
   readAsDataUrl(messageId: string, fileName: string): string | null {
     try {

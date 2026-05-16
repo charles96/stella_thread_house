@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Bot,
   Brain,
@@ -11,7 +11,6 @@ import {
   KeyRound,
   Languages,
   Lock,
-  LogIn,
   Mail,
   Palette,
   Server,
@@ -236,34 +235,6 @@ function NavItem({
         active
           ? 'bg-primary/15 font-medium text-primary'
           : 'text-foreground/80 hover:bg-accent/40 hover:text-foreground',
-      )}
-    >
-      {icon}
-      <span>{label}</span>
-    </button>
-  );
-}
-
-function TabButton({
-  active,
-  onClick,
-  icon,
-  label,
-}: {
-  active: boolean;
-  onClick: () => void;
-  icon: React.ReactNode;
-  label: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'flex items-center gap-1.5 px-3 py-2 text-sm transition-colors -mb-px border-b-2',
-        active
-          ? 'border-primary text-foreground'
-          : 'border-transparent text-muted-foreground hover:text-foreground',
       )}
     >
       {icon}
@@ -727,35 +698,7 @@ function AccountSection({ user }: { user: AuthUser }) {
           </form>
         )}
 
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <LogIn className="h-4 w-4 text-primary" />
-            <span className="text-[13px] font-medium">Google SSO</span>
-            <span
-              className={cn(
-                'inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium',
-                user.hasGoogle
-                  ? 'bg-emerald-500/15 text-emerald-400'
-                  : 'bg-amber-500/15 text-amber-400',
-              )}
-            >
-              {user.hasGoogle
-                ? t('settings.account.googleLinked')
-                : t('settings.account.googleUnlinked')}
-            </span>
-          </div>
-          {!user.hasGoogle && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                window.location.href = `${API_URL}/auth/google/link`;
-              }}
-            >
-              {t('settings.account.linkGoogle')}
-            </Button>
-          )}
-        </div>
+        {/* Google SSO 섹션은 일단 제거 — 추후 필요 시 git history 에서 복원. */}
         <p className="text-[11px] text-muted-foreground">
           {t('settings.account.help')}
         </p>
@@ -865,6 +808,27 @@ function ToolsSubSection() {
   const [apiKey, setApiKey] = useState('');
   const [busy, setBusy] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  // 실제 Tavily API ping 결과 — 'unknown' (초기/체크 중), 'active', 'inactive'.
+  const [activeState, setActiveState] = useState<
+    'unknown' | 'checking' | 'active' | 'inactive'
+  >('unknown');
+
+  const checkActive = useCallback(async () => {
+    setActiveState('checking');
+    try {
+      const res = await fetch(`${API_URL}/admin/tavily/check`, {
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        setActiveState('inactive');
+        return;
+      }
+      const j = (await res.json()) as { active: boolean };
+      setActiveState(j.active ? 'active' : 'inactive');
+    } catch {
+      setActiveState('inactive');
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -875,7 +839,9 @@ function ToolsSubSection() {
         });
         if (!res.ok) return;
         const j = (await res.json()) as { apiKeySet: boolean };
-        if (!cancelled) setApiKeySet(j.apiKeySet);
+        if (cancelled) return;
+        setApiKeySet(j.apiKeySet);
+        if (j.apiKeySet) void checkActive();
       } catch {
         // ignore
       }
@@ -883,7 +849,7 @@ function ToolsSubSection() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [checkActive]);
 
   async function save() {
     if (!apiKey.trim()) return;
@@ -901,6 +867,8 @@ function ToolsSubSection() {
         setApiKey('');
         setSavedAt(Date.now());
         setTimeout(() => setSavedAt(null), 1500);
+        if (j.apiKeySet) void checkActive();
+        else setActiveState('unknown');
       }
     } catch {
       // ignore
@@ -920,18 +888,35 @@ function ToolsSubSection() {
           <span className="text-[13px] font-medium text-foreground">
             {t('settings.ai.tools.tavily')}
           </span>
-          <span
-            className={cn(
-              'inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium',
-              apiKeySet
-                ? 'bg-emerald-500/15 text-emerald-400'
-                : 'bg-muted text-muted-foreground',
-            )}
-          >
-            {apiKeySet
-              ? t('settings.ai.tools.set')
-              : t('settings.ai.tools.notSet')}
-          </span>
+          {/* Active 검증 결과 우선 표시 — 키 미설정 시에만 set/notSet 라벨 노출. */}
+          {apiKeySet ? (
+            <span
+              className={cn(
+                'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium',
+                activeState === 'active'
+                  ? 'bg-emerald-500/15 text-emerald-400'
+                  : activeState === 'inactive'
+                    ? 'bg-destructive/15 text-destructive'
+                    : 'bg-muted text-muted-foreground',
+              )}
+            >
+              {activeState === 'active' && (
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              )}
+              {activeState === 'inactive' && (
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-destructive" />
+              )}
+              {activeState === 'checking' || activeState === 'unknown'
+                ? t('settings.ai.tools.checking')
+                : activeState === 'active'
+                  ? t('settings.ai.tools.active')
+                  : t('settings.ai.tools.inactive')}
+            </span>
+          ) : (
+            <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+              {t('settings.ai.tools.notSet')}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <input
@@ -1139,7 +1124,7 @@ function SmtpSection() {
         <div className="grid grid-cols-[1fr_120px] gap-2">
           <div>
             <label className="mb-1 block text-[11.5px] text-muted-foreground">
-              Host
+              {t('settings.smtp.host')}
             </label>
             <input
               type="text"
@@ -1153,7 +1138,7 @@ function SmtpSection() {
           </div>
           <div>
             <label className="mb-1 block text-[11.5px] text-muted-foreground">
-              Port
+              {t('settings.smtp.port')}
             </label>
             <input
               type="number"
@@ -1167,7 +1152,7 @@ function SmtpSection() {
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="mb-1 block text-[11.5px] text-muted-foreground">
-              User
+              {t('settings.smtp.user')}
             </label>
             <input
               type="text"
@@ -1181,14 +1166,16 @@ function SmtpSection() {
           </div>
           <div>
             <label className="mb-1 block text-[11.5px] text-muted-foreground">
-              Password
+              {t('settings.smtp.password')}
             </label>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder={
-                cfg?.passwordSet ? '••••••••' : 'app password / smtp password'
+                cfg?.passwordSet
+                  ? '••••••••'
+                  : t('settings.smtp.passwordPlaceholder')
               }
               className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-[12.5px] outline-none focus:ring-2 focus:ring-ring"
               autoComplete="new-password"
@@ -1197,7 +1184,7 @@ function SmtpSection() {
         </div>
         <div>
           <label className="mb-1 block text-[11.5px] text-muted-foreground">
-            From
+            {t('settings.smtp.from')}
           </label>
           <input
             type="text"
@@ -1216,11 +1203,15 @@ function SmtpSection() {
             onChange={(e) => setSecure(e.target.checked)}
             className="h-3.5 w-3.5"
           />
-          <span>TLS / SSL (port 465 자동 활성화)</span>
+          <span>{t('settings.smtp.tls')}</span>
         </label>
         <div className="flex items-center justify-between gap-3 pt-1">
           <span className="text-[11px] text-muted-foreground">
-            {error ? `오류: ${error}` : savedAt ? '저장됨' : ''}
+            {error
+              ? `${t('settings.smtp.errorPrefix')}${error}`
+              : savedAt
+                ? t('settings.smtp.saved')
+                : ''}
           </span>
           <div className="flex items-center gap-2">
             {/* 테스트 결과 — 성공 시 그린 체크 + 보낸 곳, 실패 시 빨간 텍스트. */}
@@ -1234,7 +1225,8 @@ function SmtpSection() {
             )}
             {testState.kind === 'error' && (
               <span className="text-[11px] text-destructive">
-                실패: {testState.message}
+                {t('settings.smtp.failurePrefix')}
+                {testState.message}
               </span>
             )}
             <Button
@@ -1243,7 +1235,9 @@ function SmtpSection() {
               onClick={sendTest}
               disabled={testState.kind === 'sending'}
             >
-              {testState.kind === 'sending' ? '발송 중…' : '테스트 발송'}
+              {testState.kind === 'sending'
+                ? t('settings.smtp.sending')
+                : t('settings.smtp.sendTest')}
             </Button>
             <Button
               variant="default"
@@ -1251,7 +1245,7 @@ function SmtpSection() {
               onClick={save}
               disabled={saving}
             >
-              {saving ? '저장 중…' : '저장'}
+              {saving ? t('settings.smtp.saving') : t('settings.smtp.save')}
             </Button>
           </div>
         </div>
@@ -1597,6 +1591,46 @@ function SystemTab() {
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [paused, setPaused] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
+  // Debug 토글 — 서버 상태. OFF 면 백엔드가 error 외 레벨을 버림 → 그 시점부터 기록 시작/중단.
+  const [debugEnabled, setDebugEnabled] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_URL}/admin/system/debug`, {
+          credentials: 'include',
+        });
+        if (!res.ok) return;
+        const j = (await res.json()) as { enabled: boolean };
+        if (!cancelled) setDebugEnabled(j.enabled);
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  async function toggleDebug(next: boolean) {
+    setDebugEnabled(next); // 낙관적 업데이트
+    try {
+      const res = await fetch(`${API_URL}/admin/system/debug`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: next }),
+      });
+      if (!res.ok) {
+        // 실패하면 상태 복원
+        setDebugEnabled(!next);
+      } else {
+        const j = (await res.json()) as { enabled: boolean };
+        setDebugEnabled(j.enabled);
+      }
+    } catch {
+      setDebugEnabled(!next);
+    }
+  }
   const containerRef = useRef<HTMLDivElement>(null);
   const pausedRef = useRef(paused);
   pausedRef.current = paused;
@@ -1644,7 +1678,7 @@ function SystemTab() {
     };
   }, []);
 
-  // 새 로그 들어오면 자동 스크롤.
+  // 새 로그 들어오면 자동 스크롤. 클라이언트 사이드 필터링은 더 이상 없음 — 백엔드가 게이트.
   useEffect(() => {
     if (!autoScroll) return;
     const el = containerRef.current;
@@ -1676,6 +1710,15 @@ function SystemTab() {
           >
             {t('settings.system.clear')}
           </Button>
+          <label className="flex items-center gap-1 text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={debugEnabled}
+              onChange={(e) => void toggleDebug(e.target.checked)}
+              className="h-3.5 w-3.5"
+            />
+            {t('settings.system.debug')}
+          </label>
           <label className="flex items-center gap-1 text-muted-foreground">
             <input
               type="checkbox"
@@ -1790,29 +1833,6 @@ function RoleSelect({
   );
 }
 
-function Section({
-  icon,
-  title,
-  right,
-  children,
-}: {
-  icon?: React.ReactNode;
-  title: string;
-  right?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <div className="mb-2 flex items-center gap-1.5 text-[12px] font-medium text-muted-foreground">
-        {icon}
-        <span>{title}</span>
-        {right && <div className="ml-auto">{right}</div>}
-      </div>
-      {children}
-    </div>
-  );
-}
-
 function Empty({ children }: { children: React.ReactNode }) {
   return (
     <p className="py-3 text-center text-xs text-muted-foreground">{children}</p>
@@ -1893,126 +1913,3 @@ function ModelPickerRow({
   );
 }
 
-function AiPersonSvg({
-  hasReasoning,
-  hasVision,
-}: {
-  hasReasoning: boolean;
-  hasVision: boolean;
-}) {
-  const reasonColor = hasReasoning
-    ? 'hsl(var(--primary))'
-    : 'hsl(var(--muted-foreground))';
-  const visionColor = hasVision
-    ? 'hsl(var(--primary))'
-    : 'hsl(var(--muted-foreground))';
-  const reasonFill = hasReasoning ? 0.85 : 0.18;
-  const visionFill = hasVision ? 0.9 : 0.3;
-  const brainOpacity = hasReasoning ? 0.7 : 0.25;
-
-  return (
-    <svg
-      viewBox="0 0 120 160"
-      role="img"
-      aria-label="AI configuration profile"
-      className="h-full w-full"
-    >
-      <path
-        d="M 38 150 L 38 130 C 38 124 42 120 52 118 L 78 118 L 78 150 Z"
-        fill="hsl(var(--secondary))"
-        stroke="hsl(var(--border))"
-        strokeWidth="1.5"
-      />
-      <path
-        d="
-          M 70 18
-          C 92 16 104 32 104 60
-          C 104 86 100 102 92 116
-          L 78 116
-          L 70 105
-          L 50 105
-          C 44 105 40 102 38 98
-          L 36 88
-          L 30 84
-          L 22 76
-          L 18 68
-          L 28 62
-          L 28 52
-          C 28 40 34 30 46 24
-          C 54 19 62 18 70 18
-          Z
-        "
-        fill={reasonColor}
-        fillOpacity={reasonFill}
-        stroke={reasonColor}
-        strokeOpacity="0.9"
-        strokeWidth="1.8"
-        strokeLinejoin="round"
-      />
-      <g
-        fill="none"
-        stroke="hsl(var(--card))"
-        strokeOpacity={brainOpacity}
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      >
-        <path d="M 50 32 Q 60 28 72 32 Q 84 36 92 48" />
-        <path d="M 52 44 Q 64 42 76 46 Q 86 50 92 60" />
-        <path d="M 56 56 Q 68 56 80 60 Q 88 64 92 72" />
-        <path d="M 62 70 Q 74 72 84 76" />
-      </g>
-      <ellipse
-        cx="80"
-        cy="64"
-        rx="5"
-        ry="8"
-        fill={reasonColor}
-        fillOpacity={reasonFill * 0.6}
-        stroke={reasonColor}
-        strokeOpacity="0.6"
-        strokeWidth="1"
-      />
-      <path
-        d="M 78 60 Q 82 64 78 70"
-        fill="none"
-        stroke="hsl(var(--card))"
-        strokeOpacity="0.6"
-        strokeWidth="1.1"
-      />
-      <g>
-        <ellipse
-          cx="42"
-          cy="62"
-          rx="6"
-          ry="3.6"
-          fill="hsl(var(--card))"
-          stroke={visionColor}
-          strokeWidth="1.8"
-        />
-        <circle
-          cx="42"
-          cy="62"
-          r="2.2"
-          fill={visionColor}
-          fillOpacity={visionFill}
-        />
-        <path
-          d="M 36 58 L 34 56 M 42 57 L 42 55 M 48 58 L 50 56"
-          stroke={visionColor}
-          strokeOpacity={hasVision ? 0.85 : 0.4}
-          strokeWidth="1.2"
-          strokeLinecap="round"
-        />
-      </g>
-      <path
-        d="M 32 88 Q 38 92 44 88"
-        fill="none"
-        stroke="hsl(var(--card))"
-        strokeOpacity="0.7"
-        strokeWidth="1.3"
-        strokeLinecap="round"
-      />
-      <circle cx="22" cy="74" r="0.9" fill="hsl(var(--card))" opacity="0.7" />
-    </svg>
-  );
-}

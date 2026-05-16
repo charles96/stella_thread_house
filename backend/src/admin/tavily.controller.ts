@@ -57,6 +57,40 @@ export class TavilyController implements OnModuleInit {
     return { apiKeySet: !!cfg.apiKey && cfg.apiKey.length > 0 };
   }
 
+  // Tavily 키가 실제로 활성/유효한지 ping 요청으로 검증.
+  // 클라이언트 사이드에서 "Active" 배지 노출용 — Settings 화면 진입 시 호출.
+  @Get('check')
+  async check(): Promise<{ active: boolean; reason?: string }> {
+    const cfg = await this.load();
+    if (!cfg.apiKey || cfg.apiKey.length === 0) {
+      return { active: false, reason: 'not set' };
+    }
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    try {
+      const res = await fetch('https://api.tavily.com/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: ctrl.signal,
+        body: JSON.stringify({
+          api_key: cfg.apiKey,
+          query: 'ping',
+          max_results: 1,
+        }),
+      });
+      if (res.ok) return { active: true };
+      const txt = await res.text().catch(() => '');
+      return { active: false, reason: `HTTP ${res.status} ${txt.slice(0, 100)}` };
+    } catch (e) {
+      return {
+        active: false,
+        reason: e instanceof Error ? e.message : 'unknown',
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   @Put()
   async update(
     @Body() body: { apiKey?: string },

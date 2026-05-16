@@ -29,6 +29,10 @@ interface DeleteMessagesBody {
   ids: string[];
 }
 
+interface ReorderMessagesBody {
+  orderedIds: string[];
+}
+
 interface UpdateMessageBody {
   content?: string;
   thinking?: string | null;
@@ -121,6 +125,22 @@ export class ConversationsController {
       throw new BadRequestException('ids 배열이 필요합니다');
     }
     await this.service.deleteMessages(this.uid(req), id, body.ids);
+  }
+
+  // 메시지 재정렬 — orderedIds 배열 순서대로 position 을 0,1,2... 로 일괄 갱신.
+  // conversation 의 모든 메시지를 빠짐없이 보내야 함 (서비스에서 무결성 검사).
+  // ':msgId' 와의 매칭 우선순위 때문에 이 라우트를 먼저 선언.
+  @Patch(':id/messages/reorder')
+  @HttpCode(204)
+  async reorderMessages(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: ReorderMessagesBody,
+  ) {
+    if (!body || !Array.isArray(body.orderedIds)) {
+      throw new BadRequestException('orderedIds 배열이 필요합니다');
+    }
+    await this.service.reorderMessages(this.uid(req), id, body.orderedIds);
   }
 
   @Patch(':id/messages/:msgId')

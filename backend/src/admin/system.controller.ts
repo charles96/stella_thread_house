@@ -1,7 +1,9 @@
 import {
+  Body,
   Controller,
   Get,
   MessageEvent,
+  Put,
   Sse,
   UseGuards,
 } from '@nestjs/common';
@@ -31,5 +33,18 @@ export class SystemController {
     return this.logs
       .observe()
       .pipe(map((entry) => ({ data: entry }) as MessageEvent));
+  }
+
+  // Debug 토글 — false 면 error 외 레벨을 LogService 가 버림 (메모리·네트워크 절감).
+  // 메모리만 유지 → 서버 재기동 시 false 로 리셋. 영속 필요 시 system_config 로 확장 가능.
+  @Get('debug')
+  getDebug(): { enabled: boolean } {
+    return { enabled: this.logs.isDebug() };
+  }
+
+  @Put('debug')
+  setDebug(@Body() body: { enabled: boolean }): { enabled: boolean } {
+    this.logs.setDebug(!!body.enabled);
+    return { enabled: this.logs.isDebug() };
   }
 }
