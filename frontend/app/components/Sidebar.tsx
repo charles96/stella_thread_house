@@ -32,7 +32,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import type { AuthUser, Conversation, Folder } from './ChatRoom';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { version } from '../../package.json';
 
 // 사이드바 내 conversation 드래그 식별용 커스텀 MIME. kind 별로 분리해
@@ -445,24 +445,33 @@ function FolderRow({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const rowRef = useRef<HTMLDivElement>(null);
+  const commitRef = useRef<() => void>(() => {});
+  commitRef.current = () => {
+    const next = (inputRef.current?.value ?? draft).trim();
+    if (next && next !== folder.name) onRenameFolder(folder.id, next);
+    setEditing(false);
+  };
+
+  useLayoutEffect(() => {
+    if (!editing) return;
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, [editing]);
 
   useEffect(() => {
     if (!editing) return;
-    const id = window.setTimeout(() => {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    }, 0);
-    return () => window.clearTimeout(id);
+    function onMouseDown(e: MouseEvent) {
+      if (!rowRef.current?.contains(e.target as Node)) {
+        commitRef.current();
+      }
+    }
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
   }, [editing]);
 
-  function commitRename() {
-    const next = draft.trim();
-    if (next && next !== folder.name) onRenameFolder(folder.id, next);
-    setEditing(false);
-  }
-
   return (
-    <div className="flex flex-col">
+    <div ref={rowRef} className="flex flex-col">
       <div
         className={cn(
           'group flex w-full cursor-pointer items-center gap-1 overflow-hidden rounded-md px-2 py-0.5 text-sm transition-colors hover:bg-accent/40',
@@ -502,11 +511,10 @@ function FolderRow({
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onClick={(e) => e.stopPropagation()}
-              onBlur={commitRename}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   e.preventDefault();
-                  (e.currentTarget as HTMLInputElement).blur();
+                  commitRef.current();
                 } else if (e.key === 'Escape') {
                   e.preventDefault();
                   setEditing(false);
@@ -535,46 +543,46 @@ function FolderRow({
         >
           {items.length}
         </span>
-        <div className={cn('flex shrink-0 gap-0.5', editing && 'hidden')}>
-          {/* 폴더 액션도 thread row와 동일한 ⋯ 드롭다운 패턴 */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-5 w-5"
+        {!editing && (
+          <div className="flex shrink-0 gap-0.5">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-5 w-5"
+                  onClick={(e) => e.stopPropagation()}
+                  title={t('sidebar.more')}
+                >
+                  <MoreHorizontal className="h-3.5 w-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
                 onClick={(e) => e.stopPropagation()}
-                title={t('sidebar.more')}
               >
-                <MoreHorizontal className="h-3.5 w-3.5" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <DropdownMenuItem
-                onSelect={() => {
-                  // 메뉴 닫힘 사이클이 끝난 뒤 input mount 되도록 약간 지연 → autoFocus 경합 방지.
-                  setDraft(folder.name);
-                  window.setTimeout(() => setEditing(true), 120);
-                }}
-                className="gap-2"
-              >
-                <Pencil className="h-3 w-3" />
-                <span>{t('sidebar.rename')}</span>
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onSelect={() => onDeleteFolder(folder.id)}
-                className="gap-2 text-red-500 focus:bg-red-500/10 focus:text-red-500"
-              >
-                <Trash2 className="h-3 w-3" />
-                <span>{t('sidebar.delete')}</span>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+                <DropdownMenuItem
+                  onSelect={() => {
+                    setDraft(folder.name);
+                    window.setTimeout(() => setEditing(true), 160);
+                  }}
+                  className="gap-2"
+                >
+                  <Pencil className="h-3 w-3" />
+                  <span>{t('sidebar.rename')}</span>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onSelect={() => onDeleteFolder(folder.id)}
+                  className="gap-2 text-red-500 focus:bg-red-500/10 focus:text-red-500"
+                >
+                  <Trash2 className="h-3 w-3" />
+                  <span>{t('sidebar.delete')}</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        )}
       </div>
       {folder.expanded && (
         <div className="ml-3">
@@ -682,26 +690,34 @@ function ConversationRow({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
-
-  // 편집 진입 시 input에 안정적으로 포커스. autoFocus 는 Radix의 close-auto-focus
-  // 사이클과 경쟁해서 즉시 blur 가 터지는 깜박임 원인이 됨 → 명시적으로 useEffect 에서.
-  useEffect(() => {
-    if (!editing) return;
-    const id = window.setTimeout(() => {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    }, 0);
-    return () => window.clearTimeout(id);
-  }, [editing]);
-
-  function commitRename() {
-    const next = draft.trim();
+  const rowRef = useRef<HTMLDivElement>(null);
+  const commitRef = useRef<() => void>(() => {});
+  commitRef.current = () => {
+    const next = (inputRef.current?.value ?? draft).trim();
     if (next && next !== c.title) onRename(c.id, next);
     setEditing(false);
-  }
+  };
+
+  useLayoutEffect(() => {
+    if (!editing) return;
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, [editing]);
+
+  useEffect(() => {
+    if (!editing) return;
+    function onMouseDown(e: MouseEvent) {
+      if (!rowRef.current?.contains(e.target as Node)) {
+        commitRef.current();
+      }
+    }
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [editing]);
 
   return (
     <div
+      ref={rowRef}
       onClick={() => {
         if (editing) return;
         onSelect(c.id);
@@ -739,11 +755,10 @@ function ConversationRow({
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onClick={(e) => e.stopPropagation()}
-            onBlur={commitRename}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault();
-                (e.currentTarget as HTMLInputElement).blur();
+                commitRef.current();
               } else if (e.key === 'Escape') {
                 e.preventDefault();
                 setEditing(false);
@@ -766,81 +781,80 @@ function ConversationRow({
           </span>
         )}
       </div>
-      <div className={cn('flex shrink-0 gap-0.5', editing && 'hidden')}>
-        {/* 인라인은 ⋯ 한 개만. 이름 변경 / 폴더 이동 / 삭제 모두 메뉴 안에서. */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-5 w-5"
+      {!editing && (
+        <div className="flex shrink-0 gap-0.5">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-5 w-5"
+                onClick={(e) => e.stopPropagation()}
+                title={t('sidebar.more')}
+              >
+                <MoreHorizontal className="h-3.5 w-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
               onClick={(e) => e.stopPropagation()}
-              title={t('sidebar.more')}
             >
-              <MoreHorizontal className="h-3.5 w-3.5" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            align="end"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <DropdownMenuItem
-              onSelect={() => {
-                // 메뉴가 완전히 닫히고(close-auto-focus 사이클까지 끝난 뒤)
-                // 편집 모드를 켠다 → 포커스 경합으로 인한 즉시 blur 깜박임 방지.
-                setDraft(c.title || '');
-                window.setTimeout(() => setEditing(true), 120);
-              }}
-              className="gap-2"
-            >
-              <Pencil className="h-3 w-3" />
-              <span>{t('sidebar.rename')}</span>
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuLabel className="flex items-center gap-1.5">
-              <FolderInput className="h-3 w-3" />
-              {t('sidebar.moveTo')}
-            </DropdownMenuLabel>
-            <DropdownMenuItem
-              onSelect={() => onMove(c.id, null)}
-              className="gap-2"
-            >
-              <span className="text-muted-foreground">
-                {t('sidebar.uncategorized')}
-              </span>
-              {(!c.folderId || c.folderId === null) && (
-                <span className="ml-auto text-primary">●</span>
-              )}
-            </DropdownMenuItem>
-            {folders.length === 0 && (
-              <div className="px-2 py-1 text-[11.5px] text-muted-foreground">
-                {t('sidebar.noFolders')}
-              </div>
-            )}
-            {folders.map((f) => (
               <DropdownMenuItem
-                key={f.id}
-                onSelect={() => onMove(c.id, f.id)}
+                onSelect={() => {
+                  setDraft(c.title || '');
+                  window.setTimeout(() => setEditing(true), 160);
+                }}
                 className="gap-2"
               >
-                <FolderIcon className="h-3 w-3 text-primary" />
-                <span className="truncate">{f.name}</span>
-                {c.folderId === f.id && (
+                <Pencil className="h-3 w-3" />
+                <span>{t('sidebar.rename')}</span>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="flex items-center gap-1.5">
+                <FolderInput className="h-3 w-3" />
+                {t('sidebar.moveTo')}
+              </DropdownMenuLabel>
+              <DropdownMenuItem
+                onSelect={() => onMove(c.id, null)}
+                className="gap-2"
+              >
+                <span className="text-muted-foreground">
+                  {t('sidebar.uncategorized')}
+                </span>
+                {(!c.folderId || c.folderId === null) && (
                   <span className="ml-auto text-primary">●</span>
                 )}
               </DropdownMenuItem>
-            ))}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onSelect={() => onDelete(c.id)}
-              className="gap-2 text-red-500 focus:bg-red-500/10 focus:text-red-500"
-            >
-              <Trash2 className="h-3 w-3" />
-              <span>{t('sidebar.delete')}</span>
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+              {folders.length === 0 && (
+                <div className="px-2 py-1 text-[11.5px] text-muted-foreground">
+                  {t('sidebar.noFolders')}
+                </div>
+              )}
+              {folders.map((f) => (
+                <DropdownMenuItem
+                  key={f.id}
+                  onSelect={() => onMove(c.id, f.id)}
+                  className="gap-2"
+                >
+                  <FolderIcon className="h-3 w-3 text-primary" />
+                  <span className="truncate">{f.name}</span>
+                  {c.folderId === f.id && (
+                    <span className="ml-auto text-primary">●</span>
+                  )}
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onSelect={() => onDelete(c.id)}
+                className="gap-2 text-red-500 focus:bg-red-500/10 focus:text-red-500"
+              >
+                <Trash2 className="h-3 w-3" />
+                <span>{t('sidebar.delete')}</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      )}
     </div>
   );
 }
