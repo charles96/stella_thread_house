@@ -38,6 +38,8 @@ interface ChatRequest {
   useVision?: boolean;
   endpoint?: string;
   kind?: 'chat' | 'thread';
+  tavilyTopRead?: number;
+  locale?: string;
   persist?: ChatPersistPayload;
 }
 
@@ -312,6 +314,8 @@ export class ChatController {
         signal: noopCtrl.signal,
         kind: body.kind,
         userName,
+        tavilyTopRead: body.tavilyTopRead,
+        locale: body.locale,
       })) {
         writeIfConnected(`data: ${JSON.stringify(part)}\n\n`);
         // content/thinking 누적 — 클라이언트가 끊겨도 최종 저장을 위해.
@@ -323,15 +327,13 @@ export class ChatController {
           }
         }
       }
-      writeIfConnected('data: [DONE]\n\n');
+      // AI 발화 완료 즉시 전송 → 프론트 입력창 바로 열림.
+      writeIfConnected(`data: ${JSON.stringify({ type: 'ai_done' })}\n\n`);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'unknown error';
       writeIfConnected(`data: ${JSON.stringify({ error: message })}\n\n`);
       this.logger.warn(`[chat/stream] error during generation: ${message}`);
     } finally {
-      // persist + hashtag 를 await 한 뒤 hashtags SSE 이벤트로 푸시 → 프론트 우측 패널 실시간 갱신.
-      // 연결은 hashtag push 후 닫는다 — Stop 버튼/pending 해제는 약간 지연되지만,
-      // "답변 완료 시 hashtag 가 즉시 보인다"는 UX 우선.
       if (persistCtx) {
         const ctx = persistCtx;
         const model = body.model;
@@ -341,18 +343,14 @@ export class ChatController {
             ctx.userId,
             ctx.convId,
             ctx.assistantId,
-            {
-              content: ctx.content,
-              thinking: ctx.thinking || null,
-            },
+            { content: ctx.content, thinking: ctx.thinking || null },
           );
         } catch (e) {
           this.logger.error(
             `[chat/stream] final persist failed: ${e instanceof Error ? e.message : String(e)}`,
           );
         }
-        // 2) hashtag 생성 → Thread(conversation) 단위 통합 hashtags 에 누적 union.
-        //    완료 후 클라이언트로 SSE 'hashtags' 이벤트 push → 새로고침 없이 우측 패널 실시간 반영.
+        // 2) 해시태그 생성 — 연결 유지 중 await, 완료 후 SSE 로 push.
         if (ctx.content.trim().length > 0) {
           try {
             const tagResult = await this.chatService.generateHashtags(
@@ -406,13 +404,10 @@ export class ChatController {
         }
       }
 
-      // 모든 백그라운드 작업 완료 후 연결 종료 → 프론트 reader done=true.
+      // 모든 작업 완료 후 연결 종료.
+      writeIfConnected('data: [DONE]\n\n');
       if (clientConnected) {
-        try {
-          res.end();
-        } catch {
-          // ignore — 이미 닫혔을 수 있음
-        }
+        try { res.end(); } catch { /* ignore */ }
         clientConnected = false;
       }
     }

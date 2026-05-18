@@ -8,10 +8,13 @@ import {
   ChevronsUpDown,
   Clock,
   Eye,
+  Globe,
+  Hash,
   KeyRound,
   Languages,
   Lock,
   Mail,
+  MessageSquareText,
   Palette,
   Server,
   Settings as SettingsIcon,
@@ -35,6 +38,13 @@ import { cn } from '@/lib/utils';
 import { useI18n, type Lang } from '@/lib/i18n';
 import { useTheme } from '@/lib/theme';
 import { COMMON_TIMEZONES, useTimezone } from '@/lib/timezone';
+import {
+  useThreadSettings,
+  HASHTAG_THRESHOLD_MIN,
+  HASHTAG_THRESHOLD_MAX,
+  TAVILY_TOP_READ_MIN,
+  TAVILY_TOP_READ_MAX,
+} from '@/lib/threadSettings';
 import type { AuthUser, ModelInfo } from './ChatRoom';
 
 interface Props {
@@ -57,6 +67,7 @@ interface Props {
 
 type Tab =
   | 'general'
+  | 'thread'
   | 'admin-ai'
   | 'admin-smtp'
   | 'admin-member'
@@ -143,6 +154,12 @@ export default function SettingsModal({
             icon={<SlidersHorizontal className="h-4 w-4" />}
             label={t('settings.menu.general')}
           />
+          <NavItem
+            active={tab === 'thread'}
+            onClick={() => setTab('thread')}
+            icon={<MessageSquareText className="h-4 w-4" />}
+            label={t('settings.menu.thread')}
+          />
           {isAdmin && (
             <>
               <div className="mt-3 flex items-center gap-2 px-3 py-2 text-sm font-medium text-muted-foreground">
@@ -185,6 +202,7 @@ export default function SettingsModal({
             {tab === 'general' && (
               <GeneralTab user={user} onUserUpdated={onUserUpdated} />
             )}
+            {tab === 'thread' && <ThreadTab />}
             {isAdmin && tab === 'admin-ai' && (
               <AiSection
                 models={models}
@@ -240,6 +258,114 @@ function NavItem({
       {icon}
       <span>{label}</span>
     </button>
+  );
+}
+
+// ─── Thread Tab ──────────────────────────────────────────────────
+
+function ThreadTab() {
+  const { t } = useI18n();
+  const { hashtagThreshold, setHashtagThreshold, tavilyTopRead, setTavilyTopRead } = useThreadSettings();
+  return (
+    <div className="flex flex-col gap-8">
+      <div className="flex flex-col gap-5">
+        <h2 className="flex items-center gap-2 text-[15px] font-semibold tracking-tight text-foreground">
+          <MessageSquareText className="h-5 w-5 text-primary" />
+          <span>{t('settings.menu.thread')}</span>
+        </h2>
+        <section className="flex flex-col gap-2">
+          <h3 className="flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <Hash className="h-3.5 w-3.5 text-primary" />
+            <span>{t('settings.thread.hashtagThreshold')}</span>
+          </h3>
+          <div className="flex flex-col gap-3 rounded-lg border border-border bg-secondary/30 p-4">
+            <p className="text-[11.5px] text-muted-foreground">
+              {t('settings.thread.hashtagThresholdDesc')}
+            </p>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setHashtagThreshold(hashtagThreshold - 1)}
+                disabled={hashtagThreshold <= HASHTAG_THRESHOLD_MIN}
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background text-sm hover:bg-accent disabled:opacity-50"
+                aria-label="decrease"
+              >
+                −
+              </button>
+              <input
+                type="number"
+                min={HASHTAG_THRESHOLD_MIN}
+                max={HASHTAG_THRESHOLD_MAX}
+                value={hashtagThreshold}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  if (Number.isFinite(v)) setHashtagThreshold(v);
+                }}
+                className="h-8 w-14 rounded-md border border-border bg-background px-2 text-center text-sm tabular-nums [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              />
+              <button
+                type="button"
+                onClick={() => setHashtagThreshold(hashtagThreshold + 1)}
+                disabled={hashtagThreshold >= HASHTAG_THRESHOLD_MAX}
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background text-sm hover:bg-accent disabled:opacity-50"
+                aria-label="increase"
+              >
+                +
+              </button>
+              <span className="text-[12px] text-muted-foreground">
+                ({HASHTAG_THRESHOLD_MIN} – {HASHTAG_THRESHOLD_MAX})
+              </span>
+            </div>
+          </div>
+        </section>
+
+        <section className="flex flex-col gap-2">
+          <h3 className="flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <Globe className="h-3.5 w-3.5 text-primary" />
+            <span>{t('settings.thread.tavilyTopRead')}</span>
+          </h3>
+          <div className="flex flex-col gap-3 rounded-lg border border-border bg-secondary/30 p-4">
+            <p className="text-[11.5px] text-muted-foreground">
+              {t('settings.thread.tavilyTopReadDesc')}
+            </p>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setTavilyTopRead(tavilyTopRead - 1)}
+                disabled={tavilyTopRead <= TAVILY_TOP_READ_MIN}
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background text-sm hover:bg-accent disabled:opacity-50"
+                aria-label="decrease"
+              >
+                −
+              </button>
+              <input
+                type="number"
+                min={TAVILY_TOP_READ_MIN}
+                max={TAVILY_TOP_READ_MAX}
+                value={tavilyTopRead}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  if (Number.isFinite(v)) setTavilyTopRead(v);
+                }}
+                className="h-8 w-14 rounded-md border border-border bg-background px-2 text-center text-sm tabular-nums [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              />
+              <button
+                type="button"
+                onClick={() => setTavilyTopRead(tavilyTopRead + 1)}
+                disabled={tavilyTopRead >= TAVILY_TOP_READ_MAX}
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background text-sm hover:bg-accent disabled:opacity-50"
+                aria-label="increase"
+              >
+                +
+              </button>
+              <span className="text-[12px] text-muted-foreground">
+                ({TAVILY_TOP_READ_MIN} – {TAVILY_TOP_READ_MAX})
+              </span>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
   );
 }
 

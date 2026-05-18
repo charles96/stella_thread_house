@@ -21,6 +21,15 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'users' AND column_name = 'settings'
+  ) THEN
+    ALTER TABLE users ADD COLUMN settings JSONB NOT NULL DEFAULT '{}';
+  END IF;
+END $$;
+
 CREATE UNIQUE INDEX IF NOT EXISTS users_google_id_uidx
   ON users (google_id) WHERE google_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_uidx

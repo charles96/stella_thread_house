@@ -485,6 +485,7 @@ export class PageService {
   async *extractWithProgress(
     url: string,
     maxBytes = 2_000_000,
+    { skipTavilyFallback = false } = {},
   ): AsyncGenerator<
     | { type: 'stage'; stage: 'fetch' | 'tavily' }
     | { type: 'result'; result: PageExtractResult }
@@ -544,15 +545,22 @@ export class PageService {
     }
 
     // Tavily 폴백 — JS 차단 사이트(Instagram, X 등) 대응.
+    // skipTavilyFallback=true 면 건너뜀 (검색 결과 경로: extract API hang 방지).
     // 키가 없으면 무시하고 다음 단계로.
     try {
       const tavilyKey = await this.getTavilyKey();
-      if (tavilyKey) {
+      if (tavilyKey && !skipTavilyFallback) {
         this.logger.log(
           `fetch ${fetchResult ? 'blocked' : 'failed'} → tavily extract: ${u.toString()}`,
         );
         yield { type: 'stage', stage: 'tavily' };
-        const tavilyResult = await this.extractViaTavily(u);
+        // res.json() 이 AbortSignal을 무시하는 경우를 대비해 독립 타임아웃으로 강제 중단.
+        const tavilyResult = await Promise.race([
+          this.extractViaTavily(u),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('tavily extract timeout')), 30_000),
+          ),
+        ]);
         yield { type: 'result', result: finalizeIg(tavilyResult) };
         return;
       }
@@ -735,10 +743,10 @@ export class PageService {
     const key = await this.getTavilyKey();
     if (!key) throw new Error('TAVILY_API_KEY 미설정');
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 25_000);
-    let res: globalThis.Response;
+    // fetch + res.json() 전체에 타임아웃 — body 다운로드 hang 방지.
+    const timer = setTimeout(() => ctrl.abort(), 30_000);
     try {
-      res = await fetch('https://api.tavily.com/extract', {
+      const res = await fetch('https://api.tavily.com/extract', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: ctrl.signal,
@@ -749,50 +757,50 @@ export class PageService {
           include_images: true,
         }),
       });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(`Tavily extract HTTP ${res.status} ${txt}`);
+      }
+      const json = (await res.json()) as {
+        results?: Array<{
+          url?: string;
+          raw_content?: string;
+          images?: string[];
+        }>;
+        failed_results?: Array<{ url?: string; error?: string }>;
+      };
+      const r = json.results?.[0];
+      if (!r || !r.raw_content) {
+        const fail = json.failed_results?.[0]?.error ?? 'no content';
+        throw new Error(`Tavily extract 결과 없음: ${fail}`);
+      }
+      const text = r.raw_content;
+      // Tavily 의 structured images 는 빈약(프로필 1장 등)할 때가 많음.
+      // raw_content (markdown) 의 ![alt](url) 패턴을 같이 파싱해 합집합으로 반환.
+      const seen = new Set<string>();
+      const images: PageImage[] = [];
+      const push = (src: string) => {
+        if (!src || seen.has(src)) return;
+        seen.add(src);
+        images.push({ src });
+      };
+      for (const s of r.images ?? []) push(s);
+      const mdRe = /!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/g;
+      let m: RegExpExecArray | null;
+      while ((m = mdRe.exec(text)) !== null) push(m[1]);
+      return {
+        url: u.toString(),
+        finalUrl: r.url ?? u.toString(),
+        status: 200,
+        title: undefined,
+        ogTags: {},
+        text,
+        images,
+        bytes: Buffer.byteLength(text, 'utf-8'),
+      };
     } finally {
       clearTimeout(timer);
     }
-    if (!res.ok) {
-      const txt = await res.text().catch(() => '');
-      throw new Error(`Tavily extract HTTP ${res.status} ${txt}`);
-    }
-    const json = (await res.json()) as {
-      results?: Array<{
-        url?: string;
-        raw_content?: string;
-        images?: string[];
-      }>;
-      failed_results?: Array<{ url?: string; error?: string }>;
-    };
-    const r = json.results?.[0];
-    if (!r || !r.raw_content) {
-      const fail = json.failed_results?.[0]?.error ?? 'no content';
-      throw new Error(`Tavily extract 결과 없음: ${fail}`);
-    }
-    const text = r.raw_content;
-    // Tavily 의 structured images 는 빈약(프로필 1장 등)할 때가 많음.
-    // raw_content (markdown) 의 ![alt](url) 패턴을 같이 파싱해 합집합으로 반환.
-    const seen = new Set<string>();
-    const images: PageImage[] = [];
-    const push = (src: string) => {
-      if (!src || seen.has(src)) return;
-      seen.add(src);
-      images.push({ src });
-    };
-    for (const s of r.images ?? []) push(s);
-    const mdRe = /!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/g;
-    let m: RegExpExecArray | null;
-    while ((m = mdRe.exec(text)) !== null) push(m[1]);
-    return {
-      url: u.toString(),
-      finalUrl: r.url ?? u.toString(),
-      status: 200,
-      title: undefined,
-      ogTags: {},
-      text,
-      images,
-      bytes: Buffer.byteLength(text, 'utf-8'),
-    };
   }
 
 

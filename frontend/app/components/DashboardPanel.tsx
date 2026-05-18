@@ -17,6 +17,7 @@ import type { LucideIcon } from 'lucide-react';
 import type { Conversation, Folder } from './ChatRoom';
 import { cn } from '@/lib/utils';
 import { useI18n, type Lang } from '@/lib/i18n';
+import { useThreadSettings } from '@/lib/threadSettings';
 import {
   Cell,
   Pie,
@@ -92,6 +93,7 @@ export default function DashboardPanel({
   onExpandSidebar,
 }: Props) {
   const { t, lang } = useI18n();
+  const { hashtagThreshold: settingThreshold } = useThreadSettings();
   const sortedDesc = [...conversations].sort(
     (a, b) => b.updatedAt - a.updatedAt,
   );
@@ -111,6 +113,9 @@ export default function DashboardPanel({
     chat: [],
   });
   const [threshold, setThreshold] = useState(GRAPH_THRESHOLD_DEFAULT);
+  useEffect(() => {
+    setThreshold(settingThreshold);
+  }, [settingThreshold]);
   const convsKey = conversations.map((c) => c.id).join('|');
   // activity 는 threshold 와 무관하므로 별도 effect 로 분리.
   useEffect(() => {
@@ -156,8 +161,10 @@ export default function DashboardPanel({
   }, [convsKey, threshold]);
 
   // hashtag 통계 — thread 종류만 집계 (chat 은 hashtag 없음).
-  // 한 thread 안에서 같은 hashtag 가 여러 번 등장해도 thread 당 1번으로 셈.
-  // 누적: 전체 기간에서 등장한 thread 수가 많은 순. 최근: thread.updatedAt 기준 최근 사용 시각이 빠른 순.
+  // 소스: conversation.hashtags (서버가 모든 메시지의 hashtag 합집합을 컬럼으로 관리).
+  //   m.hashtags(메시지 단위)를 읽으면 메시지가 부분 로드된 대화가 누락되므로 c.hashtags 사용.
+  // 누적: 해당 태그가 등장한 thread 수 내림차순 (한 thread 안에서 중복 태그는 1회 카운트).
+  // 최근: 해당 태그를 포함한 thread 중 가장 최신 updatedAt 기준.
   const { cumulativeTopHashtags, recentTopHashtags } = useMemo(() => {
     const stat = new Map<
       string,
@@ -165,23 +172,14 @@ export default function DashboardPanel({
     >();
     for (const c of conversations) {
       if ((c.kind ?? 'thread') !== 'thread') continue;
-      const seen = new Set<string>();
-      for (const m of c.messages) {
-        for (const tag of m.hashtags ?? []) {
-          const key = tag.toLowerCase();
-          if (seen.has(key)) continue;
-          seen.add(key);
-          const prev = stat.get(key);
-          if (prev) {
-            prev.count += 1;
-            if (c.updatedAt > prev.lastUsedAt) prev.lastUsedAt = c.updatedAt;
-          } else {
-            stat.set(key, {
-              display: tag,
-              count: 1,
-              lastUsedAt: c.updatedAt,
-            });
-          }
+      for (const tag of c.hashtags ?? []) {
+        const key = tag.toLowerCase();
+        const prev = stat.get(key);
+        if (prev) {
+          prev.count += 1;
+          if (c.updatedAt > prev.lastUsedAt) prev.lastUsedAt = c.updatedAt;
+        } else {
+          stat.set(key, { display: tag, count: 1, lastUsedAt: c.updatedAt });
         }
       }
     }

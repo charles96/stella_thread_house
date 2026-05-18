@@ -5,6 +5,7 @@ import {
   Get,
   NotFoundException,
   Param,
+  Patch,
   Post,
   Req,
   Res,
@@ -155,6 +156,23 @@ export class AuthController {
       throw new UnauthorizedException('세션이 만료되었습니다. 다시 로그인하세요.');
     }
     return user;
+  }
+
+  @Get('settings')
+  @UseGuards(AuthGuard('jwt'))
+  async getSettings(@Req() req: Request) {
+    const userId = (req.user as { sub: string }).sub;
+    return this.auth.getUserSettings(userId);
+  }
+
+  @Patch('settings')
+  @UseGuards(AuthGuard('jwt'))
+  async updateSettings(
+    @Req() req: Request,
+    @Body() body: { tavilyTopRead?: number; hashtagThreshold?: number },
+  ) {
+    const userId = (req.user as { sub: string }).sub;
+    return this.auth.updateUserSettings(userId, body);
   }
 
   @Get('logout')

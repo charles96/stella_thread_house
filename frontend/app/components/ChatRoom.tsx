@@ -27,6 +27,7 @@ import { Button } from '@/components/ui/button';
 import { type Artifact } from '@/lib/artifacts';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
+import { useThreadSettings } from '@/lib/threadSettings';
 
 export interface ModelInfo {
   name: string;
@@ -253,7 +254,8 @@ function makeConversation(
 }
 
 export default function ChatRoom() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
+  const { tavilyTopRead } = useThreadSettings();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -271,6 +273,8 @@ export default function ChatRoom() {
   // 비동기 closure 가 "지금 사용자가 보고 있는 thread 인지" 판정할 때 쓰는 최신 activeId.
   const activeIdRef = useRef<string | null>(null);
   const [pending, setPending] = useState(false);
+  // 현재 스트리밍 중인 assistant 메시지의 ID — ref 대신 state 로 관리해 concurrent 렌더에서 tearing 방지.
+  const [liveMessageId, setLiveMessageId] = useState<string | null>(null);
   const [activeArtifact, setActiveArtifact] = useState<Artifact | null>(null);
   const [mountedArtifact, setMountedArtifact] = useState<Artifact | null>(
     null,
@@ -2208,6 +2212,7 @@ export default function ChatRoom() {
       }));
 
     setPending(true);
+    setLiveMessageId(botId);
     setLiveTokRate(null);
     let accumulatedContent = '';
     let streamStartedAt = 0;
@@ -2244,6 +2249,8 @@ export default function ChatRoom() {
           visionModel: visionModel ?? undefined,
           useVision,
           endpoint: aiEndpoint || undefined,
+          tavilyTopRead,
+          locale: lang,
           // 백엔드가 스트림 시작 시점에 user 메시지 + assistant placeholder 를 DB 저장하고,
           // 종료 시 최종 content/thinking 을 업데이트 → 프론트가 disconnect 해도 유실 안 됨.
           kind: active.kind ?? 'thread',
@@ -2266,7 +2273,7 @@ export default function ChatRoom() {
       const decoder = new TextDecoder();
       let buffer = '';
 
-      while (true) {
+      outer: while (true) {
         const { value, done } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
@@ -2278,7 +2285,7 @@ export default function ChatRoom() {
           const line = evt.split('\n').find((l) => l.startsWith('data:'));
           if (!line) continue;
           const payload = line.slice(5).trim();
-          if (payload === '[DONE]') continue;
+          if (payload === '[DONE]') break outer;
           try {
             const json = JSON.parse(payload);
             if (json.error) throw new Error(json.error);
@@ -2405,6 +2412,34 @@ export default function ChatRoom() {
                 updatedAt: Date.now(),
               }));
             } else if (
+              json.type === 'page_timeout' &&
+              typeof json.url === 'string'
+            ) {
+              // 페이지 추출 타임아웃 — 실시간으로 readPages에 추가해 취소선 표시.
+              const timedUrl = json.url as string;
+              patchConv((c) => ({
+                ...c,
+                messages: c.messages.map((m) => {
+                  if (m.id !== botId) return m;
+                  const existing = m.readPages ?? [];
+                  if (existing.some((p) => p.url === timedUrl)) return m;
+                  const source = m.sources?.find((s) => s.url === timedUrl);
+                  return {
+                    ...m,
+                    readPages: [
+                      ...existing,
+                      {
+                        url: timedUrl,
+                        title: source?.title,
+                        chars: 0,
+                        ok: false,
+                      } as ReadPage,
+                    ],
+                  };
+                }),
+                updatedAt: Date.now(),
+              }));
+            } else if (
               json.type === 'image_analyzing_start' &&
               typeof json.pageUrl === 'string' &&
               typeof json.src === 'string'
@@ -2481,6 +2516,11 @@ export default function ChatRoom() {
                 ),
                 updatedAt: Date.now(),
               }));
+            } else if (json.type === 'ai_done') {
+              // AI 발화 완료 — 입력창 즉시 열기. 해시태그 SSE 는 이후에 도착.
+              setPending(false);
+              setLiveMessageId(null);
+              setLiveTokRate(null);
             } else if (json.type === 'hashtags' && Array.isArray(json.tags)) {
               // 백엔드가 답변 직후 생성/병합한 hashtag 를 push — 우측 패널 실시간 갱신.
               const incoming = (json.tags as unknown[]).filter(
@@ -2536,6 +2576,7 @@ export default function ChatRoom() {
       streamAbortRef.current = null;
       streamMsgIdsRef.current = null;
       setPending(false);
+      setLiveMessageId(null);
       setLiveTokRate(null);
       // 메시지 백엔드 영속 (해시태그/후속질문 생성과 무관하게 우선 저장).
       // 백그라운드(다른 thread/Dashboard 로 이동 후 완료) 저장 디버깅 위해 명시적 에러 로깅.
@@ -3047,6 +3088,7 @@ export default function ChatRoom() {
                           activeArtifactId={activeArtifact?.id ?? null}
                           onAttachImage={attachImageFromUrl}
                           isFresh={freshIds.has(m.id)}
+                          isLive={m.id === liveMessageId}
                           onFollowup={(text) => {
                             void send(text, [], []);
                           }}
@@ -3064,7 +3106,10 @@ export default function ChatRoom() {
                           onDeleteTurn={
                             m.role === 'user'
                               ? () => deleteTurn(m.id)
-                              : undefined
+                              : (() => {
+                                  const prevUser = msgs.slice(0, idx).reverse().find((mm) => mm.role === 'user');
+                                  return prevUser ? () => deleteTurn(prevUser.id) : undefined;
+                                })()
                           }
                         />
                       </div>

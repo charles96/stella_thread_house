@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
+import { useThreadSettings } from '@/lib/threadSettings';
 import RelatedThreadsGraph, {
   type RelatedNode,
 } from './RelatedThreadsGraph';
@@ -141,10 +142,12 @@ export default function TagCloudPanel({
     setEditingId(null);
     setEditingDraft('');
   }
-  // 사용자 조절 가능한 임계값 — 기본 3, 1~10 범위.
-  const [relatedThreshold, setRelatedThreshold] = useState<number>(
-    RELATED_THRESHOLD_DEFAULT,
-  );
+  // 사용자 조절 가능한 임계값 — Settings > Thread 에서 저장한 기본값으로 초기화, 이후 로컬 조정 가능.
+  const { hashtagThreshold: settingThreshold } = useThreadSettings();
+  const [relatedThreshold, setRelatedThreshold] = useState<number>(RELATED_THRESHOLD_DEFAULT);
+  useEffect(() => {
+    setRelatedThreshold(settingThreshold);
+  }, [settingThreshold]);
   // Detail 섹션의 내부 탭 — 'toc' (목차) / 'hashtags' (해시태그).
   const [detailTab, setDetailTab] = useState<'toc' | 'hashtags'>('toc');
   // chat kind 로 전환되면 Hashtags 탭이 사라지므로 강제로 toc 으로 복귀.

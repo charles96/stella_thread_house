@@ -7,6 +7,11 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
+export interface UserSettings {
+  tavilyTopRead?: number;
+  hashtagThreshold?: number;
+}
+
 @Entity('users')
 export class User {
   // Postgres 18 빌트인 uuidv7() 로 DB가 생성. INSERT 시 id 미지정.
@@ -37,6 +42,9 @@ export class User {
   // 마지막 로그인 시각. 로그인 전엔 NULL.
   @Column({ name: 'last_login_at', type: 'timestamptz', nullable: true })
   lastLoginAt?: Date | null;
+
+  @Column({ type: 'jsonb', default: {} })
+  settings!: UserSettings;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;

@@ -55,6 +55,9 @@ services:
       UPLOAD_DIR: /app/backend/uploads
       # 서버 로그 출력 디렉토리 — SystemLogger 가 server-YYYY-MM-DD.log 형식으로 일자별 회전.
       LOG_DIR: /app/backend/logs
+      # 사용자 설정 기본값 — 사용자가 Settings 에서 변경하면 DB 저장값이 우선.
+      SEARCH_TOP_READ: ${SEARCH_TOP_READ:-3}
+      HASHTAG_THRESHOLD_DEFAULT: ${HASHTAG_THRESHOLD_DEFAULT:-3}
     volumes:
       # 첨부 이미지 영구 저장 — 재빌드/재기동에도 유지.
       - attachments-data:/app/backend/uploads

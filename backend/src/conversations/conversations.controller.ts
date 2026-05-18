@@ -72,6 +72,11 @@ export class ConversationsController {
     return this.service.create(this.uid(req), body);
   }
 
+  @Get(':id')
+  getOne(@Req() req: Request, @Param('id') id: string) {
+    return this.service.getOwned(this.uid(req), id);
+  }
+
   @Patch(':id')
   update(
     @Req() req: Request,

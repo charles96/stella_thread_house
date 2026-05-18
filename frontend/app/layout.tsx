@@ -3,6 +3,7 @@ import './globals.css';
 import { I18nProvider } from '@/lib/i18n';
 import { ThemeProvider } from '@/lib/theme';
 import { TimezoneProvider } from '@/lib/timezone';
+import { ThreadSettingsProvider } from '@/lib/threadSettings';
 import { TooltipProvider } from '@/components/ui/tooltip';
 
 export const metadata: Metadata = {
@@ -21,9 +22,11 @@ export default function RootLayout({
         <ThemeProvider>
           <I18nProvider>
             <TimezoneProvider>
-              <TooltipProvider delayDuration={0} skipDelayDuration={0}>
-                {children}
-              </TooltipProvider>
+              <ThreadSettingsProvider>
+                <TooltipProvider delayDuration={0} skipDelayDuration={0}>
+                  {children}
+                </TooltipProvider>
+              </ThreadSettingsProvider>
             </TimezoneProvider>
           </I18nProvider>
         </ThemeProvider>

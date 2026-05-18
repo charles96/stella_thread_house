@@ -10,7 +10,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
 import { InvitationService } from '../admin/invitation.service';
-import { User } from '../db/entities/user.entity';
+import { User, UserSettings } from '../db/entities/user.entity';
 
 export interface AuthUser {
   id: string;
@@ -173,6 +173,35 @@ export class AuthService {
     user.passwordHash = await bcrypt.hash(newPassword, BCRYPT_COST);
     const saved = await this.users.save(user);
     return this.toAuthUser(saved);
+  }
+
+  private readonly settingDefaults = {
+    tavilyTopRead: Number(process.env.SEARCH_TOP_READ ?? 3),
+    hashtagThreshold: Number(process.env.HASHTAG_THRESHOLD_DEFAULT ?? 3),
+  };
+
+  async getUserSettings(userId: string): Promise<Required<UserSettings>> {
+    const user = await this.users.findOne({
+      where: { id: userId },
+      select: { id: true, settings: true },
+    });
+    if (!user) throw new UnauthorizedException();
+    const s = user.settings ?? {};
+    return {
+      tavilyTopRead: s.tavilyTopRead ?? this.settingDefaults.tavilyTopRead,
+      hashtagThreshold: s.hashtagThreshold ?? this.settingDefaults.hashtagThreshold,
+    };
+  }
+
+  async updateUserSettings(
+    userId: string,
+    patch: UserSettings,
+  ): Promise<Required<UserSettings>> {
+    const user = await this.users.findOne({ where: { id: userId } });
+    if (!user) throw new UnauthorizedException();
+    user.settings = { ...(user.settings ?? {}), ...patch };
+    await this.users.save(user);
+    return this.getUserSettings(userId);
   }
 
   // 사용자 표시 이름(name) 변경. 빈 문자열은 null 로 저장. 캐시도 즉시 갱신.

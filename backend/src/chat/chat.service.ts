@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { AttachmentsService } from '../attachments/attachments.service';
 import { SystemConfig } from '../db/entities/system-config.entity';
 import { PageExtractResult, PageService } from '../page/page.service';
+import { statusMsg } from './chat.i18n';
 
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
@@ -72,6 +73,8 @@ export type StreamPart =
       }[];
     }
   | { type: 'status'; text: string }
+  | { type: 'ai_done' }
+  | { type: 'page_timeout'; url: string }
   | {
       type: 'metric';
       tokens: number;
@@ -263,7 +266,7 @@ export class ChatService {
   );
   // 키워드 검색 결과 중 본문을 읽을 상위 N개
   private readonly searchTopRead = Number(
-    process.env.SEARCH_TOP_READ ?? 5,
+    process.env.SEARCH_TOP_READ ?? 3,
   );
   // URL 직접 모드에서 페이지 한 곳당 비전 분석할 일반 이미지 개수
   // 페이지에서 비전 분석할 이미지 최대 개수 (filterPageImages limit과 맞춰 페이징된 뒷 카드도 커버)
@@ -370,7 +373,7 @@ export class ChatService {
     if (!tavilyKey) {
       throw new Error('TAVILY_API_KEY 미설정');
     }
-    const sourceLimit = opts.sources ?? 8;
+    const sourceLimit = opts.sources ?? 5;
     const includeImages = opts.includeImages ?? true;
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 20_000);
@@ -1219,17 +1222,23 @@ export class ChatService {
       userName?: string | null;
       // 대화 모드 — thread 모드에서는 사용자 이름을 AI 에 알리지 않음.
       kind?: 'chat' | 'thread';
+      // 클라이언트 설정값 — 없으면 서버 기본값(SEARCH_TOP_READ env) 사용.
+      tavilyTopRead?: number;
+      // 상태 메시지 다국어 표시용 — 없으면 'ko' 폴백.
+      locale?: string;
     } = {},
   ): AsyncGenerator<StreamPart> {
+    const m = statusMsg(options.locale);
+
     // URL/path 형식의 images 는 base64 로 환원해 Ollama 에 전달.
-    let augmented = this.resolveMessageImages(messages);
-    // 위에서 augmented 를 새 배열로 교체했기 때문에 reference 비교(augmented === messages) 가
-    // 항상 false 라 Tavily 검색 분기가 안 탔던 버그 → URL/검색 모드 진입 여부를 별도 플래그로 추적.
+    // resolvedMessages 에 저장해 두고 URL/검색 augment 경로에서도 재사용 — 이미지 미변환 버그 방지.
+    const resolvedMessages = this.resolveMessageImages(messages);
+    let augmented = resolvedMessages;
     let augmentedByUrl = false;
     let augmentedBySearch = false;
 
     // 메시지 안의 URL은 자동 감지하여 페이지 내용을 읽고 답변에 활용.
-    const lastUserAuto = [...messages].reverse().find((m) => m.role === 'user');
+    const lastUserAuto = [...messages].reverse().find((u) => u.role === 'user');
     const lastUserHasImages = (lastUserAuto?.images?.length ?? 0) > 0;
     const lastUserImageCount = lastUserAuto?.images?.length ?? 0;
     // 첨부 이미지가 있어도 URL/Search 모드는 함께 발동 가능 — 인용 번호는 통합 정렬.
@@ -1244,7 +1253,7 @@ export class ChatService {
         try {
           yield {
             type: 'status',
-            text: `URL 감지 — 페이지 ${directUrls.length}개 직접 읽는 중…`,
+            text: m.urlDetect(directUrls.length),
           };
           const directResults: SearchResult[] = [];
           const pageEvents: {
@@ -1275,7 +1284,7 @@ export class ChatService {
                     extractSource = 'tavily';
                     yield {
                       type: 'status',
-                      text: '봇 차단 감지 — Tavily 로 본문 가져오는 중…',
+                      text: m.botBlocked,
                     };
                   }
                 } else if (ev.type === 'result') {
@@ -1425,7 +1434,7 @@ export class ChatService {
                 directResults,
                 lastUserImageCount,
               ),
-              ...messages,
+              ...resolvedMessages,
             ];
             augmentedByUrl = true;
           } else {
@@ -1435,13 +1444,13 @@ export class ChatService {
             };
             yield {
               type: 'status',
-              text: 'URL 페이지 읽기에 모두 실패했습니다',
+              text: m.urlAllFailed,
             };
           }
         } catch (e) {
-          const msg = e instanceof Error ? e.message : 'URL 처리 실패';
+          const msg = e instanceof Error ? e.message : 'URL error';
           this.logger.warn(`URL 처리 실패: ${msg}`);
-          yield { type: 'status', text: `URL 처리 실패: ${msg}` };
+          yield { type: 'status', text: m.urlError(msg) };
         }
       }
     }
@@ -1465,7 +1474,7 @@ export class ChatService {
     ) {
       // 사용자 메시지 그대로 검색하면 대명사·맥락 손실로 엉뚱한 결과가 나옴.
       // LLM 으로 대화 맥락을 반영한 1~2개 쿼리로 재작성. 실패하면 원문으로 폴백.
-      yield { type: 'status', text: '검색 의도 분석 중…' };
+      yield { type: 'status', text: m.analyzing };
       this.logger.log(
         `[search] raw user message: "${lastUserAuto.content.slice(0, 200)}"`,
       );
@@ -1493,14 +1502,34 @@ export class ChatService {
           type: 'status',
           text:
             queries.length > 1
-              ? `Tavily 웹 검색 (${queries.length}건) — ${queries.map((q) => `"${q.slice(0, 30)}"`).join(', ')}`
-              : `Tavily 웹 검색 중 — "${queries[0].slice(0, 40)}${queries[0].length > 40 ? '…' : ''}"`,
+              ? m.searchingMulti(
+                  queries.length,
+                  queries.map((q) => `"${q.slice(0, 30)}"`).join(', '),
+                )
+              : m.searchingSingle(
+                  `${queries[0].slice(0, 40)}${queries[0].length > 40 ? '…' : ''}`,
+                ),
         };
 
         // 다중 쿼리 시 결과를 모아 URL 기준으로 dedup. 각 쿼리 sources 는 N으로 분할.
-        const sourcesPerQuery = Math.max(
-          3,
-          Math.floor(8 / queries.length),
+        // 클라이언트 설정값 우선, 없으면 서버 기본값.
+        const effectiveTopRead =
+          options.tavilyTopRead != null &&
+          Number.isFinite(options.tavilyTopRead) &&
+          options.tavilyTopRead >= 1
+            ? options.tavilyTopRead
+            : this.searchTopRead;
+        this.logger.log(
+          `[search] tavilyTopRead: client=${options.tavilyTopRead ?? 'none'}, server default=${this.searchTopRead}, effective=${effectiveTopRead}`,
+        );
+        // dedup 손실 보완: 목표 N개를 안정적으로 확보하려면 각 쿼리에서 여유분 있게 가져와야 함.
+        // 단일 쿼리면 1.5배, 복수 쿼리면 쿼리 수 × 1.5 / queries.length 로 분배.
+        const sourcesPerQuery = Math.min(
+          20,
+          Math.max(2, Math.ceil((effectiveTopRead * 1.5) / queries.length)),
+        );
+        this.logger.log(
+          `[search] queries=${queries.length}, sourcesPerQuery=${sourcesPerQuery}, effectiveTopRead=${effectiveTopRead}`,
         );
         const seenUrls = new Set<string>();
         const aggResults: SearchResult[] = [];
@@ -1521,10 +1550,12 @@ export class ChatService {
             aggImages.push(img);
           }
         }
-        const results = aggResults;
+        // 버퍼로 더 많이 가져온 결과를 effectiveTopRead 개로 먼저 자름.
+        // search 이벤트와 페이지 추출 모두 동일한 상위 N개를 사용.
+        const results = aggResults.slice(0, effectiveTopRead);
         const images = aggImages;
         if (results.length === 0) {
-          yield { type: 'status', text: '검색 결과 없음' };
+          yield { type: 'status', text: m.noResults };
         } else {
           yield {
             type: 'search',
@@ -1533,7 +1564,7 @@ export class ChatService {
           };
 
           // 상위 N개 페이지 본문 추출 (fetch + Tavily 폴백)
-          const topToRead = results.slice(0, this.searchTopRead);
+          const topToRead = results;
           const pageEvents: {
             url: string;
             title?: string;
@@ -1549,23 +1580,38 @@ export class ChatService {
           }[] = [];
           yield {
             type: 'status',
-            text: `Tavily 결과 상위 ${topToRead.length}개 페이지 본문 추출 중…`,
+            text: m.extractingPages(topToRead.length),
           };
           for (const r of topToRead) {
             try {
-              let p: PageExtractResult | null = null;
-              for await (const ev of this.pageService.extractWithProgress(
-                r.url,
-              )) {
-                if (ev.type === 'stage' && ev.stage === 'tavily') {
-                  yield {
-                    type: 'status',
-                    text: '봇 차단 감지 — Tavily 로 본문 가져오는 중…',
-                  };
-                } else if (ev.type === 'result') {
-                  p = ev.result;
-                }
+              // Tavily extract fallback skip — 검색 결과 경로에서 extract API hang 방지.
+              // 페이지당 5초 타임아웃: 초과 시 ok:false + 실시간 취소선 이벤트 전송.
+              type Outcome =
+                | { timedOut: true }
+                | { timedOut: false; result: PageExtractResult | null };
+              const outcome = await Promise.race<Outcome>([
+                (async (): Promise<Outcome> => {
+                  let result: PageExtractResult | null = null;
+                  for await (const ev of this.pageService.extractWithProgress(
+                    r.url,
+                    undefined,
+                    { skipTavilyFallback: true },
+                  )) {
+                    if (ev.type === 'result') result = ev.result;
+                  }
+                  return { timedOut: false, result };
+                })(),
+                new Promise<Outcome>((resolve) =>
+                  setTimeout(() => resolve({ timedOut: true }), 5_000),
+                ),
+              ]);
+              if (outcome.timedOut) {
+                this.logger.warn(`페이지 추출 타임아웃: ${r.url}`);
+                yield { type: 'page_timeout', url: r.url };
+                pageEvents.push({ url: r.url, title: r.title, chars: 0, ok: false });
+                continue;
               }
+              const p = outcome.result;
               if (p && p.text) {
                 r.content = p.text.slice(0, this.searchPageCharLimit);
                 const imgs = filterPageImages(p.images);
@@ -1608,7 +1654,7 @@ export class ChatService {
               topToRead,
               lastUserImageCount,
             ),
-            ...messages,
+            ...resolvedMessages,
           ];
           augmentedBySearch = true;
         }
@@ -1681,12 +1727,12 @@ export class ChatService {
         think: true,
         // 표 깨짐(잘못된 영문 토큰 삽입, 줄바꿈 누락 등) 빈도를 줄이기 위해
         // 다소 보수적인 샘플링 옵션 적용. 너무 낮추면 다양성 손실.
-        // num_predict 는 thinking + content 합산 토큰 상한 — Ollama가 disconnect 를
-        // 늦게 감지해도 무한 생성을 막는 하드 가드.
+        // num_predict 는 thinking + content 합산 토큰 상한.
+        // 검색/URL 모드에서는 컨텍스트가 커서 thinking 에 토큰을 많이 소비하므로 상한을 높임.
         options: {
           temperature: 0.6,
           top_p: 0.9,
-          num_predict: 8192,
+          num_predict: augmentedBySearch || augmentedByUrl ? 32768 : 8192,
         },
       }),
     });

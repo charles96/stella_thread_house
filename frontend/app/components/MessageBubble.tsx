@@ -650,7 +650,7 @@ function ImageScatter({
       newlyLoadedIdxs.push(idx);
     });
     prevLoadedRef.current = new Set(loaded);
-    newlyLoadedIdxs.forEach((idx) => animateCardSlide(idx));
+    newlyLoadedIdxs.forEach((idx) => animateCardSlide(idx, Math.random() * 200));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, images, PER_PAGE, safePage]);
 
@@ -664,13 +664,8 @@ function ImageScatter({
       if (Math.floor(idx / PER_PAGE) === safePage) visibleIdxs.push(idx);
     });
     visibleIdxs.sort((a, b) => a - b);
-    const STAGGER = 60; // 같은 웨이브 내 카드 간 간격
-    const WAVE_OFFSET = 180; // 홀수 웨이브가 짝수 웨이브 시작 후 지연될 시간
-    visibleIdxs.forEach((idx, pos) => {
-      const wave = pos % 2;
-      const positionInWave = Math.floor(pos / 2);
-      const delay = wave * WAVE_OFFSET + positionInWave * STAGGER;
-      animateCardSlide(idx, delay);
+    visibleIdxs.forEach((idx) => {
+      animateCardSlide(idx, Math.random() * 200);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [safePage, PER_PAGE]);
@@ -1159,6 +1154,7 @@ export default function MessageBubble({
   onPinImage,
   attachedSourceUrls,
   isGreeting = false,
+  isLive = false,
 }: {
   message: Message;
   onOpenArtifact?: (a: Artifact) => void;
@@ -1191,6 +1187,8 @@ export default function MessageBubble({
   attachedSourceUrls?: Set<string>;
   // 첫 user 메시지 전 leading 인사말(greeting) — View/Edit 탭, follow-up 등 메타 UI 숨김.
   isGreeting?: boolean;
+  // 현재 스트리밍 중인 메시지 — true 일 때 View/Edit 탭 숨김.
+  isLive?: boolean;
 }) {
   const { t } = useI18n();
   const isUser = message.role === 'user';
@@ -1579,6 +1577,7 @@ export default function MessageBubble({
   const [editingOrderUrls, setEditingOrderUrls] = useState<string[]>([]);
   const [draggingUrl, setDraggingUrl] = useState<string | null>(null);
   const [dragOverUrl, setDragOverUrl] = useState<string | null>(null);
+  const [imageEditConfirmPending, setImageEditConfirmPending] = useState(false);
   const editingOrderInit = useRef(false);
   useEffect(() => {
     if (imageEditMode) {
@@ -1592,6 +1591,7 @@ export default function MessageBubble({
       setEditingOrderUrls([]);
       setDraggingUrl(null);
       setDragOverUrl(null);
+      setImageEditConfirmPending(false);
     }
   }, [imageEditMode, combinedImagesForEdit]);
   const [expandedImageIndex, setExpandedImageIndex] = useState<number | null>(
@@ -2826,49 +2826,37 @@ export default function MessageBubble({
                   </div>
                 )}
               </div>
-              {/* Preview / Edit — 답변 마크다운 직접 편집.
-                  Thread 모드 전용 + greeting 메시지 제외 (인사말은 편집 불필요).
+              {/* Edit / Save / Cancel — 답변 마크다운 직접 편집.
+                  Thread 모드 전용 + greeting 메시지 제외.
                   탭이 버블 뒤에서 살짝 빠져나온 폴더 탭 느낌:
-                  - 컨테이너 -mt-2 (=−8px) 로 위로 끌어올려 버블 하단과 겹치고
-                  - z-[0] 으로 버블(z-[1]) 아래에 위치
-                  - pt-3 으로 텍스트가 버블 가린 영역 아래에만 보이도록 */}
-              {onEditContent && convKind === 'thread' && !isGreeting && (
+                  - 컨테이너 -mt-2 로 위로 끌어올려 버블 하단과 겹치고
+                  - z-[0] 으로 버블(z-[1]) 아래에 위치 */}
+              {onEditContent && convKind === 'thread' && !isGreeting && !isLive && (
                 <div className="-mt-2 mr-3 flex items-start gap-1 self-end">
-                  {/* min-w 로 폭 정렬 + 아이콘+텍스트 모두 동일 간격 (gap-1, justify-center). */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (answerEditing) return; // 편집 중엔 Save/Cancel 로만 나가도록 — 우발적 손실 방지.
-                    }}
-                    disabled={answerEditing}
-                    title={t('message.preview')}
-                    className={cn(
-                      // transition-colors 제거 — active→disabled 페이드가 깜빡임처럼 보임. 즉시 전환.
-                      'relative z-[0] inline-flex min-w-[72px] items-center justify-center gap-1 rounded-b-md border border-t-0 px-3 pb-1 pt-3 text-[11px] font-medium shadow-[0_2px_4px_rgba(0,0,0,0.25)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
-                      !answerEditing
-                        ? 'border-primary bg-primary text-primary-foreground'
-                        // 편집 중엔 같은 primary 톤 유지 + opacity 만 줄여 변화 폭을 작게 → 깜빡임 X.
-                        : 'cursor-not-allowed border-primary/40 bg-card text-primary opacity-50',
-                    )}
-                  >
-                    <BookOpen className="h-3 w-3" />
-                    {t('message.preview')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => !answerEditing && startAnswerEdit()}
-                    title={t('message.edit')}
-                    className={cn(
-                      'relative z-[0] inline-flex min-w-[72px] items-center justify-center gap-1 rounded-b-md border border-t-0 px-3 pb-1 pt-3 text-[11px] font-medium shadow-[0_2px_4px_rgba(0,0,0,0.25)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
-                      answerEditing
-                        ? 'border-primary bg-primary text-primary-foreground'
-                        : 'border-primary/40 bg-card text-primary hover:bg-primary hover:text-primary-foreground',
-                    )}
-                  >
-                    <Pencil className="h-3 w-3" />
-                    {t('message.edit')}
-                  </button>
-                  {answerEditing && (
+                  {!answerEditing ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={startAnswerEdit}
+                        title={t('message.edit')}
+                        className="relative z-[0] inline-flex min-w-[72px] items-center justify-center gap-1 rounded-b-md border border-t-0 border-primary/40 bg-card px-3 pb-1 pt-3 text-[11px] font-medium text-primary shadow-[0_2px_4px_rgba(0,0,0,0.25)] transition-colors hover:bg-primary hover:text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      >
+                        <Pencil className="h-3 w-3" />
+                        {t('message.edit')}
+                      </button>
+                      {onDeleteTurn && (
+                        <button
+                          type="button"
+                          onClick={onDeleteTurn}
+                          title={t('message.delete')}
+                          className="relative z-[0] inline-flex min-w-[72px] items-center justify-center gap-1 rounded-b-md border border-t-0 border-destructive/40 bg-card px-3 pb-1 pt-3 text-[11px] font-medium text-destructive shadow-[0_2px_4px_rgba(0,0,0,0.25)] transition-colors hover:bg-destructive hover:text-destructive-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                          {t('message.delete')}
+                        </button>
+                      )}
+                    </>
+                  ) : (
                     <>
                       <button
                         type="button"
@@ -2978,9 +2966,52 @@ export default function MessageBubble({
           onClick={() => setImageEditMode(false)}
         >
           <div
-            className="flex max-h-[85vh] w-full max-w-3xl flex-col rounded-lg border border-border bg-card p-5 shadow-2xl animate-in zoom-in-95 duration-150"
+            className="relative flex max-h-[85vh] w-full max-w-3xl flex-col rounded-lg border border-border bg-card p-5 shadow-2xl animate-in zoom-in-95 duration-150"
             onClick={(e) => e.stopPropagation()}
           >
+            {/* 삭제 확인 오버레이 — Apply 클릭 시 삭제 항목이 있을 때만 표시. */}
+            {imageEditConfirmPending && (
+              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 rounded-lg bg-black/60 px-8 text-center backdrop-blur-sm animate-in fade-in duration-150">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="h-5 w-5 text-destructive drop-shadow" />
+                  <h3 className="text-[15px] font-semibold text-white">
+                    {t('imageEdit.confirmTitle')}
+                  </h3>
+                </div>
+                <p className="max-w-sm text-[13px] leading-relaxed text-white/85">
+                  {t('imageEdit.confirmBody').replace('{n}', String(imageEditSelection.size))}
+                </p>
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setImageEditConfirmPending(false)}
+                    className="rounded-md border border-white/40 bg-black/30 px-3 py-1.5 text-sm font-medium text-white hover:bg-black/50"
+                  >
+                    {t('imageEdit.cancel')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const finalOrder = editingOrderUrls.filter(
+                        (u) => !imageEditSelection.has(u),
+                      );
+                      if (onReorderImages) {
+                        onReorderImages(finalOrder);
+                      } else {
+                        for (const url of imageEditSelection) onRemoveImage(url);
+                      }
+                      setImageEditConfirmPending(false);
+                      setImageEditMode(false);
+                      setExpandedImageIndex(null);
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-destructive/60 bg-destructive px-3 py-1.5 text-sm font-semibold text-destructive-foreground shadow-xl hover:bg-destructive/90"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    {t('imageEdit.confirmApply')}
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="mb-3 flex items-center justify-between gap-2">
               <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
                 <Pencil className="h-4 w-4 text-primary" />
@@ -3272,18 +3303,15 @@ export default function MessageBubble({
                 <button
                   type="button"
                   onClick={() => {
-                    // 최종 순서: 편집 순서에서 선택(삭제 대상) 제외.
-                    const finalOrder = editingOrderUrls.filter(
-                      (u) => !imageEditSelection.has(u),
-                    );
-                    if (onReorderImages) {
-                      onReorderImages(finalOrder);
+                    if (imageEditSelection.size > 0) {
+                      setImageEditConfirmPending(true);
                     } else {
-                      // fallback: reorder callback 이 없으면 삭제만이라도 수행.
-                      for (const url of imageEditSelection) onRemoveImage(url);
+                      if (onReorderImages) {
+                        onReorderImages(editingOrderUrls);
+                      }
+                      setImageEditMode(false);
+                      setExpandedImageIndex(null);
                     }
-                    setImageEditMode(false);
-                    setExpandedImageIndex(null);
                   }}
                   className="inline-flex items-center gap-1.5 rounded-md border border-primary/50 bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
                 >
