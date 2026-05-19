@@ -372,6 +372,7 @@ export default function ChatRoom() {
     setCollapsedTurns(new Set());
     setDeletingMessageIds(new Set());
     setUnfoldingMessageIds(new Set());
+    messageRefs.current.clear();
   }, [activeId]);
 
   useEffect(() => {

@@ -32,7 +32,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import type { AuthUser, Conversation, Folder } from './ChatRoom';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { version } from '../../package.json';
 
 // 사이드바 내 conversation 드래그 식별용 커스텀 MIME. kind 별로 분리해
@@ -106,27 +106,68 @@ export default function Sidebar({
   onOpenAbout,
 }: Props) {
   const { t } = useI18n();
-  const threadFolders = folders.filter((f) => (f.kind ?? 'thread') === 'thread');
-  const chatFolders = folders.filter((f) => f.kind === 'chat');
-  const threadFolderIds = new Set(threadFolders.map((f) => f.id));
-  const chatFolderIds = new Set(chatFolders.map((f) => f.id));
+
+  const threadFolders = useMemo(
+    () => folders.filter((f) => (f.kind ?? 'thread') === 'thread'),
+    [folders],
+  );
+  const chatFolders = useMemo(
+    () => folders.filter((f) => f.kind === 'chat'),
+    [folders],
+  );
+  const threadFolderIds = useMemo(
+    () => new Set(threadFolders.map((f) => f.id)),
+    [threadFolders],
+  );
+  const chatFolderIds = useMemo(
+    () => new Set(chatFolders.map((f) => f.id)),
+    [chatFolders],
+  );
   // 각 섹션은 자기 kind 의 폴더만 본다 — conversation 의 folderId 가 다른 kind 폴더를 가리키면
   // 그 섹션의 루트(미분류)로 떨어진다.
-  const threads = conversations.filter((c) => (c.kind ?? 'thread') === 'thread');
-  const chats = conversations.filter((c) => c.kind === 'chat');
-  const rootThreads = threads.filter(
-    (c) => !c.folderId || !threadFolderIds.has(c.folderId),
+  const threads = useMemo(
+    () => conversations.filter((c) => (c.kind ?? 'thread') === 'thread'),
+    [conversations],
   );
-  const rootChats = chats.filter(
-    (c) => !c.folderId || !chatFolderIds.has(c.folderId),
+  const chats = useMemo(
+    () => conversations.filter((c) => c.kind === 'chat'),
+    [conversations],
   );
+  const rootThreads = useMemo(
+    () => threads.filter((c) => !c.folderId || !threadFolderIds.has(c.folderId)),
+    [threads, threadFolderIds],
+  );
+  const rootChats = useMemo(
+    () => chats.filter((c) => !c.folderId || !chatFolderIds.has(c.folderId)),
+    [chats, chatFolderIds],
+  );
+
+  // 폴더별 아이템 — inline filter O(n·m) 을 Map 사전 계산 O(n+m) 으로 대체.
+  const threadItemsByFolder = useMemo(() => {
+    const map = new Map<string, Conversation[]>();
+    for (const f of threadFolders) map.set(f.id, []);
+    for (const c of threads) {
+      if (c.folderId && map.has(c.folderId)) map.get(c.folderId)!.push(c);
+    }
+    return map;
+  }, [threadFolders, threads]);
+
+  const chatItemsByFolder = useMemo(() => {
+    const map = new Map<string, Conversation[]>();
+    for (const f of chatFolders) map.set(f.id, []);
+    for (const c of chats) {
+      if (c.folderId && map.has(c.folderId)) map.get(c.folderId)!.push(c);
+    }
+    return map;
+  }, [chatFolders, chats]);
 
   // Threads / Chat 탭 — 한 번에 한 섹션만 노출. 활성 conversation 의 kind 가
   // 바뀌면 (예: 다른 탭의 conversation 을 Dashboard 에서 클릭) 해당 탭으로 자동 전환.
   const [convTab, setConvTab] = useState<'thread' | 'chat'>('thread');
-  const activeKind = activeId
-    ? conversations.find((c) => c.id === activeId)?.kind ?? 'thread'
-    : null;
+  const activeKind = useMemo(
+    () => (activeId ? conversations.find((c) => c.id === activeId)?.kind ?? 'thread' : null),
+    [activeId, conversations],
+  );
   useEffect(() => {
     if (activeKind) setConvTab(activeKind);
   }, [activeKind]);
@@ -232,7 +273,7 @@ export default function Sidebar({
                 </Button>
               </div>
               {threadFolders.map((folder) => {
-                const items = threads.filter((c) => c.folderId === folder.id);
+                const items = threadItemsByFolder.get(folder.id) ?? [];
                 return (
                   <FolderRow
                     key={folder.id}
@@ -298,7 +339,7 @@ export default function Sidebar({
                 </Button>
               </div>
               {chatFolders.map((folder) => {
-                const items = chats.filter((c) => c.folderId === folder.id);
+                const items = chatItemsByFolder.get(folder.id) ?? [];
                 return (
                   <FolderRow
                     key={folder.id}

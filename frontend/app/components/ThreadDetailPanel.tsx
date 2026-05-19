@@ -165,7 +165,10 @@ export default function ThreadDetailPanel({
       sharedTagsMap: new Map<string, string[]>(),
     };
     if (!threads || !activeThreadId) return empty;
-    const me = threads.find((t) => t.id === activeThreadId) ?? null;
+
+    // O(1) lookup map — threads.find() 를 루프 안에서 반복 호출하지 않도록.
+    const threadsById = new Map(threads.map((t) => [t.id, t]));
+    const me = threadsById.get(activeThreadId) ?? null;
     if (!me) return empty;
 
     const visibleHashtags = new Set<string>();
@@ -199,7 +202,7 @@ export default function ThreadDetailPanel({
     const graphEdges: BipartiteEdge[] = [];
     const allConnected = [me.id, ...connectedThreadIds];
     for (const convId of allConnected) {
-      const conv = threads.find((t) => t.id === convId);
+      const conv = threadsById.get(convId);
       if (!conv) continue;
       for (const tag of conv.hashtags) {
         if (!visibleHashtags.has(tag)) continue;
@@ -214,7 +217,7 @@ export default function ThreadDetailPanel({
     // 리스트 뷰: shared 많은 순 정렬
     const related = [...connectedThreadIds]
       .map((id) => {
-        const t = threads.find((x) => x.id === id)!;
+        const t = threadsById.get(id)!;
         return { id, title: t.title, shared: sharedTagsMap.get(id)?.length ?? 0 };
       })
       .sort((a, b) => b.shared - a.shared);

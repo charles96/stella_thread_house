@@ -2,6 +2,7 @@
 
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useRef,
@@ -156,21 +157,25 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
   // 줄바꿈 발생 시 textarea 가 세로로 자라도록 — 최대 3줄. 그 이상은 자체 스크롤.
   // value 변경 때마다 height='auto' 로 리셋 후 scrollHeight 측정해 max 와 비교.
   // overflow-y 는 3줄 안일 땐 hidden(스크롤바 미표시), 초과 시에만 auto.
+  // 50ms 디바운스 — 키 입력마다 동기 레이아웃 읽기(getComputedStyle/scrollHeight)를 줄임.
   useEffect(() => {
-    const ta = textareaRef.current;
-    if (!ta) return;
-    ta.style.height = 'auto';
-    const cs = getComputedStyle(ta);
-    const lineHeight = parseFloat(cs.lineHeight) || 24;
-    const padTop = parseFloat(cs.paddingTop) || 0;
-    const padBottom = parseFloat(cs.paddingBottom) || 0;
-    const borderTop = parseFloat(cs.borderTopWidth) || 0;
-    const borderBottom = parseFloat(cs.borderBottomWidth) || 0;
-    const maxH = lineHeight * 3 + padTop + padBottom + borderTop + borderBottom;
-    const scrollH = ta.scrollHeight;
-    const next = Math.min(scrollH, maxH);
-    ta.style.height = `${next}px`;
-    ta.style.overflowY = scrollH > maxH ? 'auto' : 'hidden';
+    const timer = setTimeout(() => {
+      const ta = textareaRef.current;
+      if (!ta) return;
+      ta.style.height = 'auto';
+      const cs = getComputedStyle(ta);
+      const lineHeight = parseFloat(cs.lineHeight) || 24;
+      const padTop = parseFloat(cs.paddingTop) || 0;
+      const padBottom = parseFloat(cs.paddingBottom) || 0;
+      const borderTop = parseFloat(cs.borderTopWidth) || 0;
+      const borderBottom = parseFloat(cs.borderBottomWidth) || 0;
+      const maxH = lineHeight * 3 + padTop + padBottom + borderTop + borderBottom;
+      const scrollH = ta.scrollHeight;
+      const next = Math.min(scrollH, maxH);
+      ta.style.height = `${next}px`;
+      ta.style.overflowY = scrollH > maxH ? 'auto' : 'hidden';
+    }, 50);
+    return () => clearTimeout(timer);
   }, [value]);
 
   useImperativeHandle(ref, () => ({
@@ -222,10 +227,10 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
     }
   }
 
-  function removeImage(idx: number) {
+  const removeImage = useCallback((idx: number) => {
     setImages((prev) => prev.filter((_, i) => i !== idx));
     setImageNames((prev) => prev.filter((_, i) => i !== idx));
-  }
+  }, []);
 
   // 이미지 첨부 여부와 무관하게 — 텍스트가 비어있으면 Send 비활성. 이미지만 보내는 케이스는 허용 안함.
   const sendDisabled = disabled || !value.trim();

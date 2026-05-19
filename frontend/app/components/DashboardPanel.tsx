@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Activity as ActivityIcon,
   Folder as FolderIcon,
@@ -93,16 +93,22 @@ export default function DashboardPanel({
 }: Props) {
   const { t, lang } = useI18n();
   const { hashtagThreshold: settingThreshold } = useThreadSettings();
-  const sortedDesc = [...conversations].sort(
-    (a, b) => b.updatedAt - a.updatedAt,
+  const sortedDesc = useMemo(
+    () => [...conversations].sort((a, b) => b.updatedAt - a.updatedAt),
+    [conversations],
   );
-  const recentThreads = sortedDesc
-    .filter((c) => (c.kind ?? 'thread') === 'thread')
-    .slice(0, 5);
-  const recentChats = sortedDesc
-    .filter((c) => c.kind === 'chat')
-    .slice(0, 5);
-  const folderById = new Map(folders.map((f) => [f.id, f]));
+  const recentThreads = useMemo(
+    () => sortedDesc.filter((c) => (c.kind ?? 'thread') === 'thread').slice(0, 5),
+    [sortedDesc],
+  );
+  const recentChats = useMemo(
+    () => sortedDesc.filter((c) => c.kind === 'chat').slice(0, 5),
+    [sortedDesc],
+  );
+  const folderById = useMemo(
+    () => new Map(folders.map((f) => [f.id, f])),
+    [folders],
+  );
 
   // 그래프 데이터는 별도 endpoint 에서 fetch — conversation 메시지 hashtag 를 백엔드 집계.
   // conversation 변경 시(생성/삭제/제목변경 등) 다시 가져와 최신 상태 유지.
@@ -195,22 +201,22 @@ export default function DashboardPanel({
 
   const [tab, setTab] = useState<'general' | 'graph'>('general');
 
-  const tabs: {
-    key: 'general' | 'graph';
-    label: string;
-    Icon: LucideIcon;
-  }[] = [
-    {
-      key: 'general',
-      label: t('dashboard.tab.general'),
-      Icon: ActivityIcon,
-    },
-    {
-      key: 'graph',
-      label: t('dashboard.tab.graph'),
-      Icon: Network,
-    },
-  ];
+  const tabs = useMemo<{ key: 'general' | 'graph'; label: string; Icon: LucideIcon }[]>(
+    () => [
+      { key: 'general', label: t('dashboard.tab.general'), Icon: ActivityIcon },
+      { key: 'graph',   label: t('dashboard.tab.graph'),   Icon: Network },
+    ],
+    [t],
+  );
+
+  const decreaseThreshold = useCallback(
+    () => setThreshold((v) => Math.max(GRAPH_THRESHOLD_MIN, v - 1)),
+    [],
+  );
+  const increaseThreshold = useCallback(
+    () => setThreshold((v) => Math.min(GRAPH_THRESHOLD_MAX, v + 1)),
+    [],
+  );
 
   return (
     <div className="flex h-full flex-col overflow-y-auto">
@@ -334,9 +340,7 @@ export default function DashboardPanel({
               <div className="flex items-center gap-1">
                 <button
                   type="button"
-                  onClick={() =>
-                    setThreshold((v) => Math.max(GRAPH_THRESHOLD_MIN, v - 1))
-                  }
+                  onClick={decreaseThreshold}
                   disabled={threshold <= GRAPH_THRESHOLD_MIN}
                   className="flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background text-sm hover:bg-accent disabled:opacity-50"
                   aria-label="decrease"
@@ -362,9 +366,7 @@ export default function DashboardPanel({
                 />
                 <button
                   type="button"
-                  onClick={() =>
-                    setThreshold((v) => Math.min(GRAPH_THRESHOLD_MAX, v + 1))
-                  }
+                  onClick={increaseThreshold}
                   disabled={threshold >= GRAPH_THRESHOLD_MAX}
                   className="flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background text-sm hover:bg-accent disabled:opacity-50"
                   aria-label="increase"
