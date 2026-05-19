@@ -72,13 +72,11 @@ export default function AboutModal({ open, onClose }: Props) {
         </div>
 
         <div className="mb-4 flex items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground text-lg font-bold">
-            S
-          </div>
+          <img src="/logo.svg" alt="Stella" className="h-12 w-12 shrink-0 rounded-xl" />
           <div className="leading-tight">
             <div className="text-sm font-semibold">Stella's Thread House</div>
             <div className="text-[12px] text-muted-foreground">
-              {t('about.tagline')}
+              Co-creating knowledge with AI
             </div>
           </div>
         </div>

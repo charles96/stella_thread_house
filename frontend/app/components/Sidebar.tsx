@@ -134,9 +134,7 @@ export default function Sidebar({
   return (
     <aside className="flex h-screen w-72 shrink-0 flex-col border-r border-border bg-sidebar text-sidebar-foreground">
       <div className="flex h-[68px] shrink-0 items-center gap-3 border-b border-border px-4">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary font-bold text-primary-foreground">
-          S
-        </div>
+        <img src="/logo.svg" alt="Stella" className="h-9 w-9 shrink-0 rounded-lg" />
         <div className="flex min-w-0 flex-1 flex-col leading-tight">
           <span className="font-doodle text-xl font-semibold">Stella's Thread House</span>
           <span className="flex items-center gap-1.5 truncate text-[11px] text-muted-foreground">

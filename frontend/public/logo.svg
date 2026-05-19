@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img" aria-label="Stella">
+  <style>
+    /* constellation lines — sequential draw-on */
+    .line {
+      stroke-dasharray: 1;
+      stroke-dashoffset: 1;
+      animation: drawLine 0.5s ease forwards;
+    }
+    .l1 { animation-delay: 0.0s; }
+    .l2 { animation-delay: 0.3s; }
+    .l3 { animation-delay: 0.6s; }
+    .l4 { animation-delay: 0.9s; }
+    .l5 { animation-delay: 1.1s; }
+    .l6 { animation-delay: 1.3s; }
+    .l7 { animation-delay: 1.5s; }
+    @keyframes drawLine {
+      to { stroke-dashoffset: 0; }
+    }
+
+    /* main star — breathing glow */
+    .glow-outer { animation: glowBreath 3.2s 2s ease-in-out infinite; }
+    .glow-mid   { animation: glowBreath 3.2s 2s ease-in-out infinite; }
+    @keyframes glowBreath {
+      0%, 100% { opacity: 0.12; }
+      50%      { opacity: 0.32; }
+    }
+    .star-core { animation: corePulse 3.2s 2s ease-in-out infinite; }
+    @keyframes corePulse {
+      0%, 100% { opacity: 1.0; }
+      50%      { opacity: 0.75; }
+    }
+
+    /* background dots — staggered twinkle */
+    .tw1 { animation: twinkle 4.2s 0.5s ease-in-out infinite; }
+    .tw2 { animation: twinkle 3.6s 1.4s ease-in-out infinite; }
+    .tw3 { animation: twinkle 5.1s 0.0s ease-in-out infinite; }
+    @keyframes twinkle {
+      0%, 100% { opacity: 0.30; }
+      50%      { opacity: 0.68; }
+    }
+  </style>
+
+  <!-- background — warm chocolate, slightly lighter than sidebar -->
+  <rect x="0" y="0" width="160" height="160" rx="36" fill="#3a2410"/>
+
+  <!-- decorative background dots — warm parchment, matches foreground -->
+  <g fill="#f0e0c4">
+    <circle cx="95"  cy="28"  r="1.2" opacity="0.32" class="tw1"/>
+    <circle cx="145" cy="58"  r="1.2" opacity="0.28"/>
+    <circle cx="22"  cy="78"  r="1.4" opacity="0.36" class="tw2"/>
+    <circle cx="138" cy="128" r="1.2" opacity="0.28"/>
+    <circle cx="76"  cy="145" r="1.3" opacity="0.36" class="tw3"/>
+    <circle cx="18"  cy="40"  r="1.0" opacity="0.24"/>
+    <circle cx="150" cy="106" r="1.0" opacity="0.24"/>
+    <circle cx="86"  cy="80"  r="1.0" opacity="0.24"/>
+  </g>
+
+  <!-- constellation lines — warm terracotta, matches muted border -->
+  <g stroke="#9a6e44" stroke-width="1.1" fill="none" stroke-linecap="round" opacity="0.75">
+    <line class="line l1" pathLength="1" x1="32"  y1="46"  x2="70"  y2="62"/>
+    <line class="line l2" pathLength="1" x1="70"  y1="62"  x2="114" y2="36"/>
+    <line class="line l3" pathLength="1" x1="70"  y1="62"  x2="58"  y2="102"/>
+    <line class="line l4" pathLength="1" x1="58"  y1="102" x2="40"  y2="135"/>
+    <line class="line l5" pathLength="1" x1="58"  y1="102" x2="100" y2="118"/>
+    <line class="line l6" pathLength="1" x1="100" y1="118" x2="130" y2="86"/>
+    <line class="line l7" pathLength="1" x1="114" y1="36"  x2="130" y2="86"/>
+  </g>
+
+  <!-- small star at (70,62) — warm amber -->
+  <circle cx="70" cy="62" r="10"  fill="#c88040" opacity="0.14"/>
+  <circle cx="70" cy="62" r="5.5" fill="#c88040"/>
+
+  <!-- main star (100,118) — primary #dfa66d, breathing glow -->
+  <circle class="glow-outer" cx="100" cy="118" r="18"  fill="#dfa66d" opacity="0.12"/>
+  <circle class="glow-mid"   cx="100" cy="118" r="11"  fill="#dfa66d" opacity="0.28"/>
+  <circle class="star-core"  cx="100" cy="118" r="7.5" fill="#dfa66d"/>
+
+  <!-- crosshair ticks on main star -->
+  <g stroke="#dfa66d" stroke-width="0.8" opacity="0.65" stroke-linecap="round" fill="none">
+    <line x1="100" y1="100" x2="100" y2="104"/>
+    <line x1="100" y1="132" x2="100" y2="136"/>
+    <line x1="84"  y1="118" x2="88"  y2="118"/>
+    <line x1="112" y1="118" x2="116" y2="118"/>
+  </g>
+
+  <!-- secondary star nodes — warm cream, matches foreground -->
+  <circle cx="32"  cy="46"  r="4.5" fill="#eedcbc"/>
+  <circle cx="114" cy="36"  r="4.5" fill="#eedcbc"/>
+  <circle cx="58"  cy="102" r="5.0" fill="#eedcbc"/>
+  <circle cx="130" cy="86"  r="4.0" fill="#eedcbc"/>
+  <circle cx="40"  cy="135" r="3.0" fill="#eedcbc"/>
+</svg>

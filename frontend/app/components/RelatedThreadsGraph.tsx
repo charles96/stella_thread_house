@@ -134,11 +134,20 @@ export default function RelatedThreadsGraph({ nodes, edges, onSelect }: Props) {
     if (simNodes.length <= 1) return;
     let raf = 0;
     let alpha = 1;
-    const REPULSION = 900;
-    const SPRING_K = 0.018;
-    const SPRING_LEN = 70;
-    const CENTER_K = 0.004;
-    const DAMPING = 0.85;
+    const REPULSION = 3500;
+    const SPRING_K = 0.010;
+    const SPRING_LEN = 130;
+    const CENTER_K = 0.0015;
+    const DAMPING = 0.82;
+    const COLLISION_PAD = 14; // minimum gap between node surfaces
+
+    // precompute node radii once per tick setup
+    const nodeRadii = simNodes.map((n, i) => {
+      const deg = degreeByIdx[i] ?? 0;
+      return n.type === 'hashtag'
+        ? hashtagRadius(deg, maxHashtagDeg)
+        : threadRadius(deg, maxThreadDeg, !!n.isActive);
+    });
 
     const tick = () => {
       const W = sizeRef.current.w;
@@ -150,14 +159,28 @@ export default function RelatedThreadsGraph({ nodes, edges, onSelect }: Props) {
         for (let j = i + 1; j < simNodes.length; j++) {
           const a = simNodes[i];
           const b = simNodes[j];
-          if (a.isActive || a.pinned) continue;
           let dx = a.x - b.x; let dy = a.y - b.y;
           let d2 = dx * dx + dy * dy;
           if (d2 < 1) { dx = (Math.random() - 0.5) * 2; dy = (Math.random() - 0.5) * 2; d2 = 4; }
-          const f = (REPULSION * alpha) / d2;
           const d = Math.sqrt(d2);
-          a.vx += (dx / d) * f; a.vy += (dy / d) * f;
-          if (!b.isActive && !b.pinned) { b.vx -= (dx / d) * f; b.vy -= (dy / d) * f; }
+
+          // long-range repulsion
+          if (!a.isActive && !a.pinned) {
+            const f = (REPULSION * alpha) / d2;
+            a.vx += (dx / d) * f; a.vy += (dy / d) * f;
+          }
+          if (!b.isActive && !b.pinned) {
+            const f = (REPULSION * alpha) / d2;
+            b.vx -= (dx / d) * f; b.vy -= (dy / d) * f;
+          }
+
+          // collision: push apart if centres are closer than sum of radii + padding
+          const minDist = nodeRadii[i] + nodeRadii[j] + COLLISION_PAD;
+          if (d < minDist) {
+            const overlap = (minDist - d) / d;
+            if (!a.isActive && !a.pinned) { a.vx += dx * overlap * 0.6; a.vy += dy * overlap * 0.6; }
+            if (!b.isActive && !b.pinned) { b.vx -= dx * overlap * 0.6; b.vy -= dy * overlap * 0.6; }
+          }
         }
       }
 
@@ -182,8 +205,7 @@ export default function RelatedThreadsGraph({ nodes, edges, onSelect }: Props) {
         n.vy += (cy - n.y) * CENTER_K * alpha;
         n.vx *= DAMPING; n.vy *= DAMPING;
         n.x += n.vx; n.y += n.vy;
-        const deg = degreeByIdx[i] ?? 0;
-        const r = (n.type === 'hashtag' ? hashtagRadius(deg, maxHashtagDeg) : threadRadius(deg, maxThreadDeg, false)) + 4;
+        const r = nodeRadii[i] + 4;
         if (n.x < r) n.x = r;
         if (n.x > W - r) n.x = W - r;
         if (n.y < r) n.y = r;

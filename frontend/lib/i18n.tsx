@@ -268,7 +268,6 @@ const dict = {
     'menu.about': '정보',
 
     'about.title': "정보",
-    'about.tagline': 'Stella와 함께 지식을 만들어가다',
     'about.version': '버전',
     'about.engine': '추론 엔진',
     'about.frontend': '프론트엔드',
@@ -531,7 +530,6 @@ const dict = {
     'menu.about': 'About',
 
     'about.title': "About",
-    'about.tagline': 'Co-creating knowledge with Stella',
     'about.version': 'Version',
     'about.engine': 'Inference engine',
     'about.frontend': 'Frontend',
@@ -795,7 +793,6 @@ const dict = {
     'menu.about': '情報',
 
     'about.title': "About",
-    'about.tagline': 'Stellaとともに知識を共創する',
     'about.version': 'バージョン',
     'about.engine': '推論エンジン',
     'about.frontend': 'フロントエンド',
@@ -1059,7 +1056,6 @@ const dict = {
     'menu.about': '关于',
 
     'about.title': "About",
-    'about.tagline': '与 Stella 共同创造知识',
     'about.version': '版本',
     'about.engine': '推理引擎',
     'about.frontend': '前端',
@@ -1323,7 +1319,6 @@ const dict = {
     'menu.about': 'Tentang',
 
     'about.title': "About",
-    'about.tagline': 'Bersama Stella menciptakan pengetahuan',
     'about.version': 'Versi',
     'about.engine': 'Mesin inferensi',
     'about.frontend': 'Frontend',

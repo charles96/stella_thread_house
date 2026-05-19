@@ -9,6 +9,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 export const metadata: Metadata = {
   title: "Stella's Thread House",
   description: "Stella's Thread House · Ollama 기반 챗봇",
+  icons: { icon: '/logo.svg' },
 };
 
 export default function RootLayout({
