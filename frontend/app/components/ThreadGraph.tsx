@@ -86,7 +86,12 @@ export default function ThreadGraph({ nodes, edges, onSelectNode }: Props) {
     [simNodes, degreeByIdx],
   );
 
-  const [, force] = useState(0);
+  // Refs for direct SVG DOM mutation — avoids React re-render on every tick
+  const circleRefs = useRef<Map<string, SVGCircleElement>>(new Map());
+  const textRefs = useRef<Map<string, SVGTextElement>>(new Map());
+  const lineRefs = useRef<SVGLineElement[]>([]);
+
+  const [, forceRender] = useState(0);
   const draggingRef = useRef<{
     idx: number; offsetX: number; offsetY: number;
     startX: number; startY: number; moved: boolean;
@@ -150,9 +155,39 @@ export default function ThreadGraph({ nodes, edges, onSelectNode }: Props) {
         if (n.y < r) n.y = r;
         if (n.y > HEIGHT - r) n.y = HEIGHT - r;
       }
+
+      // Direct DOM updates — no React re-render
+      for (const n of simNodes) {
+        const circle = circleRefs.current.get(n.id);
+        if (circle) {
+          circle.setAttribute('cx', String(n.x));
+          circle.setAttribute('cy', String(n.y));
+        }
+        const text = textRefs.current.get(n.id);
+        if (text) {
+          const deg = degreeByIdx[idIndex.get(n.id) ?? 0] ?? 0;
+          const r = n.type === 'hashtag'
+            ? hashtagRadius(deg, maxHashtagDeg)
+            : threadRadius(deg, maxThreadDeg);
+          const offset = n.type === 'hashtag' ? r + 13 : r + 14;
+          text.setAttribute('x', String(n.x));
+          text.setAttribute('y', String(n.y + offset));
+        }
+      }
+      for (let i = 0; i < edges.length; i++) {
+        const line = lineRefs.current[i];
+        if (!line) continue;
+        const an = simNodes[idIndex.get(edges[i].a) ?? -1];
+        const bn = simNodes[idIndex.get(edges[i].b) ?? -1];
+        if (!an || !bn) continue;
+        line.setAttribute('x1', String(an.x));
+        line.setAttribute('y1', String(an.y));
+        line.setAttribute('x2', String(bn.x));
+        line.setAttribute('y2', String(bn.y));
+      }
+
       alpha = draggingRef.current ? Math.max(alpha, 0.5) : alpha * 0.95;
       if (alpha < 0.005) alpha = 0;
-      force((c) => (c + 1) % 1_000_000);
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -185,7 +220,6 @@ export default function ThreadGraph({ nodes, edges, onSelectNode }: Props) {
     }
     simNodes[drag.idx].x = p.x + drag.offsetX;
     simNodes[drag.idx].y = p.y + drag.offsetY;
-    force((c) => (c + 1) % 1_000_000);
   }
   function onPointerUp(e: React.PointerEvent<SVGSVGElement>) {
     const drag = draggingRef.current;
@@ -198,6 +232,51 @@ export default function ThreadGraph({ nodes, edges, onSelectNode }: Props) {
     }
     draggingRef.current = null;
     try { (e.currentTarget as SVGSVGElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+  }
+
+  function onNodeHoverEnter(idx: number) {
+    hoverRef.current.idx = idx;
+    const n = simNodes[idx];
+    if (n.type === 'thread') {
+      const text = textRefs.current.get(n.id);
+      if (text) {
+        text.setAttribute('fill', 'hsl(var(--primary))');
+        text.style.fontWeight = '600';
+        text.style.textDecoration = 'underline';
+      }
+    }
+  }
+  function onNodeHoverLeave(idx: number) {
+    hoverRef.current.idx = null;
+    const n = simNodes[idx];
+    if (n.type === 'thread') {
+      const text = textRefs.current.get(n.id);
+      if (text) {
+        text.setAttribute('fill', 'hsl(var(--foreground))');
+        text.style.fontWeight = '400';
+        text.style.textDecoration = 'none';
+      }
+    }
+  }
+  function onTitleHoverEnter(idx: number) {
+    hoverRef.current.titleIdx = idx;
+    const n = simNodes[idx];
+    const text = textRefs.current.get(n.id);
+    if (text) {
+      text.setAttribute('fill', 'hsl(var(--primary))');
+      text.style.fontWeight = '600';
+      text.style.textDecoration = 'underline';
+    }
+  }
+  function onTitleHoverLeave(idx: number) {
+    if (hoverRef.current.titleIdx === idx) hoverRef.current.titleIdx = null;
+    const n = simNodes[idx];
+    const text = textRefs.current.get(n.id);
+    if (text) {
+      text.setAttribute('fill', 'hsl(var(--foreground))');
+      text.style.fontWeight = '400';
+      text.style.textDecoration = 'none';
+    }
   }
 
   if (nodes.length === 0) return null;
@@ -221,6 +300,7 @@ export default function ThreadGraph({ nodes, edges, onSelectNode }: Props) {
               return (
                 <line
                   key={i}
+                  ref={(el) => { if (el) lineRefs.current[i] = el; }}
                   x1={an.x} y1={an.y} x2={bn.x} y2={bn.y}
                   stroke="hsl(var(--muted-foreground))"
                   strokeOpacity={0.5}
@@ -236,24 +316,25 @@ export default function ThreadGraph({ nodes, edges, onSelectNode }: Props) {
               const deg = degreeByIdx[idx] ?? 0;
               const isHashtag = n.type === 'hashtag';
               const r = isHashtag ? hashtagRadius(deg, maxHashtagDeg) : threadRadius(deg, maxThreadDeg);
-              const isHover = hoverRef.current.idx === idx;
 
               if (isHashtag) {
                 return (
                   <g
                     key={n.id}
                     onPointerDown={(ev) => onPointerDown(ev, idx)}
-                    onPointerEnter={() => { hoverRef.current.idx = idx; force((c) => (c + 1) % 1_000_000); }}
-                    onPointerLeave={() => { hoverRef.current.idx = null; force((c) => (c + 1) % 1_000_000); }}
+                    onPointerEnter={() => onNodeHoverEnter(idx)}
+                    onPointerLeave={() => onNodeHoverLeave(idx)}
                     style={{ cursor: 'default' }}
                   >
                     <circle
+                      ref={(el) => { if (el) circleRefs.current.set(n.id, el); }}
                       cx={n.x} cy={n.y} r={r}
                       fill="hsl(var(--muted-foreground))"
                       stroke="hsl(var(--background))"
                       strokeWidth={1.5}
                     />
                     <text
+                      ref={(el) => { if (el) textRefs.current.set(n.id, el); }}
                       x={n.x} y={n.y + r + 13}
                       fontSize={10} textAnchor="middle"
                       fill="hsl(var(--muted-foreground))"
@@ -266,12 +347,15 @@ export default function ThreadGraph({ nodes, edges, onSelectNode }: Props) {
               }
 
               // thread node
+              const label = (n.label || 'Thread').length > 20
+                ? `${(n.label || 'Thread').slice(0, 20)}…`
+                : n.label || 'Thread';
               return (
                 <g
                   key={n.id}
                   onPointerDown={(ev) => onPointerDown(ev, idx)}
-                  onPointerEnter={() => { hoverRef.current.idx = idx; force((c) => (c + 1) % 1_000_000); }}
-                  onPointerLeave={() => { hoverRef.current.idx = null; force((c) => (c + 1) % 1_000_000); }}
+                  onPointerEnter={() => onNodeHoverEnter(idx)}
+                  onPointerLeave={() => onNodeHoverLeave(idx)}
                   onClick={() => {
                     if (draggingRef.current) return;
                     if (suppressClickRef.current.has(idx)) { suppressClickRef.current.delete(idx); return; }
@@ -280,32 +364,26 @@ export default function ThreadGraph({ nodes, edges, onSelectNode }: Props) {
                   style={{ cursor: 'pointer' }}
                 >
                   <circle
+                    ref={(el) => { if (el) circleRefs.current.set(n.id, el); }}
                     cx={n.x} cy={n.y} r={r}
                     fill="hsl(var(--primary))"
                     stroke="hsl(var(--background))"
                     strokeWidth={2}
                   />
-                  {(() => {
-                    const label = (n.label || 'Thread').length > 20
-                      ? `${(n.label || 'Thread').slice(0, 20)}…`
-                      : n.label || 'Thread';
-                    const titleHover = hoverRef.current.titleIdx === idx;
-                    return (
-                      <text
-                        x={n.x} y={n.y + r + 14}
-                        fontSize={11} textAnchor="middle"
-                        fill={titleHover ? 'hsl(var(--primary))' : 'hsl(var(--foreground))'}
-                        style={{ userSelect: 'none', cursor: 'pointer', textDecoration: titleHover ? 'underline' : 'none', fontWeight: titleHover ? 600 : 400, transition: 'fill 120ms' }}
-                        onPointerEnter={(ev) => { ev.stopPropagation(); hoverRef.current.titleIdx = idx; force((c) => (c + 1) % 1_000_000); }}
-                        onPointerLeave={(ev) => { ev.stopPropagation(); if (hoverRef.current.titleIdx === idx) hoverRef.current.titleIdx = null; force((c) => (c + 1) % 1_000_000); }}
-                        onPointerDown={(ev) => ev.stopPropagation()}
-                        onPointerUp={(ev) => ev.stopPropagation()}
-                        onClick={(ev) => { ev.stopPropagation(); onSelectNode(n.id); }}
-                      >
-                        {label}
-                      </text>
-                    );
-                  })()}
+                  <text
+                    ref={(el) => { if (el) textRefs.current.set(n.id, el); }}
+                    x={n.x} y={n.y + r + 14}
+                    fontSize={11} textAnchor="middle"
+                    fill="hsl(var(--foreground))"
+                    style={{ userSelect: 'none', cursor: 'pointer', fontWeight: 400, transition: 'fill 120ms' }}
+                    onPointerEnter={(ev) => { ev.stopPropagation(); onTitleHoverEnter(idx); }}
+                    onPointerLeave={(ev) => { ev.stopPropagation(); onTitleHoverLeave(idx); }}
+                    onPointerDown={(ev) => ev.stopPropagation()}
+                    onPointerUp={(ev) => ev.stopPropagation()}
+                    onClick={(ev) => { ev.stopPropagation(); onSelectNode(n.id); }}
+                  >
+                    {label}
+                  </text>
                 </g>
               );
             })}

@@ -1,6 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  devIndicators: false,
   // Docker runtime 이미지를 경량화 — .next/standalone 만 복사하면 동작.
   output: 'standalone',
   // 브라우저는 항상 same-origin /api/* 로 호출. Next 가 백엔드(:4100) 로 프록시.

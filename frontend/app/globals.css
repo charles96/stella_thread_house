@@ -173,7 +173,6 @@
 @keyframes visionBlink {
   0%, 100% {
     opacity: 1;
-    filter: brightness(1) saturate(1);
     box-shadow:
       0 0 0 1px rgba(168, 85, 247, 0.4),
       0 0 12px 3px rgba(168, 85, 247, 0.35),
@@ -181,7 +180,6 @@
   }
   50% {
     opacity: 0.55;
-    filter: brightness(0.9) saturate(0.9);
     box-shadow:
       0 0 0 2px rgba(192, 132, 252, 0.85),
       0 0 26px 8px rgba(168, 85, 247, 0.7),
@@ -191,4 +189,5 @@
 
 .vision-glow {
   animation: visionBlink 2.6s ease-in-out infinite;
+  will-change: opacity, box-shadow;
 }

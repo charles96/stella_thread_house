@@ -917,7 +917,7 @@ function ImageScatter({
                 backfaceVisibility: 'hidden',
               }}
               className={cn(
-                'group relative origin-bottom transition-transform duration-300 ease-out transform-gpu',
+                'group relative origin-bottom transition-transform duration-300 ease-out transform-gpu will-change-transform',
                 'group-hover/card:z-50 group-hover/card:!translate-y-[-12px] group-hover/card:!rotate-0 group-hover/card:!scale-[1.18]',
               )}
             >
