@@ -892,13 +892,13 @@ function AiSection({
             />
             {aiEndpointLoading && (
               <div className="mt-1 text-[11px] text-muted-foreground/80">
-                모델 목록 새로고침 중…
+                {t('settings.ai.endpoint.loading')}
               </div>
             )}
             {aiEndpointError && (
               <div className="mt-1 flex items-start gap-1 text-[11px] font-medium text-destructive">
                 <span aria-hidden>⚠️</span>
-                <span>모델 목록 로드 실패 — {aiEndpointError}</span>
+                <span>{t('settings.ai.endpoint.error')}{aiEndpointError}</span>
               </div>
             )}
           </div>
@@ -909,6 +909,7 @@ function AiSection({
             models={models}
             selected={reasoningModel}
             onSelect={onSelectReasoningModel}
+            disabled={models.length === 0}
           />
           <ModelPickerRow
             icon={<Eye className="h-4 w-4" />}
@@ -917,6 +918,7 @@ function AiSection({
             models={models}
             selected={visionModel}
             onSelect={onSelectVisionModel}
+            disabled={models.length === 0}
           />
         </div>
       </div>
@@ -1974,6 +1976,7 @@ function ModelPickerRow({
   models,
   selected,
   onSelect,
+  disabled,
 }: {
   icon: React.ReactNode;
   label: string;
@@ -1981,9 +1984,11 @@ function ModelPickerRow({
   models: ModelInfo[];
   selected?: string;
   onSelect?: (name: string) => void;
+  disabled?: boolean;
 }) {
+  const { t } = useI18n();
   return (
-    <div>
+    <div className={cn(disabled && 'pointer-events-none opacity-40')}>
       <div className="mb-1.5 flex items-center gap-1.5">
         <span className="text-primary">{icon}</span>
         <span className="text-[13px] font-medium text-foreground">
@@ -1991,11 +1996,16 @@ function ModelPickerRow({
         </span>
         <span className="text-[11px] text-muted-foreground">· {desc}</span>
       </div>
+      {disabled ? (
+        <div className="flex h-8 w-full items-center rounded-md border border-input bg-background px-3 text-[12px] text-muted-foreground">
+          {t('settings.ai.noModels')}
+        </div>
+      ) : (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button variant="outline" size="sm" className="w-full justify-between">
             <span className="truncate text-[12px]">
-              {selected ?? '미설정'}
+              {selected ?? t('settings.ai.unset')}
             </span>
             <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           </Button>
@@ -2007,7 +2017,7 @@ function ModelPickerRow({
         >
           {models.length === 0 && (
             <div className="px-2 py-1.5 text-[11.5px] text-muted-foreground">
-              사용 가능한 모델이 없습니다
+              {t('settings.ai.noModels')}
             </div>
           )}
           {models.map((m) => {
@@ -2035,6 +2045,7 @@ function ModelPickerRow({
           })}
         </DropdownMenuContent>
       </DropdownMenu>
+      )}
     </div>
   );
 }

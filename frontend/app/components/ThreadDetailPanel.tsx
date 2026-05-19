@@ -22,7 +22,8 @@ import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { useThreadSettings } from '@/lib/threadSettings';
 import RelatedThreadsGraph, {
-  type RelatedNode,
+  type BipartiteNode,
+  type BipartiteEdge,
 } from './RelatedThreadsGraph';
 
 export interface QuestionEntry {
@@ -80,7 +81,7 @@ const RELATED_THRESHOLD_DEFAULT = 3;
 const RELATED_THRESHOLD_MIN = 1;
 const RELATED_THRESHOLD_MAX = 10;
 
-export default function TagCloudPanel({
+export default function ThreadDetailPanel({
   questions,
   activeQuestionId,
   onSelectQuestion,
@@ -154,36 +155,77 @@ export default function TagCloudPanel({
   useEffect(() => {
     if (isChatKind && detailTab === 'hashtags') setDetailTab('toc');
   }, [isChatKind, detailTab]);
-  // 현재 thread 와 hashtag 가 relatedThreshold 개 이상 일치하는 다른 thread 들 추출.
-  const { activeThread, related, sharedTagsMap } = useMemo(() => {
-    if (!threads || !activeThreadId) {
-      return {
-        activeThread: null as RelatedThreadInput | null,
-        related: [] as RelatedNode[],
-        sharedTagsMap: new Map<string, string[]>(),
-      };
-    }
+  // bipartite 그래프 데이터 + 리스트 뷰용 데이터 동시 계산.
+  const { activeThread, graphNodes, graphEdges, related, sharedTagsMap } = useMemo(() => {
+    const empty = {
+      activeThread: null as RelatedThreadInput | null,
+      graphNodes: [] as BipartiteNode[],
+      graphEdges: [] as BipartiteEdge[],
+      related: [] as { id: string; title: string; shared: number }[],
+      sharedTagsMap: new Map<string, string[]>(),
+    };
+    if (!threads || !activeThreadId) return empty;
     const me = threads.find((t) => t.id === activeThreadId) ?? null;
-    if (!me) {
-      return {
-        activeThread: null,
-        related: [],
-        sharedTagsMap: new Map<string, string[]>(),
-      };
-    }
-    const r: RelatedNode[] = [];
-    const m = new Map<string, string[]>();
+    if (!me) return empty;
+
+    const visibleHashtags = new Set<string>();
+    const connectedThreadIds = new Set<string>();
+    const sharedTagsMap = new Map<string, string[]>();
+
     for (const t of threads) {
       if (t.id === me.id) continue;
       const shared = intersectTags(me.hashtags, t.hashtags);
       if (shared.length >= relatedThreshold) {
-        r.push({ id: t.id, title: t.title, shared: shared.length });
-        m.set(t.id, shared);
+        connectedThreadIds.add(t.id);
+        sharedTagsMap.set(t.id, shared);
+        for (const tag of shared) visibleHashtags.add(tag);
       }
     }
-    // shared 많은 순 정렬.
-    r.sort((a, b) => b.shared - a.shared);
-    return { activeThread: me, related: r, sharedTagsMap: m };
+
+    // thread 노드: 현재 thread(isActive) + 연결된 thread
+    const threadNodes: BipartiteNode[] = [
+      { id: me.id, label: me.title, type: 'thread', isActive: true },
+      ...threads
+        .filter((t) => connectedThreadIds.has(t.id))
+        .map((t) => ({ id: t.id, label: t.title, type: 'thread' as const })),
+    ];
+    // hashtag 노드: 공유 hashtag 만
+    const hashtagNodes: BipartiteNode[] = [...visibleHashtags].map((tag) => ({
+      id: tag, label: tag, type: 'hashtag' as const,
+    }));
+
+    // thread → hashtag 엣지 (중복 제거)
+    const edgeSet = new Set<string>();
+    const graphEdges: BipartiteEdge[] = [];
+    const allConnected = [me.id, ...connectedThreadIds];
+    for (const convId of allConnected) {
+      const conv = threads.find((t) => t.id === convId);
+      if (!conv) continue;
+      for (const tag of conv.hashtags) {
+        if (!visibleHashtags.has(tag)) continue;
+        const key = `${convId}:${tag}`;
+        if (!edgeSet.has(key)) {
+          edgeSet.add(key);
+          graphEdges.push({ a: convId, b: tag });
+        }
+      }
+    }
+
+    // 리스트 뷰: shared 많은 순 정렬
+    const related = [...connectedThreadIds]
+      .map((id) => {
+        const t = threads.find((x) => x.id === id)!;
+        return { id, title: t.title, shared: sharedTagsMap.get(id)?.length ?? 0 };
+      })
+      .sort((a, b) => b.shared - a.shared);
+
+    return {
+      activeThread: me,
+      graphNodes: [...threadNodes, ...hashtagNodes],
+      graphEdges,
+      related,
+      sharedTagsMap,
+    };
   }, [threads, activeThreadId, relatedThreshold]);
   const hashtagsAvailable =
     !!onAddHashtag || (threadHashtags && threadHashtags.length > 0);
@@ -529,7 +571,8 @@ export default function TagCloudPanel({
           chat kind 는 hashtag 자체를 안 만들기에 섹션 전체를 숨김. */}
       {!isChatKind && activeThread && (
         <RelatedDocumentsSection
-          activeThread={activeThread}
+          graphNodes={graphNodes}
+          graphEdges={graphEdges}
           related={related}
           sharedTagsMap={sharedTagsMap}
           onSelectThread={onSelectThread}
@@ -567,13 +610,16 @@ function HashtagsTabContent({
     [tags],
   );
 
+  function normalizeTag(raw: string): string {
+    const clean = raw.trim().replace(/\s+/g, '-');
+    return clean.startsWith('#') ? clean : `#${clean}`;
+  }
+
   function commitAdd() {
     if (!onAdd) return;
     const raw = draft.trim();
     if (!raw) return;
-    // # 접두사가 없으면 자동 부여 — 일관된 표시 형식.
-    const normalized = raw.startsWith('#') ? raw : `#${raw}`;
-    onAdd(normalized);
+    onAdd(normalizeTag(raw));
     setDraft('');
   }
 
@@ -623,7 +669,7 @@ function HashtagsTabContent({
             <input
               type="text"
               value={draft}
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={(e) => setDraft(e.target.value.replace(/\s/g, '-'))}
               onKeyDown={(e) => {
                 // IME 조합 중(한글) Enter 는 조합 확정용이라 무시. 그렇지 않으면 조합 확정 + commit 두 번 발생 → 부분 입력값까지 추가됨.
                 if (e.key !== 'Enter') return;
@@ -651,15 +697,17 @@ function HashtagsTabContent({
 }
 
 function RelatedDocumentsSection({
-  activeThread,
+  graphNodes,
+  graphEdges,
   related,
   sharedTagsMap,
   onSelectThread,
   threshold,
   onChangeThreshold,
 }: {
-  activeThread: RelatedThreadInput;
-  related: RelatedNode[];
+  graphNodes: BipartiteNode[];
+  graphEdges: BipartiteEdge[];
+  related: { id: string; title: string; shared: number }[];
   sharedTagsMap: Map<string, string[]>;
   onSelectThread?: (id: string) => void;
   threshold: number;
@@ -743,10 +791,9 @@ function RelatedDocumentsSection({
       ) : tab === 'graph' ? (
         <div className="min-h-0 flex-1 overflow-auto px-2 py-2">
           <RelatedThreadsGraph
-            active={{ id: activeThread.id, title: activeThread.title }}
-            related={related}
+            nodes={graphNodes}
+            edges={graphEdges}
             onSelect={(id) => onSelectThread?.(id)}
-            sharedTagsMap={sharedTagsMap}
           />
         </div>
       ) : (

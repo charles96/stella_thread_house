@@ -153,6 +153,7 @@ const dict = {
     'bot.thinking': '생각 과정',
     'bot.thinkingWriting': '(작성 중…)',
     'bot.visioning': '이미지 분석',
+    'bot.preparingResponse': '응답 준비 중…',
 
     'login.title': "Stella's Thread House",
     'login.subtitle':
@@ -258,6 +259,10 @@ const dict = {
     'settings.ai.reasoning.desc': '사고·답변 생성',
     'settings.ai.vision': '비전 AI',
     'settings.ai.vision.desc': '이미지 분석',
+    'settings.ai.endpoint.loading': '모델 목록 새로고침 중…',
+    'settings.ai.endpoint.error': '모델 목록 로드 실패 — ',
+    'settings.ai.noModels': '사용 가능한 모델이 없습니다',
+    'settings.ai.unset': '미설정',
 
     'menu.settings': '설정',
     'menu.about': '정보',
@@ -410,6 +415,7 @@ const dict = {
     'bot.thinking': 'Thinking',
     'bot.thinkingWriting': '(writing…)',
     'bot.visioning': 'Visioning',
+    'bot.preparingResponse': 'Preparing response…',
 
     'login.title': "Stella's Thread House",
     'login.subtitle':
@@ -516,6 +522,10 @@ const dict = {
     'settings.ai.reasoning.desc': 'Thinking & answer generation',
     'settings.ai.vision': 'Vision AI',
     'settings.ai.vision.desc': 'Image analysis',
+    'settings.ai.endpoint.loading': 'Refreshing model list…',
+    'settings.ai.endpoint.error': 'Failed to load model list — ',
+    'settings.ai.noModels': 'No models available',
+    'settings.ai.unset': 'Not set',
 
     'menu.settings': 'Settings',
     'menu.about': 'About',
@@ -669,6 +679,7 @@ const dict = {
     'bot.thinking': '思考プロセス',
     'bot.thinkingWriting': '(作成中…)',
     'bot.visioning': '画像解析',
+    'bot.preparingResponse': '応答を準備中…',
 
     'login.title': "Stella's Thread House",
     'login.subtitle':
@@ -775,6 +786,10 @@ const dict = {
     'settings.ai.reasoning.desc': '思考・回答生成',
     'settings.ai.vision': 'ビジョン AI',
     'settings.ai.vision.desc': '画像解析',
+    'settings.ai.endpoint.loading': 'モデル一覧を更新中…',
+    'settings.ai.endpoint.error': 'モデル一覧の読み込みに失敗 — ',
+    'settings.ai.noModels': '利用可能なモデルがありません',
+    'settings.ai.unset': '未設定',
 
     'menu.settings': '設定',
     'menu.about': '情報',
@@ -928,6 +943,7 @@ const dict = {
     'bot.thinking': '思考过程',
     'bot.thinkingWriting': '(撰写中…)',
     'bot.visioning': '图像分析',
+    'bot.preparingResponse': '正在准备回复…',
 
     'login.title': "Stella's Thread House",
     'login.subtitle':
@@ -1034,6 +1050,10 @@ const dict = {
     'settings.ai.reasoning.desc': '思考与回答生成',
     'settings.ai.vision': '视觉 AI',
     'settings.ai.vision.desc': '图像分析',
+    'settings.ai.endpoint.loading': '正在刷新模型列表…',
+    'settings.ai.endpoint.error': '加载模型列表失败 — ',
+    'settings.ai.noModels': '没有可用的模型',
+    'settings.ai.unset': '未设置',
 
     'menu.settings': '设置',
     'menu.about': '关于',
@@ -1187,6 +1207,7 @@ const dict = {
     'bot.thinking': 'Berpikir',
     'bot.thinkingWriting': '(menulis…)',
     'bot.visioning': 'Menganalisis gambar',
+    'bot.preparingResponse': 'Mempersiapkan respons…',
 
     'login.title': "Stella's Thread House",
     'login.subtitle':
@@ -1293,6 +1314,10 @@ const dict = {
     'settings.ai.reasoning.desc': 'Berpikir & menghasilkan jawaban',
     'settings.ai.vision': 'AI Visi',
     'settings.ai.vision.desc': 'Analisis gambar',
+    'settings.ai.endpoint.loading': 'Memuat ulang daftar model…',
+    'settings.ai.endpoint.error': 'Gagal memuat daftar model — ',
+    'settings.ai.noModels': 'Tidak ada model yang tersedia',
+    'settings.ai.unset': 'Belum diatur',
 
     'menu.settings': 'Pengaturan',
     'menu.about': 'Tentang',

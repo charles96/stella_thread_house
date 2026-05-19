@@ -2,6 +2,7 @@ type Locale = 'ko' | 'en' | 'ja' | 'zh' | 'id';
 
 const MSGS = {
   ko: {
+    tavilyUnavailable: 'Tavily 사용 불가 — 검색 없이 응답합니다',
     urlDetect: (n: number) => `URL 감지 — 페이지 ${n}개 직접 읽는 중…`,
     botBlocked: '봇 차단 감지 — Tavily 로 본문 가져오는 중…',
     urlAllFailed: 'URL 페이지 읽기에 모두 실패했습니다',
@@ -15,6 +16,7 @@ const MSGS = {
       `Tavily 결과 상위 ${n}개 페이지 본문 추출 중…`,
   },
   en: {
+    tavilyUnavailable: 'Tavily unavailable — responding without search',
     urlDetect: (n: number) => `URL detected — reading ${n} page${n === 1 ? '' : 's'}…`,
     botBlocked: 'Bot block detected — fetching content via Tavily…',
     urlAllFailed: 'All URL pages failed to load',
@@ -28,6 +30,7 @@ const MSGS = {
       `Extracting top ${n} page${n === 1 ? '' : 's'} from Tavily results…`,
   },
   ja: {
+    tavilyUnavailable: 'Tavily 利用不可 — 検索なしで回答します',
     urlDetect: (n: number) => `URL検出 — ${n}ページを読み込み中…`,
     botBlocked: 'ボットブロック検出 — Tavilyで本文取得中…',
     urlAllFailed: 'URLページの読み込みがすべて失敗しました',
@@ -41,6 +44,7 @@ const MSGS = {
       `Tavily結果上位${n}ページの本文を抽出中…`,
   },
   zh: {
+    tavilyUnavailable: 'Tavily 不可用 — 将在不搜索的情况下回答',
     urlDetect: (n: number) => `检测到URL — 正在读取 ${n} 个页面…`,
     botBlocked: '检测到机器人拦截 — 正在通过Tavily获取内容…',
     urlAllFailed: 'URL页面读取全部失败',
@@ -53,6 +57,7 @@ const MSGS = {
     extractingPages: (n: number) => `正在提取Tavily结果前${n}个页面内容…`,
   },
   id: {
+    tavilyUnavailable: 'Tavily tidak tersedia — menjawab tanpa pencarian',
     urlDetect: (n: number) => `URL terdeteksi — membaca ${n} halaman…`,
     botBlocked: 'Deteksi blokir bot — mengambil konten via Tavily…',
     urlAllFailed: 'Semua halaman URL gagal dibaca',

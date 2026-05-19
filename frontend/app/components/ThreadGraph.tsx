@@ -4,14 +4,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 interface GraphNode {
   id: string;
-  title: string;
-  tagCount: number;
+  label: string;
+  type: 'thread' | 'hashtag';
+  tagCount?: number;
 }
 
 interface GraphEdge {
-  a: string;
-  b: string;
-  shared: string[];
+  a: string; // thread id (source)
+  b: string; // hashtag id (target)
 }
 
 interface SimNode extends GraphNode {
@@ -32,32 +32,21 @@ const WIDTH = 820;
 const HEIGHT = 520;
 const CENTER_X = WIDTH / 2;
 const CENTER_Y = HEIGHT / 2;
-
-// 노드 크기 — 연결(degree) 이 많을수록 큼. degree 0 = 9, max degree = 15.
-// 선형 비율로 미연결(0) 과 최다연결의 차이가 ~1.7배 정도가 되도록 변동폭 축소.
-function nodeRadius(degree: number, maxDegree: number): number {
-  if (maxDegree <= 0) return 9;
-  const t = degree / maxDegree;
-  return 9 + t * 6;
+function threadRadius(degree: number, maxDegree: number): number {
+  if (maxDegree <= 0) return 11;
+  return 11 + (degree / maxDegree) * 5;
 }
 
-// 노드 색 농도 — degree 가 클수록 더 짙은 primary. 최소 0.45, 최대 1.0.
-function nodeOpacity(degree: number, maxDegree: number): number {
-  if (maxDegree <= 0) return 0.6;
-  const t = degree / maxDegree;
-  return 0.45 + t * 0.55;
+function hashtagRadius(degree: number, maxDegree: number): number {
+  if (maxDegree <= 0) return 7;
+  return 7 + (degree / maxDegree) * 4;
 }
 
-export default function ThreadGraph({
-  nodes,
-  edges,
-  onSelectNode,
-}: Props) {
-  // 시뮬레이션 노드는 입력 nodes 가 바뀔 때마다 새로 초기화.
+
+export default function ThreadGraph({ nodes, edges, onSelectNode }: Props) {
   const simNodes = useMemo<SimNode[]>(() => {
     const n = nodes.length;
     return nodes.map((nd, i) => {
-      // 원형으로 살짝 흩어 둔 후 시뮬레이션이 정렬.
       const angle = (i / Math.max(1, n)) * Math.PI * 2;
       const r = 80 + (i % 5) * 20;
       return {
@@ -77,7 +66,6 @@ export default function ThreadGraph({
     return m;
   }, [simNodes]);
 
-  // 노드별 연결 수 (degree) — 노드 크기/색상 농도에 사용.
   const degreeByIdx = useMemo(() => {
     const arr = new Array<number>(simNodes.length).fill(0);
     for (const e of edges) {
@@ -88,48 +76,35 @@ export default function ThreadGraph({
     }
     return arr;
   }, [simNodes, edges, idIndex]);
-  const maxDegree = useMemo(
-    () => degreeByIdx.reduce((m, v) => Math.max(m, v), 0),
-    [degreeByIdx],
+
+  const maxThreadDeg = useMemo(
+    () => simNodes.reduce((m, n, i) => n.type === 'thread' ? Math.max(m, degreeByIdx[i] ?? 0) : m, 0),
+    [simNodes, degreeByIdx],
+  );
+  const maxHashtagDeg = useMemo(
+    () => simNodes.reduce((m, n, i) => n.type === 'hashtag' ? Math.max(m, degreeByIdx[i] ?? 0) : m, 0),
+    [simNodes, degreeByIdx],
   );
 
-  const [, force] = useState(0); // 강제 리렌더용
-
+  const [, force] = useState(0);
   const draggingRef = useRef<{
-    idx: number;
-    offsetX: number;
-    offsetY: number;
-    startX: number;
-    startY: number;
-    moved: boolean;
+    idx: number; offsetX: number; offsetY: number;
+    startX: number; startY: number; moved: boolean;
   } | null>(null);
-  const hoverRef = useRef<{
-    idx: number | null;
-    titleIdx: number | null;
-  }>({ idx: null, titleIdx: null });
-  // edge 점 호버 시 즉시 노출되는 커스텀 툴팁 — native <title> 의 ~500ms 지연 회피.
-  const [edgeTip, setEdgeTip] = useState<{
-    x: number;
-    y: number;
-    text: string;
-  } | null>(null);
-  // 드래그가 발생한 노드는 직후 click 이벤트를 무시하도록 잠시 표시.
+  const hoverRef = useRef<{ idx: number | null; titleIdx: number | null }>({ idx: null, titleIdx: null });
   const suppressClickRef = useRef<Set<number>>(new Set());
-  const DRAG_THRESHOLD = 4; // 4 SVG units 이상 움직이면 드래그로 간주.
+  const DRAG_THRESHOLD = 4;
 
-  // 시뮬레이션 루프
   useEffect(() => {
     let raf = 0;
     let alpha = 1;
-    // 라벨이 edge 중간에 표기되므로 노드 사이 거리를 충분히 띄움.
     const REPULSION = 1800;
-    const SPRING_K = 0.014;
-    const SPRING_LEN = 180;
+    const SPRING_K = 0.016;
+    const SPRING_LEN = 150;
     const CENTER_K = 0.003;
     const DAMPING = 0.84;
 
     const tick = () => {
-      // 반발력
       for (let i = 0; i < simNodes.length; i++) {
         for (let j = i + 1; j < simNodes.length; j++) {
           const a = simNodes[i];
@@ -137,23 +112,13 @@ export default function ThreadGraph({
           let dx = a.x - b.x;
           let dy = a.y - b.y;
           let d2 = dx * dx + dy * dy;
-          if (d2 < 1) {
-            // 같은 위치면 살짝 흔들어서 분리
-            dx = (Math.random() - 0.5) * 2;
-            dy = (Math.random() - 0.5) * 2;
-            d2 = 4;
-          }
+          if (d2 < 1) { dx = (Math.random() - 0.5) * 2; dy = (Math.random() - 0.5) * 2; d2 = 4; }
           const f = (REPULSION * alpha) / d2;
           const d = Math.sqrt(d2);
-          const fx = (dx / d) * f;
-          const fy = (dy / d) * f;
-          a.vx += fx;
-          a.vy += fy;
-          b.vx -= fx;
-          b.vy -= fy;
+          a.vx += (dx / d) * f; a.vy += (dy / d) * f;
+          b.vx -= (dx / d) * f; b.vy -= (dy / d) * f;
         }
       }
-      // 스프링 (edge)
       for (const e of edges) {
         const ai = idIndex.get(e.a);
         const bi = idIndex.get(e.b);
@@ -163,47 +128,30 @@ export default function ThreadGraph({
         const dx = b.x - a.x;
         const dy = b.y - a.y;
         const d = Math.sqrt(dx * dx + dy * dy) || 1;
-        // shared 가 많을수록 더 강하게 끌어당김.
-        const strength = SPRING_K * (1 + Math.log2(e.shared.length));
-        const targetLen = SPRING_LEN;
-        const f = (d - targetLen) * strength * alpha;
-        const fx = (dx / d) * f;
-        const fy = (dy / d) * f;
-        a.vx += fx;
-        a.vy += fy;
-        b.vx -= fx;
-        b.vy -= fy;
+        const f = (d - SPRING_LEN) * SPRING_K * alpha;
+        a.vx += (dx / d) * f; a.vy += (dy / d) * f;
+        b.vx -= (dx / d) * f; b.vy -= (dy / d) * f;
       }
-      // 중심 인력 + 위치 갱신 + damping
-      for (const n of simNodes) {
-        if (n.pinned) {
-          n.vx = 0;
-          n.vy = 0;
-          continue;
-        }
+      for (let i = 0; i < simNodes.length; i++) {
+        const n = simNodes[i];
+        if (n.pinned) { n.vx = 0; n.vy = 0; continue; }
         n.vx += (CENTER_X - n.x) * CENTER_K * alpha;
         n.vy += (CENTER_Y - n.y) * CENTER_K * alpha;
         n.vx *= DAMPING;
         n.vy *= DAMPING;
         n.x += n.vx;
         n.y += n.vy;
-        // 경계 클램프 (살짝 안쪽)
-        const idx = idIndex.get(n.id) ?? -1;
-        const deg = idx >= 0 ? degreeByIdx[idx] : 0;
-        const r = nodeRadius(deg, maxDegree) + 6;
+        const deg = degreeByIdx[i] ?? 0;
+        const r = (n.type === 'hashtag'
+          ? hashtagRadius(deg, maxHashtagDeg)
+          : threadRadius(deg, maxThreadDeg)) + 6;
         if (n.x < r) n.x = r;
         if (n.x > WIDTH - r) n.x = WIDTH - r;
         if (n.y < r) n.y = r;
         if (n.y > HEIGHT - r) n.y = HEIGHT - r;
       }
-      // 드래그 중에는 alpha 를 높게 유지 → 다른 노드들이 즉각 반응.
-      // 손 떼고 안정화되면 alpha 를 점점 0 에 가깝게 → 미세한 표류 제거.
-      if (draggingRef.current) {
-        alpha = Math.max(alpha, 0.5);
-      } else {
-        alpha *= 0.95;
-        if (alpha < 0.005) alpha = 0;
-      }
+      alpha = draggingRef.current ? Math.max(alpha, 0.5) : alpha * 0.95;
+      if (alpha < 0.005) alpha = 0;
       force((c) => (c + 1) % 1_000_000);
       raf = requestAnimationFrame(tick);
     };
@@ -212,41 +160,19 @@ export default function ThreadGraph({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [simNodes, edges]);
 
-  // 좌표 계산은 항상 부모 SVG 의 boundingRect 기준 — pointerdown 이 <g> 자식에서 발생해도
-  // currentTarget(<g>) 이 아닌 SVG 컨테이너 좌표를 써야 drag offset 이 일치한다.
   function svgPoint(e: React.PointerEvent<Element>) {
     const target = e.currentTarget as Element;
-    const svg =
-      target instanceof SVGSVGElement
-        ? target
-        : (target as SVGGraphicsElement).ownerSVGElement;
+    const svg = target instanceof SVGSVGElement ? target : (target as SVGGraphicsElement).ownerSVGElement;
     if (!svg) return { x: 0, y: 0 };
     const rect = svg.getBoundingClientRect();
-    const sx = WIDTH / rect.width;
-    const sy = HEIGHT / rect.height;
-    return {
-      x: (e.clientX - rect.left) * sx,
-      y: (e.clientY - rect.top) * sy,
-    };
+    return { x: (e.clientX - rect.left) * (WIDTH / rect.width), y: (e.clientY - rect.top) * (HEIGHT / rect.height) };
   }
 
   function onPointerDown(e: React.PointerEvent<Element>, idx: number) {
-    // setPointerCapture 는 부모 SVG 에 — pointermove/up 이 거기에 등록돼 있어야 추적이 일관.
     const svg = (e.currentTarget as SVGGraphicsElement).ownerSVGElement;
-    try {
-      svg?.setPointerCapture(e.pointerId);
-    } catch {
-      // ignore
-    }
+    try { svg?.setPointerCapture(e.pointerId); } catch { /* ignore */ }
     const p = svgPoint(e);
-    draggingRef.current = {
-      idx,
-      offsetX: simNodes[idx].x - p.x,
-      offsetY: simNodes[idx].y - p.y,
-      startX: p.x,
-      startY: p.y,
-      moved: false,
-    };
+    draggingRef.current = { idx, offsetX: simNodes[idx].x - p.x, offsetY: simNodes[idx].y - p.y, startX: p.x, startY: p.y, moved: false };
     simNodes[idx].pinned = true;
   }
   function onPointerMove(e: React.PointerEvent<SVGSVGElement>) {
@@ -254,11 +180,8 @@ export default function ThreadGraph({
     if (!drag) return;
     const p = svgPoint(e);
     if (!drag.moved) {
-      const dx = p.x - drag.startX;
-      const dy = p.y - drag.startY;
-      if (dx * dx + dy * dy >= DRAG_THRESHOLD * DRAG_THRESHOLD) {
-        drag.moved = true;
-      }
+      const dx = p.x - drag.startX; const dy = p.y - drag.startY;
+      if (dx * dx + dy * dy >= DRAG_THRESHOLD * DRAG_THRESHOLD) drag.moved = true;
     }
     simNodes[drag.idx].x = p.x + drag.offsetX;
     simNodes[drag.idx].y = p.y + drag.offsetY;
@@ -268,21 +191,13 @@ export default function ThreadGraph({
     const drag = draggingRef.current;
     if (!drag) return;
     simNodes[drag.idx].pinned = false;
-    // 실제로 드래그가 발생했으면 직후 발생할 click 이벤트를 무시.
     if (drag.moved) {
       suppressClickRef.current.add(drag.idx);
-      const idxToRelease = drag.idx;
-      // 다음 이벤트 사이클이 지나면 자동 해제 (혹시 click 이 안 오는 케이스 대비).
-      setTimeout(() => {
-        suppressClickRef.current.delete(idxToRelease);
-      }, 100);
+      const i = drag.idx;
+      setTimeout(() => suppressClickRef.current.delete(i), 100);
     }
     draggingRef.current = null;
-    try {
-      (e.currentTarget as SVGSVGElement).releasePointerCapture(e.pointerId);
-    } catch {
-      // ignore
-    }
+    try { (e.currentTarget as SVGSVGElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
   }
 
   if (nodes.length === 0) return null;
@@ -297,169 +212,97 @@ export default function ThreadGraph({
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
         >
-          {/* edges — 라인 + 정중앙 마커. hover 풍선도움말은 마커(점)에 부착. */}
+          {/* edges */}
           <g>
             {edges.map((e, i) => {
-              const a = simNodes[idIndex.get(e.a) ?? -1];
-              const b = simNodes[idIndex.get(e.b) ?? -1];
-              if (!a || !b) return null;
-              const w = Math.min(3, 0.6 + Math.log2(e.shared.length) * 0.6);
-              const tip = `${e.shared.join(' · ')}  (${e.shared.length})`;
-              const mx = (a.x + b.x) / 2;
-              const my = (a.y + b.y) / 2;
+              const an = simNodes[idIndex.get(e.a) ?? -1];
+              const bn = simNodes[idIndex.get(e.b) ?? -1];
+              if (!an || !bn) return null;
               return (
-                <g key={i}>
-                  {/* 실제 시각 라인 — muted-foreground 톤(다크/라이트 양쪽에서 충분히 보임).
-                      이전 --border 는 다크 테마에서 lightness 22% 라 너무 어두워 잘 안 보였음. */}
-                  <line
-                    x1={a.x}
-                    y1={a.y}
-                    x2={b.x}
-                    y2={b.y}
-                    stroke="hsl(var(--muted-foreground))"
-                    strokeOpacity={0.6}
-                    strokeWidth={w}
-                  />
-                  {/* 라인 hover 영역 확장 — 두꺼운 투명 hit-area, native title 동일 */}
-                  <line
-                    x1={a.x}
-                    y1={a.y}
-                    x2={b.x}
-                    y2={b.y}
-                    stroke="transparent"
-                    strokeWidth={Math.max(12, w + 8)}
-                    style={{ cursor: 'help' }}
-                  >
-                    <title>{tip}</title>
-                  </line>
-                  {/* 정중앙 점 — halo + core 두 겹. */}
-                  <circle
-                    cx={mx}
-                    cy={my}
-                    r={6}
-                    fill="hsl(var(--primary))"
-                    fillOpacity={0.18}
-                    pointerEvents="none"
-                  />
-                  <circle
-                    cx={mx}
-                    cy={my}
-                    r={3}
-                    fill="hsl(var(--primary))"
-                    stroke="hsl(var(--background))"
-                    strokeWidth={1}
-                    pointerEvents="none"
-                  />
-                  {/* hover 영역 확장 + 커스텀 툴팁 트리거 — native <title> 지연 없이 즉시 노출. */}
-                  <circle
-                    cx={mx}
-                    cy={my}
-                    r={12}
-                    fill="transparent"
-                    style={{ cursor: 'help' }}
-                    onPointerEnter={(ev) => {
-                      setEdgeTip({
-                        x: ev.clientX,
-                        y: ev.clientY,
-                        text: tip,
-                      });
-                    }}
-                    onPointerMove={(ev) => {
-                      setEdgeTip((prev) =>
-                        prev
-                          ? { ...prev, x: ev.clientX, y: ev.clientY }
-                          : prev,
-                      );
-                    }}
-                    onPointerLeave={() => setEdgeTip(null)}
-                  />
-                </g>
+                <line
+                  key={i}
+                  x1={an.x} y1={an.y} x2={bn.x} y2={bn.y}
+                  stroke="hsl(var(--muted-foreground))"
+                  strokeOpacity={0.5}
+                  strokeWidth={1.4}
+                />
               );
             })}
           </g>
+
           {/* nodes */}
           <g>
             {simNodes.map((n, idx) => {
               const deg = degreeByIdx[idx] ?? 0;
-              const r = nodeRadius(deg, maxDegree);
-              const baseOpacity = nodeOpacity(deg, maxDegree);
+              const isHashtag = n.type === 'hashtag';
+              const r = isHashtag ? hashtagRadius(deg, maxHashtagDeg) : threadRadius(deg, maxThreadDeg);
               const isHover = hoverRef.current.idx === idx;
+
+              if (isHashtag) {
+                return (
+                  <g
+                    key={n.id}
+                    onPointerDown={(ev) => onPointerDown(ev, idx)}
+                    onPointerEnter={() => { hoverRef.current.idx = idx; force((c) => (c + 1) % 1_000_000); }}
+                    onPointerLeave={() => { hoverRef.current.idx = null; force((c) => (c + 1) % 1_000_000); }}
+                    style={{ cursor: 'default' }}
+                  >
+                    <circle
+                      cx={n.x} cy={n.y} r={r}
+                      fill="hsl(var(--muted-foreground))"
+                      stroke="hsl(var(--background))"
+                      strokeWidth={1.5}
+                    />
+                    <text
+                      x={n.x} y={n.y + r + 13}
+                      fontSize={10} textAnchor="middle"
+                      fill="hsl(var(--muted-foreground))"
+                      style={{ userSelect: 'none', fontWeight: 500 }}
+                    >
+                      {n.label.length > 18 ? `${n.label.slice(0, 18)}…` : n.label}
+                    </text>
+                  </g>
+                );
+              }
+
+              // thread node
               return (
                 <g
                   key={n.id}
                   onPointerDown={(ev) => onPointerDown(ev, idx)}
-                  onPointerEnter={() => {
-                    hoverRef.current.idx = idx;
-                    force((c) => (c + 1) % 1_000_000);
-                  }}
-                  onPointerLeave={() => {
-                    hoverRef.current.idx = null;
-                    force((c) => (c + 1) % 1_000_000);
-                  }}
+                  onPointerEnter={() => { hoverRef.current.idx = idx; force((c) => (c + 1) % 1_000_000); }}
+                  onPointerLeave={() => { hoverRef.current.idx = null; force((c) => (c + 1) % 1_000_000); }}
                   onClick={() => {
                     if (draggingRef.current) return;
-                    if (suppressClickRef.current.has(idx)) {
-                      suppressClickRef.current.delete(idx);
-                      return;
-                    }
+                    if (suppressClickRef.current.has(idx)) { suppressClickRef.current.delete(idx); return; }
                     onSelectNode(n.id);
                   }}
                   style={{ cursor: 'pointer' }}
                 >
                   <circle
-                    cx={n.x}
-                    cy={n.y}
-                    r={r}
+                    cx={n.x} cy={n.y} r={r}
                     fill="hsl(var(--primary))"
-                    fillOpacity={isHover ? 1 : baseOpacity}
                     stroke="hsl(var(--background))"
                     strokeWidth={2}
                   />
                   {(() => {
-                    const title =
-                      (n.title || 'Thread').length > 20
-                        ? `${(n.title || 'Thread').slice(0, 20)}…`
-                        : n.title || 'Thread';
+                    const label = (n.label || 'Thread').length > 20
+                      ? `${(n.label || 'Thread').slice(0, 20)}…`
+                      : n.label || 'Thread';
                     const titleHover = hoverRef.current.titleIdx === idx;
                     return (
                       <text
-                        x={n.x}
-                        y={n.y + r + 14}
-                        fontSize={11}
-                        textAnchor="middle"
-                        fill={
-                          titleHover
-                            ? 'hsl(var(--primary))'
-                            : 'hsl(var(--foreground))'
-                        }
-                        style={{
-                          userSelect: 'none',
-                          cursor: 'pointer',
-                          textDecoration: titleHover ? 'underline' : 'none',
-                          fontWeight: titleHover ? 600 : 400,
-                          transition: 'fill 120ms',
-                        }}
-                        onPointerEnter={(ev) => {
-                          ev.stopPropagation();
-                          hoverRef.current.titleIdx = idx;
-                          force((c) => (c + 1) % 1_000_000);
-                        }}
-                        onPointerLeave={(ev) => {
-                          ev.stopPropagation();
-                          if (hoverRef.current.titleIdx === idx)
-                            hoverRef.current.titleIdx = null;
-                          force((c) => (c + 1) % 1_000_000);
-                        }}
-                        // pointerdown 을 부모 <g> 로 전파하지 않음 → 드래그 시작 자체를 안 일으키므로
-                        // 터치패드 미세 이동으로 click 이 suppress 되는 문제 차단.
+                        x={n.x} y={n.y + r + 14}
+                        fontSize={11} textAnchor="middle"
+                        fill={titleHover ? 'hsl(var(--primary))' : 'hsl(var(--foreground))'}
+                        style={{ userSelect: 'none', cursor: 'pointer', textDecoration: titleHover ? 'underline' : 'none', fontWeight: titleHover ? 600 : 400, transition: 'fill 120ms' }}
+                        onPointerEnter={(ev) => { ev.stopPropagation(); hoverRef.current.titleIdx = idx; force((c) => (c + 1) % 1_000_000); }}
+                        onPointerLeave={(ev) => { ev.stopPropagation(); if (hoverRef.current.titleIdx === idx) hoverRef.current.titleIdx = null; force((c) => (c + 1) % 1_000_000); }}
                         onPointerDown={(ev) => ev.stopPropagation()}
                         onPointerUp={(ev) => ev.stopPropagation()}
-                        onClick={(ev) => {
-                          ev.stopPropagation();
-                          onSelectNode(n.id);
-                        }}
+                        onClick={(ev) => { ev.stopPropagation(); onSelectNode(n.id); }}
                       >
-                        {title}
+                        {label}
                       </text>
                     );
                   })()}
@@ -468,19 +311,6 @@ export default function ThreadGraph({
             })}
           </g>
         </svg>
-
-        {/* 커스텀 edge 툴팁 — 마우스 우상단으로 살짝 띄움. position: fixed 로 viewport 좌표 사용. */}
-        {edgeTip && (
-          <div
-            className="pointer-events-none fixed z-50 rounded-md border border-border bg-popover px-2 py-1 text-[11.5px] text-popover-foreground shadow-md"
-            style={{
-              left: edgeTip.x + 12,
-              top: edgeTip.y + 12,
-            }}
-          >
-            {edgeTip.text}
-          </div>
-        )}
       </div>
     </section>
   );

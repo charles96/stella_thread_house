@@ -41,8 +41,8 @@ interface Props {
 }
 
 interface GraphData {
-  nodes: { id: string; title: string; tagCount: number }[];
-  edges: { a: string; b: string; shared: string[] }[];
+  nodes: { id: string; label: string; type: 'thread' | 'hashtag'; tagCount?: number }[];
+  edges: { a: string; b: string }[];
 }
 
 interface ActivityCell {
@@ -55,7 +55,7 @@ interface ActivityResponse {
   chat: ActivityCell[];
 }
 
-const GRAPH_THRESHOLD_DEFAULT = 3;
+const GRAPH_THRESHOLD_DEFAULT = 2;
 const GRAPH_THRESHOLD_MIN = 1;
 const GRAPH_THRESHOLD_MAX = 10;
 

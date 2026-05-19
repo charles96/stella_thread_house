@@ -2605,7 +2605,7 @@ export default function MessageBubble({
           !hasReadPagesData && (
             <div className="mb-1.5 inline-flex items-center gap-1.5 self-start rounded-full border border-border bg-secondary/60 px-3 py-1 text-[12px] text-muted-foreground">
               <Sparkles className="h-3 w-3 animate-pulse text-primary" />
-              <span>응답 준비 중…</span>
+              <span>{t('bot.preparingResponse')}</span>
               <span className="inline-flex h-3 items-center gap-0.5">
                 <span className="h-1 w-1 animate-bounce rounded-full bg-muted-foreground [animation-delay:0ms]" />
                 <span className="h-1 w-1 animate-bounce rounded-full bg-muted-foreground [animation-delay:150ms]" />

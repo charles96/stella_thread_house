@@ -36,11 +36,11 @@ export class AiConfigController implements OnModuleInit {
     private readonly configs: Repository<SystemConfig>,
   ) {}
 
-  // 부팅 시 한 번 — DB 의 'ai' row 가 비어있으면 env (OLLAMA_URL) 로 시드.
+  // 부팅 시 한 번 — DB 의 'ai' row 가 비어있으면 env (OLLAMA_GEMMA4_URL) 로 시드.
   // 이후 admin 이 Settings 에서 변경 시 DB 값이 우선이 되며 env 는 무시됨.
   async onModuleInit(): Promise<void> {
     const cfg = await this.load();
-    const envEndpoint = process.env.OLLAMA_URL?.trim();
+    const envEndpoint = process.env.OLLAMA_GEMMA4_URL?.trim();
     if (!cfg.endpoint && envEndpoint) {
       const seeded: AiConfig = { ...cfg, endpoint: envEndpoint };
       await this.configs.upsert(
@@ -48,7 +48,7 @@ export class AiConfigController implements OnModuleInit {
         { conflictPaths: ['key'] },
       );
       this.logger.log(
-        `seeded AI Endpoint from OLLAMA_URL env: ${envEndpoint}`,
+        `seeded AI Endpoint from OLLAMA_GEMMA4_URL env: ${envEndpoint}`,
       );
     }
   }

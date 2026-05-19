@@ -815,8 +815,9 @@ export class ChatService {
           '- 본문에서 한 번 스쳐 지나간 단어보다 답변 전반에서 비중 있게 다뤄진 단어를 우선.',
           '- 너무 추상적이거나 너무 광범위한 상위 카테고리(예: "#역사","#기술")만 단독으로 쓰지 않는다 — 본문이 그 자체를 정면으로 다룬 경우에만 허용.',
           '- 복합어는 의미가 통째로 보존되어야 가치 있을 때만 그대로 두고, 의미 손실 없이 분해할 수 있으면 핵심 부분만 남긴다.',
-          '- 명사형 단일 토큰. 공백·특수문자·조사·서술어 금지.',
-          '- 영어는 카멜케이스 또는 짧게 (예: "#GenerativeAI", "#NextJS").',
+          '- 명사형 단일 토큰. 특수문자·조사·서술어 금지.',
+          '- 공백이 필요한 복합어는 반드시 하이픈(-)으로 연결 (예: "#머신-러닝", "#수원-화성").',
+          '- 영어는 카멜케이스 또는 하이픈 연결 (예: "#GenerativeAI", "#Next-JS").',
           '- 의미가 사실상 동일한 태그는 중복 제거 (대표적인 것 하나만).',
           '',
           '한 줄 요약 가이드:',
@@ -850,7 +851,7 @@ export class ChatService {
       const tags: string[] = [];
       for (const s of tagsRaw) {
         if (typeof s !== 'string') continue;
-        const trimmed = s.trim().replace(/\s+/g, '');
+        const trimmed = s.trim().replace(/\s+/g, '-');
         if (!trimmed) continue;
         const tag = trimmed.startsWith('#') ? trimmed : `#${trimmed}`;
         const key = tag.toLowerCase();
@@ -1664,7 +1665,7 @@ export class ChatService {
         this.logger.warn(`Tavily 검색 실패 (검색 없이 계속 진행): ${msg}`);
         yield {
           type: 'status',
-          text: 'Tavily 사용 불가 — 검색 없이 응답합니다',
+          text: m.tavilyUnavailable,
         };
       }
     }

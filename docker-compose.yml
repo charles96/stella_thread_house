@@ -44,9 +44,9 @@ services:
       TH_ADMIN_EMAIL_ID: ${TH_ADMIN_EMAIL_ID}
       TH_ADMIN_PASSWORD: ${TH_ADMIN_PASSWORD:-changeme1234}
       DATABASE_URL: postgres://${POSTGRES_USER:-stella}:${POSTGRES_PASSWORD:-stella_dev_pass}@postgres:5432/${POSTGRES_DB:-stella}
-      # OLLAMA_URL — 부팅 시 system_config 의 'ai' row 가 비어있으면 이 값으로 시드.
+      # OLLAMA_GEMMA4_URL — 부팅 시 system_config 의 'ai' row 가 비어있으면 이 값으로 시드.
       # 이후엔 Settings > AI 에서 admin 이 변경한 DB 값이 우선.
-      OLLAMA_URL: ${OLLAMA_URL}
+      OLLAMA_GEMMA4_URL: ${OLLAMA_GEMMA4_URL}
       # TAVILY_API_KEY — 부팅 시 'tavily' row 가 비어있으면 이 값으로 시드.
       # 이후 Settings > AI > Tools 에서 admin 이 변경한 DB 값이 우선.
       # (root .env 또는 shell env 에서 ${TAVILY_API_KEY} 주입.

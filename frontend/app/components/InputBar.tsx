@@ -292,23 +292,31 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
           onChange={onPick}
         />
 
-        <Textarea
-          ref={textareaRef}
-          value={value}
-          rows={1}
-          placeholder={t('input.placeholder')}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={onKeyDown}
-          disabled={disabled}
-          // height 는 useEffect 에서 컨텐츠 기준 동적 세팅. 3줄 초과 시 내부 스크롤.
-          // height 변화를 transition 에 포함해 줄바꿈 시 자연스럽게 확장/축소.
-          className={cn(
-            // overflow-y 는 useEffect 가 컨텐츠 길이에 따라 hidden/auto 로 토글.
-            'min-h-[40px] flex-1 resize-none overflow-y-hidden rounded-2xl bg-secondary shadow-md transition-[height,transform] duration-200 ease-out',
-            pulse && '-translate-y-1 scale-[0.98]',
-            disabled && 'cursor-not-allowed opacity-60',
+        <div className="relative flex-1">
+          <Textarea
+            ref={textareaRef}
+            value={value}
+            rows={1}
+            placeholder={isStreaming ? '' : t('input.placeholder')}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={onKeyDown}
+            disabled={disabled}
+            className={cn(
+              'min-h-[40px] w-full resize-none overflow-y-hidden rounded-2xl bg-secondary shadow-md transition-[height,transform] duration-200 ease-out',
+              pulse && '-translate-y-1 scale-[0.98]',
+              disabled && 'cursor-not-allowed opacity-60',
+            )}
+          />
+          {isStreaming && (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <span className="tabular-nums text-[11px] text-muted-foreground/70 animate-in fade-in duration-200">
+                {typeof liveTokRate === 'number' && liveTokRate > 0
+                  ? `${liveTokRate.toFixed(1)} tok/s`
+                  : '…'}
+              </span>
+            </div>
           )}
-        />
+        </div>
 
         {/* 스트리밍 중에는 Send 버튼이 Stop으로 토글된다. 같은 자리, 다른 동작/스타일.
             items-end 컨테이너라 h-8 버튼은 h-10 아이콘 버튼 대비 중심선이 4px 낮음 → mb-1 로 보정. */}
@@ -318,32 +326,24 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
             variant="destructive"
             onClick={onStop}
             size="icon"
-            className="mb-1 h-8 w-8 shrink-0 rounded-full"
+            className="h-10 w-10 shrink-0 rounded-xl"
             title="Stop"
             aria-label="Stop"
           >
-            <Square className="h-3 w-3 fill-current" />
+            <Square className="h-3.5 w-3.5 fill-current" />
           </Button>
         ) : (
           <Button
             type="button"
             onClick={submit}
             disabled={sendDisabled}
-            className="mb-1 h-8 shrink-0 gap-1 rounded-full px-3 text-[12px]"
+            className="h-10 shrink-0 gap-1.5 rounded-xl px-4 text-[12px]"
           >
             <SendHorizonal className="h-3.5 w-3.5" />
             {t('input.send')}
           </Button>
         )}
 
-        {typeof liveTokRate === 'number' && liveTokRate > 0 && (
-          <span
-            className="shrink-0 rounded-full bg-secondary px-2 py-1 text-[10.5px] font-medium tabular-nums text-muted-foreground animate-in fade-in duration-200"
-            title="응답 생성 속도 (실시간 추정)"
-          >
-            {liveTokRate.toFixed(1)} tok/s
-          </span>
-        )}
       </div>
     </div>
   );

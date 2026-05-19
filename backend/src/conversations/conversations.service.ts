@@ -516,21 +516,22 @@ export class ConversationsService implements OnModuleInit {
     });
   }
 
-  // 사용자의 모든 conversation 별 unique hashtag 집합을 모아, 임계값 이상 공유하는 쌍을 edge 로.
-  // 노드 = conversation, edge = 공유 태그 수 >= threshold.
+  // Bipartite graph: 노드 = thread conversation + hashtag, edge = thread → hashtag.
+  // threshold = 두 thread 가 공통으로 가져야 하는 최소 hashtag 수.
+  // 조건을 만족하는 쌍의 공통 hashtag 를 노드로, thread→hashtag 방향 edge 로 표현 (bipartite).
   async getGraphData(
     userId: string,
-    threshold = 3,
+    threshold = 2,
   ): Promise<{
-    nodes: { id: string; title: string; tagCount: number }[];
-    edges: { a: string; b: string; shared: string[] }[];
+    nodes: { id: string; label: string; type: 'thread' | 'hashtag'; tagCount?: number }[];
+    edges: { a: string; b: string }[];
   }> {
-    // hashtags 는 conversation 컬럼에서 직접 — excludedHashtags 는 그래프 계산에서 제외.
-    // kind='thread' 만 그래프 대상.
     const convs = await this.conversations.find({
       where: { userId, kind: 'thread' },
       select: ['id', 'title', 'hashtags', 'excludedHashtags'],
     });
+
+    // 각 thread 의 유효 hashtag 집합 (excluded 제외)
     const tagsByConv = new Map<string, Set<string>>();
     for (const c of convs) {
       const excluded = new Set(
@@ -539,33 +540,61 @@ export class ConversationsService implements OnModuleInit {
       const set = new Set<string>();
       for (const t of c.hashtags ?? []) {
         const k = (t ?? '').trim();
-        if (!k) continue;
-        if (excluded.has(k.toLowerCase())) continue;
+        if (!k || excluded.has(k.toLowerCase())) continue;
         set.add(k);
       }
       tagsByConv.set(c.id, set);
     }
-    const nodes = convs.map((c) => ({
-      id: c.id,
-      title: c.title,
-      tagCount: tagsByConv.get(c.id)?.size ?? 0,
-    }));
 
-    const edges: { a: string; b: string; shared: string[] }[] = [];
-    const ids = convs.map((c) => c.id);
-    for (let i = 0; i < ids.length; i++) {
-      for (let j = i + 1; j < ids.length; j++) {
-        const A = tagsByConv.get(ids[i]);
-        const B = tagsByConv.get(ids[j]);
-        if (!A || !B) continue;
-        const shared: string[] = [];
-        for (const t of A) if (B.has(t)) shared.push(t);
+    const convIds = [...tagsByConv.keys()];
+    const visibleHashtags = new Set<string>();
+    const connectedThreadIds = new Set<string>();
+
+    // 모든 thread 쌍(A, B) — 공통 hashtag 수 >= threshold 인 쌍의 공통 hashtag 만 노드로.
+    for (let i = 0; i < convIds.length; i++) {
+      for (let j = i + 1; j < convIds.length; j++) {
+        const idA = convIds[i];
+        const idB = convIds[j];
+        const tagsA = tagsByConv.get(idA)!;
+        const tagsB = tagsByConv.get(idB)!;
+        const shared = [...tagsA].filter((t) => tagsB.has(t));
         if (shared.length >= threshold) {
-          edges.push({ a: ids[i], b: ids[j], shared });
+          connectedThreadIds.add(idA);
+          connectedThreadIds.add(idB);
+          for (const tag of shared) visibleHashtags.add(tag);
         }
       }
     }
-    return { nodes, edges };
+
+    const threadNodes = convs
+      .map((c) => ({
+        id: c.id,
+        label: c.title,
+        type: 'thread' as const,
+        tagCount: tagsByConv.get(c.id)?.size ?? 0,
+      }));
+
+    const hashtagNodes = [...visibleHashtags].map((tag) => ({
+      id: tag,
+      label: tag,
+      type: 'hashtag' as const,
+    }));
+
+    // thread → hashtag 엣지 (중복 제거)
+    const edgeSet = new Set<string>();
+    const edges: { a: string; b: string }[] = [];
+    for (const convId of connectedThreadIds) {
+      for (const tag of tagsByConv.get(convId) ?? []) {
+        if (!visibleHashtags.has(tag)) continue;
+        const key = `${convId}:${tag}`;
+        if (!edgeSet.has(key)) {
+          edgeSet.add(key);
+          edges.push({ a: convId, b: tag });
+        }
+      }
+    }
+
+    return { nodes: [...threadNodes, ...hashtagNodes], edges };
   }
 
   // GitHub-style heatmap 데이터 — KST 기준 일자별 사용자 메시지 수, kind 별로 분리.

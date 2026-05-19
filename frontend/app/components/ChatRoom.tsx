@@ -9,7 +9,7 @@ import ArtifactPanel from './ArtifactPanel';
 import SettingsModal from './SettingsModal';
 import AboutModal from './AboutModal';
 import SaveConfirmModal from './SaveConfirmModal';
-import TagCloudPanel from './TagCloudPanel';
+import ThreadDetailPanel from './ThreadDetailPanel';
 import DashboardPanel from './DashboardPanel';
 import DeleteConfirmModal from './DeleteConfirmModal';
 import DeleteMessagePairConfirmModal from './DeleteMessagePairConfirmModal';
@@ -1711,12 +1711,14 @@ export default function ChatRoom() {
     const c = makeConversation(t('bot.greeting.thread'), 'thread');
     setConversations((prev) => [c, ...prev]);
     setActiveId(c.id);
+    void ensureConversationOnServer(c);
   }
 
   function newChat() {
     const c = makeConversation(t('bot.greeting'), 'chat');
     setConversations((prev) => [c, ...prev]);
     setActiveId(c.id);
+    void ensureConversationOnServer(c);
   }
 
   // makeConversation의 prev 사용 컨텍스트 — 일반 setState 안에서는 현재 t를
@@ -3241,7 +3243,7 @@ export default function ChatRoom() {
               : 'translate-x-full',
           )}
         >
-          <TagCloudPanel
+          <ThreadDetailPanel
             questions={userQuestions}
             activeQuestionId={visibleUserMessageId}
             onSelectQuestion={(id) => scrollToMessage(id)}
