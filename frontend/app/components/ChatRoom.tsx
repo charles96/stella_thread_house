@@ -2772,14 +2772,14 @@ export default function ChatRoom() {
     <div className="flex h-screen w-screen bg-background">
       {/* 사이드바 wrapper.
           데스크톱(md+): 인라인 패널 — w-72 / w-0 토글, transform translate 애니메이션.
-          모바일(< md): full-screen overlay — 열려있을 때만 화면 전체를 덮고, 닫히면 안 보임.
-                         tap 으로 thread 선택 시 자동으로 닫힘 → main 이 화면 가득. */}
+          모바일(< md): 페이지 전환 방식 — 열리면 화면 전체를 채우고 main 이 사라짐.
+                         닫히면 완전히 hidden → main 이 화면 가득. */}
       <div
         aria-hidden={!sidebarOpen}
         className={cn(
           'shrink-0 overflow-hidden bg-background',
-          // 모바일 — full-screen overlay
-          sidebarOpen ? 'fixed inset-0 z-40' : 'hidden',
+          // 모바일 — 메인 페이지처럼 화면 전체 차지 (오버레이 아님)
+          sidebarOpen ? 'block h-full w-full' : 'hidden',
           // 데스크톱 — 인라인 패널 (mobile 클래스 override)
           'md:relative md:z-auto md:block md:h-screen md:transition-[width] md:duration-300 md:ease-out',
           sidebarOpen ? 'md:w-72' : 'md:w-0',
@@ -2796,7 +2796,12 @@ export default function ChatRoom() {
             folders={folders}
             activeId={activeId}
             view={view}
-            onSelectDashboard={() => setView('dashboard')}
+            onSelectDashboard={() => {
+              setView('dashboard');
+              if (typeof window !== 'undefined' && window.innerWidth < 768) {
+                setSidebarOpen(false);
+              }
+            }}
             onSelect={(id) => {
               setActiveId(id);
               setView('thread');
@@ -2867,7 +2872,11 @@ export default function ChatRoom() {
         </div>
       </div>
 
-      <main className="relative flex min-w-0 flex-1 flex-col bg-background">
+      {/* 모바일: 사이드바가 열려 있으면 main 전체 숨김 (페이지 전환 방식). 데스크톱은 항상 표시. */}
+      <main className={cn(
+        'relative min-w-0 flex-1 flex-col bg-background',
+        sidebarOpen ? 'hidden md:flex' : 'flex',
+      )}>
         {view === 'dashboard' ? (
           <DashboardPanel
             conversations={conversations}
