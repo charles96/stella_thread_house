@@ -142,6 +142,15 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
   const [imageNames, setImageNames] = useState<string[]>([]);
   const [visionOn, setVisionOn] = useState(false);
   const [pulse, setPulse] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 767px)');
+    setIsMobile(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
 
   // 이미지 첨부 → 비전 토글 자동 ON. 모두 제거되면 자동 OFF.
   useEffect(() => {
@@ -302,7 +311,7 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
             ref={textareaRef}
             value={value}
             rows={1}
-            placeholder={isStreaming ? '' : t('input.placeholder')}
+            placeholder={isStreaming ? '' : isMobile ? 'Type a message' : t('input.placeholder')}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={onKeyDown}
             disabled={disabled}
