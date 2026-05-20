@@ -2761,15 +2761,15 @@ export default function ChatRoom() {
   }
 
   if (!authChecked) {
-    return <div className="h-screen w-screen bg-background" />;
+    return <div className="h-dvh w-screen bg-background" />;
   }
   if (!user) {
     // /login 으로 이동 — 실제 리다이렉트는 아래 useEffect 가 담당.
-    return <div className="h-screen w-screen bg-background" />;
+    return <div className="h-dvh w-screen bg-background" />;
   }
 
   return (
-    <div className="flex h-screen w-screen bg-background">
+    <div className="flex h-dvh w-screen overflow-hidden bg-background">
       {/* 사이드바 wrapper.
           데스크톱(md+): 인라인 패널 — w-72 / w-0 토글, transform translate 애니메이션.
           모바일(< md): 페이지 전환 방식 — 열리면 화면 전체를 채우고 main 이 사라짐.
@@ -2874,7 +2874,7 @@ export default function ChatRoom() {
 
       {/* 모바일: 사이드바가 열려 있으면 main 전체 숨김 (페이지 전환 방식). 데스크톱은 항상 표시. */}
       <main className={cn(
-        'relative min-w-0 flex-1 flex-col bg-background',
+        'relative min-w-0 min-h-0 flex-1 flex-col bg-background',
         sidebarOpen ? 'hidden md:flex' : 'flex',
       )}>
         {view === 'dashboard' ? (

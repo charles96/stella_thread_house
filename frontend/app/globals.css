@@ -134,7 +134,8 @@
   html,
   body {
     @apply bg-background text-foreground antialiased;
-    height: 100%;
+    height: 100dvh;
+    overflow: hidden;
   }
   body {
     font-family:
@@ -143,6 +144,8 @@
       'Apple SD Gothic Neo',
       'Malgun Gothic',
       sans-serif;
+    /* 모바일: 좌우 pan 차단, 상하 스크롤만 허용 */
+    touch-action: pan-y;
   }
 }
 
