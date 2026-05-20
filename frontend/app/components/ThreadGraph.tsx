@@ -28,8 +28,8 @@ interface Props {
   onSelectNode: (id: string) => void;
 }
 
-const WIDTH = 820;
-const HEIGHT = 520;
+const WIDTH = 960;
+const HEIGHT = 600;
 const CENTER_X = WIDTH / 2;
 const CENTER_Y = HEIGHT / 2;
 function threadRadius(degree: number, maxDegree: number): number {
@@ -48,7 +48,7 @@ export default function ThreadGraph({ nodes, edges, onSelectNode }: Props) {
     const n = nodes.length;
     return nodes.map((nd, i) => {
       const angle = (i / Math.max(1, n)) * Math.PI * 2;
-      const r = 80 + (i % 5) * 20;
+      const r = 180 + (i % 5) * 40;
       return {
         ...nd,
         x: CENTER_X + Math.cos(angle) * r,
@@ -103,11 +103,11 @@ export default function ThreadGraph({ nodes, edges, onSelectNode }: Props) {
   useEffect(() => {
     let raf = 0;
     let alpha = 1;
-    const REPULSION = 1800;
-    const SPRING_K = 0.016;
-    const SPRING_LEN = 150;
-    const CENTER_K = 0.003;
-    const DAMPING = 0.84;
+    const REPULSION = 4000;
+    const SPRING_K = 0.010;
+    const SPRING_LEN = 210;
+    const CENTER_K = 0.0012;
+    const DAMPING = 0.80;
 
     const tick = () => {
       for (let i = 0; i < simNodes.length; i++) {
@@ -286,7 +286,8 @@ export default function ThreadGraph({ nodes, edges, onSelectNode }: Props) {
       <div className="relative overflow-hidden rounded-lg border border-border/50 bg-secondary/20">
         <svg
           viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-          className="block h-auto max-h-[60vh] w-full"
+          className="block h-auto w-full"
+          style={{ maxHeight: 'calc(100dvh - 300px)' }}
           preserveAspectRatio="xMidYMid meet"
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
