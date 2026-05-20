@@ -300,6 +300,10 @@ export class ChatController {
       }
     };
 
+    // nginx/프록시의 proxy_read_timeout(기본 60s) 만료 방지.
+    // SSE comment(`: ping`)는 클라이언트가 무시하지만 TCP 레벨에서 데이터가 흘러 타임아웃을 리셋한다.
+    const heartbeat = setInterval(() => writeIfConnected(': ping\n\n'), 15_000);
+
     // 사용자 이름은 캐시에서 조회 — 매 요청 DB hit 회피.
     const userName = userId
       ? await this.authService.getCachedName(userId)
@@ -334,6 +338,7 @@ export class ChatController {
       writeIfConnected(`data: ${JSON.stringify({ error: message })}\n\n`);
       this.logger.warn(`[chat/stream] error during generation: ${message}`);
     } finally {
+      clearInterval(heartbeat);
       if (persistCtx) {
         const ctx = persistCtx;
         const model = body.model;

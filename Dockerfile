@@ -55,8 +55,10 @@ COPY --from=backend-build /src/node_modules ./backend/node_modules
 COPY --from=backend-build /src/package.json ./backend/package.json
 
 # Frontend standalone — server.js + 최소 node_modules 자급자족
+# public/ 은 standalone 번들에 포함되지 않으므로 별도 복사 필수.
 COPY --from=frontend-build /src/.next/standalone ./frontend
 COPY --from=frontend-build /src/.next/static ./frontend/.next/static
+COPY --from=frontend-build /src/public ./frontend/public
 
 # 두 프로세스 동시 실행 + 시그널 전파를 처리하는 작은 launcher 스크립트.
 # 이전엔 npm i -g concurrently (~52MB) 로 처리했지만, 단순 BE/FE 두 프로세스라
