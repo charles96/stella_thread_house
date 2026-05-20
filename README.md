@@ -5,69 +5,71 @@
 
 # Stella's Thread House
 ![intro](./assets/imgs/content_screen.png)
-* 제니의 빅팬입니다. 저작권에 문제가 있다면 삭제하도록 하겠습니다.
-## 개요
-AI에게 정보를 획득하여 별도의 문서로 옮겨 관리하기 보다 응답 자체를 문서화하여 지식을 항구적으로 관리할순 없을까? 현재 문서와 다른 문서간에 연관성을 고려하여 관계된 문서를 자동으로 연결하여 정보의 탐색을 용이하게 할 순 없을까? 라는 단순한 물음에서 본 서비스를 만들게 되었습니다. 
+* I'm a big fan of Jennie. If there are any copyright issues, I will remove the content.
 
-## 동작에 대한 설명
-사용자가 LLM에게 한 질문은 곧 소제목이 될수 있습니다. 예를 들어 "우리나라의 근대사에 대해 알려줘"라는 요청 메시지는 곧 "우리나라의 근대사"라는 제목으로 변경할 수 있을 것입니다. 또한 이를 통해 생성된 답변을 기반으로 hashtag를 AI를 통해 자동생성하여 다른 문서에서 작성된 hashtag와의 일치성을 기준으로 문서 간에 연관성(Related documents)을 맺을 수 있을 것입니다. 물론 hashtag는 동음이의어가 존재합니다. 따라서 한개의 hashtag 연결보다 복수개가 연결 되었을때 더욱 근접한 문서가 될 것입니다. 그리고 웹 검색을 통해 LLM이 응답을 하면 참조한 문서(Reference documents)를 시각화하고 해당 웹 문서를 넘버링화 하여 답변에서 어떤 문서를 기반으로 응답했는지를 표기하게 하였습니다. 위를 내용을 바탕으로 미약하지만 제텔카스텐 기법을 적용하였습니다.
-## 기능 상세
-### 사용 모드
-Thread, Chat 두 모드가 존재합니다. Thread로 작성을 하면 hashtag를 자동으로 생성하여 문서들간에 연결합니다. 캐주얼하게 가볍게 질문을 하고 싶다면 Chat을 사용하면 됩니다. 하지만 Chat 모드는 AI 발화 처리에 있어 베이스 엔진은 동일하나 hashtag 연결을 통한 관련 문서 연결 및 발화 메시지 수정에 대해서는 제공하지 않습니다.
+## Overview
+This service was born from a simple question: instead of extracting information from AI and manually moving it into separate documents, could we document the AI responses themselves to manage knowledge permanently? And could we automatically link related documents by considering the relationships between the current document and others, making information easier to navigate?
 
-### Thread 모드
-1. Reference documents
-  - AI가 답변을 위해 웹 검색을 하면 실제 참조한 웹 리스트가 넘버링되며 바로 위에는 웹 검색을 통해 나온 이미지등의 컨텐츠들이 자리를 잡게 됩니다. 이때 문서와 관련된 핵심 이미지나 youtube의 경우 pin을 사용하여 화면에 고정시킬 수 있습니다. 또한 컨텐츠 에디터를 통해 불필요한 이미지를 삭제할 수 있으며 이미지의 위치 또한 조정이 가능합니다. 
-2. 사용자 발화 -> 소제목 변경
-  - 사용자 발화 메시지 클릭을 통해 제목으로 수정이 가능합니다.
-3. 우측 메뉴
-  - 소제목 기준 위 아래 순서 조정 및 이동 기능
-  - 소제목 기준 문서 세트(질의,응답)를 삭제 기능
-  - AI가 생성한 hashtag 관리 (추가,삭제 기능)
-  - Related Documents
-    - hashtag로 연결된 관련된 문서를 탐색합니다.
-### 대시보드
-- 최신 작성 글 탐색 및 hashtag 정보와 연결된 문서 정보 시각화를 제공합니다. 
+## How It Works
+A question asked to an LLM can become a subtitle. For example, the message "Tell me about the modern history of our country" can be turned into a title like "Modern History of Our Country." Based on the generated response, hashtags are automatically created by AI, and documents can be linked (Related Documents) based on matching hashtags from other documents. Of course, hashtags can have homonyms, so the more hashtags two documents share, the closer the relationship. When the LLM responds using web search, the referenced documents (Reference Documents) are visualized, numbered, and cited within the response to show which sources were used. Based on this, a loose implementation of the Zettelkasten method has been applied.
+
+## Feature Details
+### Modes
+There are two modes: **Thread** and **Chat**. Writing in Thread mode automatically generates hashtags and links documents together. If you want to ask casual questions lightly, use Chat mode. However, Chat mode uses the same base engine for AI responses but does not support related document linking via hashtags or editing of AI-generated messages.
+
+### Thread Mode
+1. **Reference Documents**
+   - When the AI performs a web search to answer a question, the referenced web pages are numbered, and images or other content from the search appear above them. Key images or YouTube videos related to the document can be pinned to the screen. The content editor also allows you to delete unnecessary images and reposition them.
+2. **User message → Subtitle conversion**
+   - Clicking on a user message allows you to edit it into a subtitle/title.
+3. **Right-side menu**
+   - Reorder and move sections up or down by subtitle
+   - Delete a document set (question + answer) by subtitle
+   - Manage AI-generated hashtags (add/delete)
+   - **Related Documents** — browse documents linked by shared hashtags
+
+### Dashboard
+- Browse recent posts and view hashtag generation info
 ![dashboard_main](./assets/imgs/dashboard_main.png)
+- Visualize connections across all documents
 ![dashboard_graph](./assets/imgs/dashboard_graph.png)
 
-## 응용방법
-저는 이렇게 씁니다.
-1. 유튜브의 링크를 주고 요약 요청, pip모드로 재생하며 중간중간 궁금증에 대해 질의를 하며 공부
-2. 책을 읽을때 책에 대해 웹검색하여 요약해달라고 하고 책을 읽으며 궁금한 부분을 질의 하여 문서화
-3. 웹 링크를 주고 내용 정리 요청
+## How I Use It
+Here are some ways I personally use this service:
+1. Paste a YouTube link and request a summary, play it in PiP mode, and ask follow-up questions mid-video to study.
+2. When reading a book, web-search for a summary of the book, then document questions that come up while reading.
+3. Provide a web link on a specific topic and have the content organized.
 
-## 필수사항
-|구분|용도|
+## Requirements
+| Type | Purpose |
 |--|--|
-|Local LLM|Ollama를 통한 Gemma4 26b|
-|Tavily API Key|웹 검색 용|
-
+| Local LLM | Gemma4 26b via Ollama |
+| Tavily API Key | For web search |
 
 # Deploy
 
-## 1. `.env` 파일 작성
+## 1. Create `.env` file
 
 ```env
-# ── 필수 ──────────────────────────────────────────
-# 최초 부팅 시 생성되는 관리자 계정
+# ── Required ──────────────────────────────────────────
+# Admin account created on first boot
 TH_ADMIN_EMAIL_ID=admin@example.com
 TH_ADMIN_PASSWORD=changeme1234
 
-# Ollama API 엔드포인트 (컨테이너 → 호스트 접근 시 host.docker.internal 사용)
+# Ollama API endpoint (use host.docker.internal when accessing host from container)
 OLLAMA_GEMMA4_URL=http://host.docker.internal:11434
 
-# ── 선택 ──────────────────────────────────────────
-# 웹 검색 기능 (없으면 웹 검색 비활성)
+# ── Optional ──────────────────────────────────────────
+# Web search feature (disabled if not provided)
 TAVILY_API_KEY=tvly-xxxxxxxxxxxxxxxxxxxxx
 
-# DB 계정 (기본값 사용 시 생략 가능)
+# DB credentials (can be omitted to use defaults)
 # POSTGRES_USER=stella
 # POSTGRES_PASSWORD=stella_dev_pass
 # POSTGRES_DB=stella
 ```
 
-## 2. `docker-compose.yml` 작성
+## 2. Create `docker-compose.yml`
 
 ```yaml
 services:
@@ -91,7 +93,7 @@ services:
       start_period: 10s
 
   app:
-    image: registry.webnori.com/stella-th:1.2.7   # 최신 태그로 교체
+    image: registry.webnori.com/stella-th:1.2.7   # Replace with the latest tag
     container_name: stella-th-app
     restart: unless-stopped
     ports:
@@ -112,7 +114,7 @@ services:
     networks:
       - stella-net
     extra_hosts:
-      - "host.docker.internal:host-gateway"   # Linux에서 호스트 Ollama 접근 시 필요
+      - "host.docker.internal:host-gateway"   # Required on Linux to access host Ollama
 
 networks:
   stella-net:
@@ -124,17 +126,17 @@ volumes:
   logs-data:
 ```
 
-## 3. 실행
+## 3. Run
 
 ```bash
 docker compose up -d
 ```
 
-| 서비스 | URL |
+| Service | URL |
 |--------|-----|
 | Frontend | http://localhost:3100 |
 | Backend API | http://localhost:4100 |
 
-> **참고**  
-> - `OLLAMA_GEMMA4_URL` / `TAVILY_API_KEY`는 최초 부팅 시 DB에 시드됩니다. 이후 Settings → AI 에서 변경하면 DB 값이 우선 적용됩니다.  
-> - Linux 호스트에서 Ollama를 로컬 실행 중이라면 `extra_hosts` 항목이 필요합니다. Mac/Windows Docker Desktop은 `host.docker.internal`이 자동 해석되므로 생략 가능합니다.
+> **Notes**
+> - `OLLAMA_GEMMA4_URL` / `TAVILY_API_KEY` are seeded into the DB on first boot. You can update them later under Settings → AI, where DB values take priority.
+> - If you are running Ollama locally on a Linux host, the `extra_hosts` entry is required. On Mac/Windows with Docker Desktop, `host.docker.internal` is resolved automatically and can be omitted.
