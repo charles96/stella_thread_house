@@ -19,22 +19,29 @@ services:
       start_period: 10s
 
   app:
-    image: registry.webnori.com/stella-th:1.1.0
+    image: registry.webnori.com/stella-th:1.2.10
     container_name: stella-th-app
     restart: unless-stopped
     ports:
       - "4100:4100"
-      - "3100:3100"
+      - "${TH_PORT:-3100}:3100"
     env_file:
       - path: ./.env
         required: false
     environment:
-      TH_HOST: ${TH_HOST:-http://localhost:3100}
+      TH_PORT: ${TH_PORT:-3100}
+      TH_HOST: ${TH_HOST}
       TH_ADMIN_EMAIL_ID: ${TH_ADMIN_EMAIL_ID}
       TH_ADMIN_PASSWORD: ${TH_ADMIN_PASSWORD:-changeme1234}
       DATABASE_URL: postgres://${POSTGRES_USER:-stella}:${POSTGRES_PASSWORD:-stella_dev_pass}@postgres:5432/${POSTGRES_DB:-stella}
       OLLAMA_GEMMA4_URL: ${OLLAMA_GEMMA4_URL}
       TAVILY_API_KEY: ${TAVILY_API_KEY}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      SMTP_FROM: ${SMTP_FROM}
+      SMTP_SECURE: ${SMTP_SECURE:-0}
       SEARCH_TOP_READ: ${SEARCH_TOP_READ:-3}
       HASHTAG_THRESHOLD_DEFAULT: ${HASHTAG_THRESHOLD_DEFAULT:-3}
       UPLOAD_DIR: /app/backend/uploads

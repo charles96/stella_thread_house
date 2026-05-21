@@ -23,6 +23,17 @@
 @tailwind components;
 @tailwind utilities;
 
+/* 사이드바 제목 — 기본: 우측 페이드, 호버/활성: 그라디언트 제거 */
+.sidebar-title-fade {
+  -webkit-mask-image: linear-gradient(to right, black calc(100% - 2rem), transparent 100%);
+  mask-image: linear-gradient(to right, black calc(100% - 2rem), transparent 100%);
+}
+.sidebar-title-fade-hover:hover .sidebar-title-fade,
+.sidebar-title-no-fade .sidebar-title-fade {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
 .katex {
   color: inherit;
 }

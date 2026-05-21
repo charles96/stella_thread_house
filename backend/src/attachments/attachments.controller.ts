@@ -1,7 +1,9 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
   Param,
   Post,
   Res,
@@ -50,6 +52,19 @@ export class AttachmentsController {
       });
     }
     return { files: out };
+  }
+
+  // 단일 파일 삭제 — Image Edit 모달에서 사용자가 직접 업로드한 이미지 제거 시 사용.
+  @Delete(':messageId/:fileName')
+  @HttpCode(200)
+  @UseGuards(AuthGuard('jwt'))
+  deleteFile(
+    @Param('messageId') messageId: string,
+    @Param('fileName') fileName: string,
+  ) {
+    const decoded = decodeURIComponent(fileName);
+    this.svc.deleteFile(messageId, decoded);
+    return { ok: true };
   }
 
   // 파일 서빙 — UUIDv7 messageId + 파일명. UUID 가 추측 어려운 식별자라 별도 인증 게이트는 생략.

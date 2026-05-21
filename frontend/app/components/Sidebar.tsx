@@ -513,7 +513,7 @@ function FolderRow({
     <div ref={rowRef} className="flex flex-col">
       <div
         className={cn(
-          'group flex w-full cursor-pointer items-center gap-1 overflow-hidden rounded-md px-2 py-0.5 text-sm transition-colors hover:bg-accent/40',
+          'sidebar-title-fade-hover group flex w-full cursor-pointer items-center gap-1 overflow-hidden rounded-md px-2 py-0.5 text-sm transition-colors hover:bg-accent/40',
           dragOver && 'bg-primary/15 ring-1 ring-primary',
           editing && 'bg-primary/10 ring-1 ring-primary/50',
         )}
@@ -543,7 +543,7 @@ function FolderRow({
           <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         )}
         <FolderIcon className="h-3.5 w-3.5 shrink-0 text-primary" />
-        <div className="min-w-0 flex-1 overflow-hidden">
+        <div className={cn("min-w-0 flex-1 overflow-hidden", !editing && "sidebar-title-fade")}>
           {editing ? (
             <input
               ref={inputRef}
@@ -567,7 +567,7 @@ function FolderRow({
             />
           ) : (
             <span
-              className="block truncate text-[13px] font-medium"
+              className="block overflow-hidden whitespace-nowrap text-[13px] font-medium"
               title={folder.name}
             >
               {folder.name}
@@ -583,13 +583,13 @@ function FolderRow({
           {items.length}
         </span>
         {!editing && (
-          <div className="flex shrink-0 gap-0.5">
+          <div className="flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-5 w-5"
+                  className="h-5 w-5 hover:bg-transparent data-[state=open]:bg-transparent"
                   onClick={(e) => e.stopPropagation()}
                   title={t('sidebar.more')}
                 >
@@ -771,7 +771,7 @@ function ConversationRow({
       onDragEnd={() => setDragging(false)}
       className={cn(
         'group flex w-full cursor-pointer items-center gap-1 overflow-hidden rounded-md px-2 py-0.5 text-sm transition-colors',
-        active ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
+        active ? 'sidebar-title-no-fade bg-accent text-accent-foreground' : 'sidebar-title-fade-hover hover:bg-accent/50',
         dragging && 'opacity-50',
         // 편집 중에도 행 높이를 그대로 유지하기 위해 layout 영향 없는 ring/bg만 사용.
         editing && 'bg-primary/10 ring-1 ring-primary/50',
@@ -787,7 +787,7 @@ function ConversationRow({
       ) : (
         <MessageSquareText className="h-3.5 w-3.5 shrink-0 text-primary" />
       )}
-      <div className="min-w-0 flex-1 overflow-hidden">
+      <div className={cn("min-w-0 flex-1 overflow-hidden", !editing && !active && "sidebar-title-fade")}>
         {editing ? (
           <input
             ref={inputRef}
@@ -805,7 +805,7 @@ function ConversationRow({
             }}
             placeholder={t('sidebar.renamePrompt')}
             // padding/border 없이 span 자리에 그대로 들어가야 행 높이 변동이 없다.
-            // 시각적 단서는 행 wrapper 의 bg/ring 으로 처리.
+            // 시각적 단세는 행 wrapper 의 bg/ring 으로 처리.
             className={cn(
               'block w-full min-w-0 truncate bg-transparent p-0 text-[13px] font-medium text-foreground caret-primary outline-none',
               'placeholder:text-muted-foreground/60',
@@ -813,7 +813,7 @@ function ConversationRow({
           />
         ) : (
           <span
-            className="block truncate text-[13px]"
+            className="block overflow-hidden whitespace-nowrap text-[13px]"
             title={c.title || t('sidebar.newChat')}
           >
             {c.title || t('sidebar.newChat')}
@@ -821,7 +821,7 @@ function ConversationRow({
         )}
       </div>
       {!editing && (
-        <div className="flex shrink-0 gap-0.5">
+        <div className={cn('flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover:opacity-100', active && 'opacity-100')}>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button

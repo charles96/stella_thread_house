@@ -7,7 +7,7 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { Conversation } from '../db/entities/conversation.entity';
 import { Message } from '../db/entities/message.entity';
 import { AttachmentsService } from '../attachments/attachments.service';
@@ -462,7 +462,7 @@ export class ConversationsService implements OnModuleInit {
     // 재조회로 완전한 값 확보. 입력 순서 보존.
     const ids = saved.map((m) => m.id);
     const refreshed = await this.messages.find({
-      where: ids.map((id) => ({ id, conversationId: convId })),
+      where: { id: In(ids), conversationId: convId },
     });
     const byId = new Map(refreshed.map((m) => [m.id, m]));
     return ids

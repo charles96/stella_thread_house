@@ -122,6 +122,9 @@ export interface Message {
   // 비어있으면(undefined) 자연 순서(첨부 → readPages → searchImages) 그대로.
   // metadata.imageOrder 로 DB 영속.
   imageOrder?: string[];
+  // Image Edit 모달에서 사용자가 직접 업로드한 이미지 URL 배열.
+  // /api/attachments/<botMsgId>/<fileName> 형태. metadata.editImages 로 DB 영속.
+  editImages?: string[];
 }
 
 export interface Conversation {
@@ -1588,10 +1591,12 @@ export default function ChatRoom() {
   }, [activeArtifact]);
 
   // References 패널의 이미지 카드에서 사용자 제거. 메시지 metadata 의
-  // searchImages 와 readPages[].images 둘 다에서 해당 URL 을 필터링하고 backend 에 PATCH.
+  // searchImages / readPages[].images / editImages 에서 해당 URL 을 필터링하고 backend 에 PATCH.
+  // editImages URL 은 파일도 서버에서 삭제.
   function removeMessageImage(messageId: string, url: string) {
     if (!activeId) return;
     let nextMessage: Message | null = null;
+    let deletedEditImage = false;
     setConversations((prev) =>
       prev.map((c) => {
         if (c.id !== activeId) return c;
@@ -1606,10 +1611,15 @@ export default function ChatRoom() {
               ...p,
               images: (p.images ?? []).filter((i) => i.src !== url),
             }));
+            const nextEditImages = (m.editImages ?? []).filter((u) => u !== url);
+            if (nextEditImages.length < (m.editImages?.length ?? 0)) {
+              deletedEditImage = true;
+            }
             const updated: Message = {
               ...m,
               searchImages: nextSearch.length > 0 ? nextSearch : undefined,
               readPages: nextReadPages,
+              editImages: nextEditImages.length > 0 ? nextEditImages : undefined,
             };
             nextMessage = updated;
             return updated;
@@ -1617,6 +1627,9 @@ export default function ChatRoom() {
         };
       }),
     );
+    if (deletedEditImage) {
+      void fetch(url, { method: 'DELETE', credentials: 'include' }).catch(() => {});
+    }
     if (!nextMessage) return;
     const m = nextMessage as Message;
     // backend 에 PATCH — content/thinking 은 변경 없음, metadata 만 동기화.
@@ -1649,12 +1662,14 @@ export default function ChatRoom() {
   // orderedUrls: 모달이 최종적으로 정한 URL 순서 (deleted 된 URL 은 빠진 상태).
   // 동작:
   //  1) 현재 메시지의 combinedImages 에 있는 URL 중 orderedUrls 에 없는 것은 삭제 대상.
-  //  2) searchImages / readPages[].images 에서 삭제 URL 제거.
-  //  3) imageOrder = orderedUrls 로 저장 → 판넬은 이 순서대로 렌더.
+  //  2) searchImages / readPages[].images / editImages 에서 삭제 URL 제거.
+  //  3) editImages 삭제 시 서버 파일도 DELETE.
+  //  4) imageOrder = orderedUrls 로 저장 → 판넬은 이 순서대로 렌더.
   function reorderMessageImages(messageId: string, orderedUrls: string[]) {
     if (!activeId) return;
     const keep = new Set(orderedUrls);
     let nextMessage: Message | null = null;
+    let deletedEditUrls: string[] = [];
     setConversations((prev) =>
       prev.map((c) => {
         if (c.id !== activeId) return c;
@@ -1669,10 +1684,13 @@ export default function ChatRoom() {
               ...p,
               images: (p.images ?? []).filter((i) => keep.has(i.src)),
             }));
+            const nextEditImages = (m.editImages ?? []).filter((u) => keep.has(u));
+            deletedEditUrls = (m.editImages ?? []).filter((u) => !keep.has(u));
             const updated: Message = {
               ...m,
               searchImages: nextSearch.length > 0 ? nextSearch : undefined,
               readPages: nextReadPages,
+              editImages: nextEditImages.length > 0 ? nextEditImages : undefined,
               imageOrder: orderedUrls.length > 0 ? orderedUrls : undefined,
             };
             nextMessage = updated;
@@ -1681,6 +1699,9 @@ export default function ChatRoom() {
         };
       }),
     );
+    for (const url of deletedEditUrls) {
+      void fetch(url, { method: 'DELETE', credentials: 'include' }).catch(() => {});
+    }
     if (!nextMessage) return;
     const m = nextMessage as Message;
     const {
@@ -1707,6 +1728,68 @@ export default function ChatRoom() {
     );
   }
 
+  // Image Edit 모달에서 사용자가 직접 업로드한 이미지를 bot 메시지 폴더에 저장.
+  // 업로드 성공 시 URL 반환 (모달이 editingOrderUrls 에 즉시 추가할 수 있도록).
+  async function uploadEditImage(
+    messageId: string,
+    dataUrl: string,
+    fileName: string,
+  ): Promise<string | null> {
+    if (!activeId) return null;
+    try {
+      const res = await fetch(`${API_URL}/attachments/upload`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageId, files: [{ name: fileName, dataUrl }] }),
+      });
+      if (!res.ok) return null;
+      const j = (await res.json()) as { files: { name: string; url: string }[] };
+      if (!j.files?.length) return null;
+      const url = `${API_URL}${j.files[0].url}`;
+      let nextMessage: Message | null = null;
+      const convId = activeId;
+      setConversations((prev) =>
+        prev.map((c) => {
+          if (c.id !== convId) return c;
+          return {
+            ...c,
+            messages: c.messages.map((m) => {
+              if (m.id !== messageId) return m;
+              const nextEditImages = [...(m.editImages ?? []), url];
+              const updated: Message = { ...m, editImages: nextEditImages };
+              nextMessage = updated;
+              return updated;
+            }),
+          };
+        }),
+      );
+      if (!nextMessage) return null;
+      const m = nextMessage as Message;
+      const {
+        id: _id,
+        role: _role,
+        content,
+        thinking,
+        followup: _fp,
+        followupGenerating: _fg,
+        hashtagsGenerating: _hg,
+        ...rest
+      } = m;
+      void _id; void _role; void _fp; void _fg; void _hg;
+      void patchMessageRaw(
+        convId,
+        messageId,
+        content,
+        thinking ?? null,
+        rest as Record<string, unknown>,
+      );
+      return url;
+    } catch {
+      return null;
+    }
+  }
+
   function newConversation() {
     // Thread 는 문서 작성용 → 채팅과 다른 인사말 사용.
     const c = makeConversation(t('bot.greeting.thread'), 'thread');
@@ -1726,11 +1809,17 @@ export default function ChatRoom() {
   // 클로저로 잡지만 deleteConversation 안에서 setActiveId 시 새 대화 생성도 같은 t 사용.
 
   function deleteConversation(id: string) {
+    // 삭제 대상이 현재 스트리밍 중이면 먼저 중단.
+    if (streamMsgIdsRef.current?.convId === id) {
+      streamAbortRef.current?.abort();
+      streamMsgIdsRef.current = null;
+    }
     setConversations((prev) => {
+      const deleted = prev.find((c) => c.id === id);
       const next = prev.filter((c) => c.id !== id);
-      // 마지막 thread 삭제 시 자동으로 새 thread 를 만들지 않고 Dashboard 로 보낸다.
       if (id === activeId) {
-        if (next.length > 0) setActiveId(next[0].id);
+        const sameKind = next.filter((c) => (c.kind ?? 'thread') === (deleted?.kind ?? 'thread'));
+        if (sameKind.length > 0) setActiveId(sameKind[0].id);
         else {
           setActiveId(null);
           setView('dashboard');
@@ -3112,6 +3201,9 @@ export default function ChatRoom() {
                           }
                           onReorderImages={(orderedUrls) =>
                             reorderMessageImages(m.id, orderedUrls)
+                          }
+                          onUploadEditImage={(dataUrl, fileName) =>
+                            uploadEditImage(m.id, dataUrl, fileName)
                           }
                           precedingUserImages={precedingUserImages}
                           precedingUserImageNames={precedingUserImageNames}

@@ -105,6 +105,13 @@ export class AttachmentsService {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 
+  // 단일 파일 삭제 — 사용자가 Image Edit 모달에서 업로드한 이미지를 제거할 때 사용.
+  deleteFile(messageId: string, fileName: string): void {
+    const full = this.resolvePath(messageId, fileName);
+    if (!fs.existsSync(full)) return;
+    fs.unlinkSync(full);
+  }
+
   // base64 로 인코딩한 data URL 반환 — AI 호출 시 backend 가 image URL 을 base64 로 환원할 때 사용.
   readAsDataUrl(messageId: string, fileName: string): string | null {
     try {

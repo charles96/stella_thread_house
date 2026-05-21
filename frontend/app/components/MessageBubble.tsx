@@ -26,6 +26,7 @@ import {
   ExternalLink,
   Globe,
   GripVertical,
+  HardDrive,
   ImageIcon,
   ImagePlus,
   Images,
@@ -1146,6 +1147,7 @@ export default function MessageBubble({
   onDeleteTurn,
   onRemoveImage,
   onReorderImages,
+  onUploadEditImage,
   precedingUserImages,
   precedingUserImageNames,
   convKind = 'thread',
@@ -1171,6 +1173,8 @@ export default function MessageBubble({
   // Image Edit 모달에서 일괄 reorder + delete 적용. orderedUrls 가 최종 순서이며,
   // 현재 combinedImages 에 있던 URL 중 빠진 것은 삭제 대상으로 간주.
   onReorderImages?: (orderedUrls: string[]) => void;
+  // Image Edit 모달에서 사용자가 이미지를 직접 업로드. 성공 시 저장된 URL 반환.
+  onUploadEditImage?: (dataUrl: string, fileName: string) => Promise<string | null>;
   // assistant 메시지의 경우, 직전 user 메시지에 첨부된 이미지 — References 위에 노출.
   precedingUserImages?: string[];
   // 위 이미지의 원본 파일명 (있는 경우) — References 라벨에서 사용.
@@ -1555,9 +1559,13 @@ export default function MessageBubble({
         });
       }
     }
-    const natural = [...attached, ...readPageImagesFlat, ...extras];
+    const editImgs: SearchImage[] = (message.editImages ?? []).map((url) => ({
+      url,
+      removable: true,
+    }));
+    const natural = [...attached, ...readPageImagesFlat, ...extras, ...editImgs];
     return applyImageOrder(natural, message.imageOrder);
-  }, [precedingUserImages, readPageImagesFlat, message.readPages, message.imageOrder]);
+  }, [precedingUserImages, readPageImagesFlat, message.readPages, message.imageOrder, message.editImages]);
   const [readPageLightbox, setReadPageLightbox] = useState<number | null>(null);
   // 사용자가 단일 이미지의 자동 PIN 을 수동으로 해제한 URL 집합 — 시각 PIN 표시만 끄고 이미지는 그대로 노출 유지.
   // 컴포넌트 unmount 시 리셋 (페이지 새로고침하면 다시 auto-PIN). 영속하지 않음.
@@ -1578,6 +1586,10 @@ export default function MessageBubble({
   const [draggingUrl, setDraggingUrl] = useState<string | null>(null);
   const [dragOverUrl, setDragOverUrl] = useState<string | null>(null);
   const [imageEditConfirmPending, setImageEditConfirmPending] = useState(false);
+  // 업로드 중인 항목 — 파일 선택 즉시 로컬 프리뷰로 그리드에 표시.
+  const [pendingUploads, setPendingUploads] = useState<
+    { tempId: string; previewUrl: string }[]
+  >([]);
   const editingOrderInit = useRef(false);
   useEffect(() => {
     if (imageEditMode) {
@@ -1592,6 +1604,7 @@ export default function MessageBubble({
       setDraggingUrl(null);
       setDragOverUrl(null);
       setImageEditConfirmPending(false);
+      setPendingUploads([]);
     }
   }, [imageEditMode, combinedImagesForEdit]);
   const [expandedImageIndex, setExpandedImageIndex] = useState<number | null>(
@@ -1894,9 +1907,12 @@ export default function MessageBubble({
           const attachedSlice: SearchImage[] = (precedingUserImages ?? []).map(
             (src) => ({ url: src, removable: false }),
           );
-          // 자연 순서(첨부 → readPages) 를 imageOrder 가 있으면 그 순서대로 재배열.
+          // 자연 순서(첨부 → readPages → editImages) 를 imageOrder 가 있으면 그 순서대로 재배열.
+          const editImgSlice: SearchImage[] = (message.editImages ?? []).map(
+            (url) => ({ url, removable: true }),
+          );
           const combinedImages: SearchImage[] = applyImageOrder(
-            [...attachedSlice, ...readPageImagesFlat],
+            [...attachedSlice, ...readPageImagesFlat, ...editImgSlice],
             message.imageOrder,
           );
           const hasAny = combinedImages.length > 0;
@@ -3039,8 +3055,10 @@ export default function MessageBubble({
             <div className="-mx-1 flex-1 overflow-y-auto px-1">
               <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5">
                 {editingOrderUrls.map((url, idx) => {
-                  const img = combinedImagesForEdit.find((i) => i.url === url);
-                  if (!img) return null;
+                  const found = combinedImagesForEdit.find((i) => i.url === url);
+                  // editImages 가 상위에서 아직 반영 안 된 경우 임시 객체로 폴백.
+                  const img: SearchImage = found ?? { url, removable: true };
+                  if (!found && !url.includes('/attachments/')) return null;
                   const removable = img.removable !== false;
                   const selected = imageEditSelection.has(img.url);
                   const isDragging = draggingUrl === img.url;
@@ -3095,9 +3113,11 @@ export default function MessageBubble({
                         });
                       }}
                       title={
-                        removable
-                          ? img.sourceTitle ?? img.url
-                          : t('imageEdit.attachedTitle')
+                        removable && img.url.includes('/attachments/')
+                          ? decodeURIComponent(img.url.split('/').pop() ?? img.url)
+                          : removable
+                            ? img.sourceTitle ?? img.url
+                            : t('imageEdit.attachedTitle')
                       }
                       className={cn(
                         'group/cell relative aspect-square overflow-hidden rounded-md border bg-secondary/40 transition-all',
@@ -3203,6 +3223,15 @@ export default function MessageBubble({
                           />
                         </>
                       )}
+                      {/* 업로드 배지 — 사용자가 직접 업로드한 이미지(/attachments/ URL) 우상단에 표시. */}
+                      {removable && img.url.includes('/attachments/') && (
+                        <span
+                          className="pointer-events-none absolute right-1 top-1 inline-flex items-center justify-center rounded bg-black/60 p-0.5 shadow-sm"
+                          aria-label="uploaded"
+                        >
+                          <HardDrive className="h-3 w-3 text-white/90" />
+                        </span>
+                      )}
                       {/* PIN 배지 — 메시지 metadata 의 pinnedImageUrl 과 일치하는 카드 위에 표시.
                           좌하단에 노란 핀 아이콘으로 한 눈에 PIN 된 항목을 식별 가능. */}
                       {message.pinnedImageUrl === img.url && (
@@ -3248,10 +3277,94 @@ export default function MessageBubble({
                     </div>
                   );
                 })}
+                {/* 업로드 중인 항목 — 로컬 프리뷰 + 스피너 오버레이 */}
+                {pendingUploads.map(({ tempId, previewUrl }) => (
+                  <div
+                    key={tempId}
+                    className="relative aspect-square overflow-hidden rounded-md border border-primary/50 bg-secondary/40"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={previewUrl}
+                      alt=""
+                      className="pointer-events-none h-full w-full object-cover opacity-40"
+                      draggable={false}
+                    />
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/50">
+                      <div className="h-6 w-6 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                      <span className="text-[9.5px] font-medium text-white/80">
+                        {t('imageEdit.uploading')}
+                      </span>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
             <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
               <div className="flex items-center gap-2 text-[12.5px] text-muted-foreground">
+                {/* 이미지 업로드 버튼 — 사용자가 직접 이미지를 추가할 수 있음 */}
+                {onUploadEditImage && (
+                  <>
+                    {/* label 로 input 을 직접 트리거 — 프로그래밍적 .click() 은 fixed 모달 내부에서 브라우저별로 동작이 다름 */}
+                    <label
+                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1 text-[11.5px] text-primary hover:bg-primary/20"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <ImagePlus className="h-3.5 w-3.5" />
+                      {t('imageEdit.upload')}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        className="sr-only"
+                        onChange={(e) => {
+                          const files = Array.from(e.target.files ?? []);
+                          // 같은 파일 재선택 허용을 위해 값 초기화 (onChange 전에 하면 files 가 비워짐 — 후처리)
+                          const input = e.target;
+                          if (!files.length) return;
+                          for (const file of files) {
+                            const previewUrl = URL.createObjectURL(file);
+                            const tempId = `pending-${Date.now()}-${Math.random()}`;
+                            setPendingUploads((prev) => [
+                              ...prev,
+                              { tempId, previewUrl },
+                            ]);
+                            const uploadFn = onUploadEditImage;
+                            void (async () => {
+                              try {
+                                const dataUrl = await new Promise<string>(
+                                  (resolve, reject) => {
+                                    const reader = new FileReader();
+                                    reader.onload = () =>
+                                      resolve(reader.result as string);
+                                    reader.onerror = () =>
+                                      reject(new Error('FileReader error'));
+                                    reader.readAsDataURL(file);
+                                  },
+                                );
+                                const url = await uploadFn(dataUrl, file.name);
+                                if (url) {
+                                  setEditingOrderUrls((prev) => [...prev, url]);
+                                }
+                              } catch (err) {
+                                console.error('[upload]', err);
+                              } finally {
+                                setPendingUploads((prev) =>
+                                  prev.filter((p) => p.tempId !== tempId),
+                                );
+                                URL.revokeObjectURL(previewUrl);
+                              }
+                            })();
+                          }
+                          // 값 초기화 — 위 files 캡처 이후에 실행
+                          input.value = '';
+                        }}
+                      />
+                    </label>
+                    <span className="text-border">|</span>
+                  </>
+                )}
+
                 <span>
                   {t('imageEdit.selected').replace(
                     '{n}',
