@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -1675,17 +1676,22 @@ export default function MessageBubble({
     if (userClosedRef.current) return;
     const attached = (precedingUserImages ?? []).length;
     const total = attached + readPageImagesFlat.length;
-    if (total === 1 && expandedImageIndex === null) {
+    if (total === 0) return;
+    // 모바일에서는 이미지 장수 무관 자동 확대. 데스크탑은 1장일 때만.
+    const isMobile =
+      typeof window !== 'undefined' && window.innerWidth < 768;
+    const shouldAutoExpand = isMobile || total === 1;
+    if (shouldAutoExpand && expandedImageIndex === null) {
       const key =
-        attached === 1
+        attached >= 1
           ? (precedingUserImages ?? [])[0]
           : readPageImagesFlat[0]?.url;
       if (key && autoExpandedKeyRef.current !== key) {
         autoExpandedKeyRef.current = key;
         setExpandedImageIndex(0);
       }
-    } else if (total !== 1) {
-      // 이미지가 복수로 늘어났을 때 자동 확대된 상태라면 포커 스캐터로 복귀.
+    } else if (!isMobile && total !== 1) {
+      // 데스크탑: 이미지가 복수로 늘어났을 때 자동 확대 상태라면 포커 스캐터로 복귀.
       if (autoExpandedKeyRef.current !== null && expandedImageIndex !== null) {
         setExpandedImageIndex(null);
       }
@@ -2882,18 +2888,57 @@ export default function MessageBubble({
                 className="relative z-[1] w-full min-w-0 max-w-full overflow-x-clip transform-gpu rounded-2xl rounded-tl-md border border-border bg-bubble-bot px-3.5 py-2 text-[14.5px] leading-relaxed text-bubble-bot-foreground shadow-md"
               >
                 {answerEditing ? (
-                  <textarea
-                    ref={answerEditRef}
-                    value={answerDraft}
-                    onChange={(e) => setAnswerDraft(e.target.value)}
-                    rows={Math.max(
-                      6,
-                      Math.min(28, answerDraft.split('\n').length + 2),
+                  <>
+                    {/* 모바일: 전체화면 오버레이 — transform-gpu 버블이 fixed 의 containing block 이 되므로
+                        createPortal 로 document.body 에 직접 마운트. */}
+                    {typeof document !== 'undefined' && createPortal(
+                      <div className="fixed inset-0 z-[200] flex flex-col bg-background md:hidden">
+                        <div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-3">
+                          <button
+                            type="button"
+                            onClick={cancelAnswerEdit}
+                            className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[13px] font-medium text-muted-foreground transition-colors hover:bg-secondary"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                            {t('message.cancel')}
+                          </button>
+                          <span className="flex-1 text-center text-[13px] font-semibold text-foreground">
+                            {t('message.edit')}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={commitAnswerEdit}
+                            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-[13px] font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                          >
+                            <Check className="h-3.5 w-3.5" />
+                            {t('message.save')}
+                          </button>
+                        </div>
+                        <textarea
+                          autoFocus
+                          value={answerDraft}
+                          onChange={(e) => setAnswerDraft(e.target.value)}
+                          className="flex-1 resize-none overflow-y-auto bg-transparent p-4 font-mono text-[13px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground"
+                          placeholder="마크다운으로 답변 편집…"
+                          spellCheck={false}
+                        />
+                      </div>,
+                      document.body,
                     )}
-                    className="block w-full min-w-0 max-w-full resize-y bg-transparent font-mono text-[13px] leading-relaxed text-bubble-bot-foreground outline-none placeholder:text-muted-foreground"
-                    placeholder="마크다운으로 답변 편집…"
-                    spellCheck={false}
-                  />
+                    {/* 데스크탑: 버블 인라인 textarea */}
+                    <textarea
+                      ref={answerEditRef}
+                      value={answerDraft}
+                      onChange={(e) => setAnswerDraft(e.target.value)}
+                      rows={Math.max(
+                        6,
+                        Math.min(28, answerDraft.split('\n').length + 2),
+                      )}
+                      className="hidden w-full min-w-0 max-w-full resize-y bg-transparent font-mono text-[13px] leading-relaxed text-bubble-bot-foreground outline-none placeholder:text-muted-foreground md:block"
+                      placeholder="마크다운으로 답변 편집…"
+                      spellCheck={false}
+                    />
+                  </>
                 ) : (
                   <div className={cn(markdownClass, 'min-w-0 max-w-full')}>
                     <ReactMarkdown
