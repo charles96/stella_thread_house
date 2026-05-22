@@ -140,7 +140,7 @@ export default function ActivityHeatmap({ data, title }: Props) {
             {weeks.map((_, i) => {
               const m = monthLabels.find((ml) => ml.weekIdx === i);
               return (
-                <div key={i} className="flex-1 truncate">
+                <div key={i} className="min-w-0 flex-1 truncate">
                   {m ? <span>{m.label}</span> : null}
                 </div>
               );
@@ -161,7 +161,7 @@ export default function ActivityHeatmap({ data, title }: Props) {
           {/* 53 주 컬럼 — flex-1 로 컨테이너 폭에 맞춰 자동 축소 (가로 스크롤 방지). */}
           <div className="flex flex-1 gap-[2px]">
             {weeks.map((week, wi) => (
-              <div key={wi} className="flex flex-1 flex-col gap-[2px]">
+              <div key={wi} className="flex min-w-0 flex-1 flex-col gap-[2px]">
                 {week.map((day) => {
                   const c = countByDate.get(day.key) ?? 0;
                   const lv = level(c);

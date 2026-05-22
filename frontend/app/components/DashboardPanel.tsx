@@ -219,7 +219,7 @@ export default function DashboardPanel({
   );
 
   return (
-    <div className="flex h-full flex-col overflow-y-auto">
+    <div className="flex h-full flex-col overflow-x-hidden overflow-y-auto">
       <div className="flex shrink-0 items-center gap-2 border-b border-border px-6 py-4">
         {!sidebarOpen && onExpandSidebar && (
           <Button
@@ -253,7 +253,7 @@ export default function DashboardPanel({
           </button>
         ))}
       </div>
-      <div className="w-full px-6 py-6">
+      <div className="w-full min-w-0 px-3 py-4 md:px-6 md:py-6">
         {tab === 'general' && (
           <>
             <div className="grid gap-6 lg:grid-cols-2">
@@ -282,13 +282,13 @@ export default function DashboardPanel({
             </div>
 
             <div className="mt-6 grid gap-6 lg:grid-cols-2">
-              <section className="rounded-lg border border-border bg-card p-4">
+              <section className="min-w-0 rounded-lg border border-border bg-card p-4">
                 <ActivityHeatmap
                   data={activity.thread}
                   title={t('dashboard.heatmap.titleThread')}
                 />
               </section>
-              <section className="rounded-lg border border-border bg-card p-4">
+              <section className="min-w-0 rounded-lg border border-border bg-card p-4">
                 <ActivityHeatmap
                   data={activity.chat}
                   title={t('dashboard.heatmap.titleChat')}
@@ -544,7 +544,7 @@ function HashtagsPieCard({
     color: PIE_PALETTE[i % PIE_PALETTE.length],
   }));
   return (
-    <section className="rounded-lg border border-border bg-card p-4">
+    <section className="min-w-0 rounded-lg border border-border bg-card p-4">
       <div className="mb-3 flex items-center gap-1.5 text-sm font-semibold">
         <Hash className="h-4 w-4 text-primary" />
         <span>{title}</span>
@@ -559,7 +559,7 @@ function HashtagsPieCard({
           {emptyText}
         </div>
       ) : (
-        <div className="flex items-center gap-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
           {/* recharts PieChart — activeIndex 로 슬라이스 하이라이트, legend hover 와 양방향 동기화. */}
           <div className="flex shrink-0 flex-col items-center">
             <div className="mb-1 text-[11px] font-medium text-muted-foreground">

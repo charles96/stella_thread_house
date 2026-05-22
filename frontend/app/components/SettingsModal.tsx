@@ -122,11 +122,11 @@ export default function SettingsModal({
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
-      className="fixed inset-0 z-[110] flex items-center justify-center bg-background/70 backdrop-blur-sm p-4 animate-in fade-in-0 duration-150"
+      className="fixed inset-0 z-[110] flex items-center justify-center bg-background/70 backdrop-blur-sm p-2 animate-in fade-in-0 duration-150 md:p-4"
     >
-      <div className="flex h-[85vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-border bg-background shadow-2xl animate-in zoom-in-95 duration-150">
+      <div className="flex h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-border bg-background shadow-2xl animate-in zoom-in-95 duration-150 md:h-[85vh]">
         {/* 상단 헤더 — 좌측에 타이틀, 우측에 닫기 버튼. */}
-        <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-card/40 px-6">
+        <header className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-card/40 px-4 md:h-14 md:px-6">
           <h1 className="flex items-center gap-2 text-lg font-semibold tracking-tight">
             <SettingsIcon className="h-5 w-5 text-primary" />
             <span>{t('settings.title')}</span>
@@ -143,11 +143,10 @@ export default function SettingsModal({
           </Button>
         </header>
 
-        {/* 좌측 사이드바(메뉴 목록) + 우측 본문.
-            비-admin 은 General 만 있어 사이드바 생략하고 본문 풀폭. */}
-        <div className="flex min-h-0 flex-1">
-          {/* 사이드바 — 항상 노출. Admin 그룹은 admin 권한이 있는 경우에만 노출. */}
-          <aside className="flex w-60 shrink-0 flex-col gap-1 border-r border-border bg-card/30 px-3 py-6">
+        {/* 사이드바(데스크탑) / 탭바(모바일) + 본문 */}
+        <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+          {/* 모바일: 상단 가로 스크롤 탭바 / 데스크탑: 좌측 사이드바 */}
+          <aside className="flex shrink-0 flex-row gap-1 overflow-x-auto border-b border-border bg-card/30 px-2 py-1.5 md:w-60 md:flex-col md:gap-1 md:overflow-x-visible md:border-b-0 md:border-r md:px-3 md:py-6">
           <NavItem
             active={tab === 'general'}
             onClick={() => setTab('general')}
@@ -162,7 +161,7 @@ export default function SettingsModal({
           />
           {isAdmin && (
             <>
-              <div className="mt-3 flex items-center gap-2 px-3 py-2 text-sm font-medium text-muted-foreground">
+              <div className="hidden items-center gap-2 px-3 py-2 text-sm font-medium text-muted-foreground md:flex md:mt-3">
                 <Shield className="h-4 w-4" />
                 <span>Admin</span>
               </div>
@@ -198,7 +197,7 @@ export default function SettingsModal({
           )}
         </aside>
         <main className="flex-1 overflow-y-auto">
-          <div className="w-full max-w-4xl px-8 py-8">
+          <div className="w-full max-w-4xl px-4 py-4 md:px-8 md:py-8">
             {tab === 'general' && (
               <GeneralTab user={user} onUserUpdated={onUserUpdated} />
             )}
@@ -248,8 +247,8 @@ function NavItem({
       type="button"
       onClick={onClick}
       className={cn(
-        'flex items-center gap-2 rounded-md py-2 text-left text-sm transition-colors',
-        indent ? 'pl-7 pr-3' : 'px-3',
+        'flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 text-left text-[13px] transition-colors md:gap-2 md:py-2 md:text-sm',
+        indent ? 'md:pl-7 md:pr-3' : 'md:px-3',
         active
           ? 'bg-primary/15 font-medium text-primary'
           : 'text-foreground/80 hover:bg-accent/40 hover:text-foreground',
@@ -1555,13 +1554,13 @@ function MembersTab({ currentUserId }: { currentUserId?: string }) {
 
   return (
     <div className="space-y-5">
-      {/* 페이지 헤더 — 우측에 새 초대 입력 인라인 배치 */}
-      <div className="flex items-center gap-3">
+      {/* 페이지 헤더 — 모바일: 세로 스택 / 데스크탑: 가로 인라인 */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
         <h2 className="flex items-center gap-2 text-[15px] font-semibold tracking-tight text-foreground">
           <Users className="h-5 w-5 text-primary" />
           <span>{t('settings.menu.member')}</span>
         </h2>
-        <div className="ml-auto flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 sm:ml-auto">
           <input
             type="email"
             value={email}
@@ -1571,13 +1570,13 @@ function MembersTab({ currentUserId }: { currentUserId?: string }) {
                 invite();
             }}
             placeholder={t('settings.member.invitePlaceholder')}
-            className="w-56 rounded-md border border-input bg-background px-2.5 py-1 text-[12px] focus:outline-none focus:ring-2 focus:ring-ring"
+            className="min-w-0 flex-1 rounded-md border border-input bg-background px-2.5 py-1 text-[12px] focus:outline-none focus:ring-2 focus:ring-ring sm:w-56 sm:flex-none"
           />
           <Button
             size="sm"
             onClick={invite}
             disabled={loading || !EMAIL_RE.test(email.trim())}
-            className="gap-1.5 h-7 px-2"
+            className="gap-1.5 h-7 shrink-0 px-2"
           >
             <Mail className="h-3.5 w-3.5" />
             {loading
