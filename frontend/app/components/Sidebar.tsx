@@ -257,7 +257,7 @@ export default function Sidebar({
         type="button"
         onClick={onSelectDashboard}
         className={cn(
-          'mx-3 mt-3 hidden items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors md:flex',
+          'mx-3 mt-3 flex items-center gap-2 rounded-md px-2 py-3 text-left text-[14px] transition-colors md:py-1.5 md:text-sm',
           view === 'dashboard'
             ? 'bg-accent text-accent-foreground'
             : 'hover:bg-accent/50',
@@ -276,7 +276,7 @@ export default function Sidebar({
               {t('sidebar.pinned')}
             </span>
           </div>
-          <div className="flex flex-col gap-0.5">
+          <div className="flex max-h-36 flex-col gap-1 overflow-y-auto md:max-h-48 md:gap-0.5">
             {pinnedConvs.map((c) => (
               <div
                 key={c.id}
@@ -315,21 +315,21 @@ export default function Sidebar({
                   setConvTab(c.kind ?? 'thread');
                 }}
                 className={cn(
-                  'group/pin flex w-full cursor-grab items-center gap-1.5 overflow-hidden rounded-md px-2 py-1 text-left text-[12.5px] transition-colors',
+                  'group/pin flex w-full cursor-pointer items-center gap-2 overflow-hidden rounded-md px-2 py-3 text-[14px] transition-colors md:cursor-grab md:gap-1 md:py-0.5 md:text-[13px]',
                   c.id === activeId
                     ? 'sidebar-title-no-fade bg-accent text-accent-foreground'
                     : 'sidebar-title-fade-hover text-foreground hover:bg-accent/50',
                   pinnedDraggingId === c.id && 'opacity-40',
                   pinnedDragOverId === c.id && pinnedDraggingId !== c.id
-                    ? 'border border-primary/60 bg-primary/10'
-                    : 'border border-transparent',
+                    ? 'ring-1 ring-primary/60 bg-primary/10'
+                    : '',
                 )}
                 title={c.title}
               >
                 {c.kind === 'chat' ? (
-                  <MessageSquare className="h-3 w-3 shrink-0 text-primary" fill="currentColor" stroke="none" />
+                  <MessageSquare className="h-3.5 w-3.5 shrink-0 text-primary" fill="currentColor" stroke="none" />
                 ) : (
-                  <MessageSquareText className="h-3 w-3 shrink-0 text-primary" />
+                  <MessageSquareText className="h-3.5 w-3.5 shrink-0 text-primary" />
                 )}
                 <span className="sidebar-title-fade min-w-0 flex-1 overflow-hidden whitespace-nowrap">{c.title || t('sidebar.newChat')}</span>
                 <GripVertical className="h-3 w-3 shrink-0 text-muted-foreground/40 opacity-0 group-hover/pin:opacity-100" />
@@ -345,7 +345,7 @@ export default function Sidebar({
           type="button"
           onClick={() => setConvTab('thread')}
           className={cn(
-            '-mb-px border-b-2 px-3 py-1.5 text-[12px] font-medium transition-colors',
+            '-mb-px border-b-2 px-3 py-3 text-[14px] font-medium transition-colors md:py-1.5 md:text-[12px]',
             convTab === 'thread'
               ? 'border-primary text-foreground'
               : 'border-transparent text-muted-foreground hover:text-foreground',
@@ -357,7 +357,7 @@ export default function Sidebar({
           type="button"
           onClick={() => setConvTab('chat')}
           className={cn(
-            '-mb-px border-b-2 px-3 py-1.5 text-[12px] font-medium transition-colors',
+            '-mb-px border-b-2 px-3 py-3 text-[14px] font-medium transition-colors md:py-1.5 md:text-[12px]',
             convTab === 'chat'
               ? 'border-primary text-foreground'
               : 'border-transparent text-muted-foreground hover:text-foreground',
@@ -374,22 +374,22 @@ export default function Sidebar({
             <Button
               variant="outline"
               size="sm"
-              className="h-7 justify-start gap-1.5 bg-secondary/40 px-2 hover:bg-secondary"
+              className="h-10 justify-start gap-1.5 bg-secondary/40 px-2 hover:bg-secondary md:h-7"
               onClick={onNew}
               title={t('sidebar.newChat')}
             >
               <Plus className="h-3.5 w-3.5 text-primary" />
-              <span className="truncate text-[12px]">{t('sidebar.newChat')}</span>
+              <span className="truncate text-[14px] md:text-[12px]">{t('sidebar.newChat')}</span>
             </Button>
             <Button
               variant="outline"
               size="sm"
-              className="h-7 justify-start gap-1.5 bg-secondary/40 px-2 hover:bg-secondary"
+              className="h-10 justify-start gap-1.5 bg-secondary/40 px-2 hover:bg-secondary md:h-7"
               onClick={() => onCreateFolder('thread')}
               title={t('sidebar.folder')}
             >
               <FolderPlus className="h-3.5 w-3.5 text-primary" />
-              <span className="truncate text-[12px]">{t('sidebar.folder')}</span>
+              <span className="truncate text-[14px] md:text-[12px]">{t('sidebar.folder')}</span>
             </Button>
           </div>
         ) : (
@@ -397,22 +397,22 @@ export default function Sidebar({
             <Button
               variant="outline"
               size="sm"
-              className="h-7 justify-start gap-1.5 bg-secondary/40 px-2 hover:bg-secondary"
+              className="h-10 justify-start gap-1.5 bg-secondary/40 px-2 hover:bg-secondary md:h-7"
               onClick={onNewChat}
               title={t('sidebar.newChatConv')}
             >
               <Plus className="h-3.5 w-3.5 text-primary" />
-              <span className="truncate text-[12px]">{t('sidebar.newChatConv')}</span>
+              <span className="truncate text-[14px] md:text-[12px]">{t('sidebar.newChatConv')}</span>
             </Button>
             <Button
               variant="outline"
               size="sm"
-              className="h-7 justify-start gap-1.5 bg-secondary/40 px-2 hover:bg-secondary"
+              className="h-10 justify-start gap-1.5 bg-secondary/40 px-2 hover:bg-secondary md:h-7"
               onClick={() => onCreateFolder('chat')}
               title={t('sidebar.folder')}
             >
               <FolderPlus className="h-3.5 w-3.5 text-primary" />
-              <span className="truncate text-[12px]">{t('sidebar.folder')}</span>
+              <span className="truncate text-[14px] md:text-[12px]">{t('sidebar.folder')}</span>
             </Button>
           </div>
         )}
@@ -663,7 +663,7 @@ function FolderRow({
     <div ref={rowRef} className="flex flex-col">
       <div
         className={cn(
-          'sidebar-title-fade-hover group flex w-full cursor-pointer items-center gap-1 overflow-hidden rounded-md px-2 py-0.5 text-sm transition-colors hover:bg-accent/40',
+          'sidebar-title-fade-hover group flex w-full cursor-pointer items-center gap-2 overflow-hidden rounded-md px-2 py-2.5 text-[14px] transition-colors hover:bg-accent/40 md:gap-1 md:py-0.5 md:text-sm',
           dragOver && 'bg-primary/15 ring-1 ring-primary',
           editing && 'bg-primary/10 ring-1 ring-primary/50',
         )}
@@ -687,11 +687,12 @@ function FolderRow({
           if (id) onMove(id, folder.id);
         }}
       >
-        {folder.expanded ? (
-          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        ) : (
-          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        )}
+        <ChevronRight
+          className={cn(
+            'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200',
+            folder.expanded && 'rotate-90',
+          )}
+        />
         <FolderIcon className="h-3.5 w-3.5 shrink-0 text-primary" />
         <div className={cn("min-w-0 flex-1 overflow-hidden", !editing && "sidebar-title-fade")}>
           {editing ? (
@@ -773,8 +774,13 @@ function FolderRow({
           </div>
         )}
       </div>
-      {folder.expanded && (
-        <div className="ml-3">
+      <div
+        className={cn(
+          'grid transition-[grid-template-rows] duration-200 ease-in-out',
+          folder.expanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]',
+        )}
+      >
+        <div className="ml-3 overflow-hidden">
           {items.length === 0 && (
             <div className="px-3 py-2 pl-3 text-[11.5px] text-muted-foreground">
               {t('sidebar.empty.folder')}
@@ -812,7 +818,7 @@ function FolderRow({
             );
           })}
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -926,7 +932,7 @@ function ConversationRow({
       }}
       onDragEnd={() => setDragging(false)}
       className={cn(
-        'group flex w-full cursor-pointer items-center gap-1 overflow-hidden rounded-md px-2 py-0.5 text-sm transition-colors',
+        'group flex w-full cursor-pointer items-center gap-2 overflow-hidden rounded-md px-2 py-2.5 text-[14px] transition-colors md:gap-1 md:py-0.5 md:text-sm',
         active ? 'sidebar-title-no-fade bg-accent text-accent-foreground' : 'sidebar-title-fade-hover hover:bg-accent/50',
         dragging && 'opacity-50',
         // 편집 중에도 행 높이를 그대로 유지하기 위해 layout 영향 없는 ring/bg만 사용.
@@ -969,7 +975,7 @@ function ConversationRow({
           />
         ) : (
           <span
-            className="block overflow-hidden whitespace-nowrap text-[13px]"
+            className="block overflow-hidden whitespace-nowrap text-[14px] md:text-[13px]"
             title={c.title || t('sidebar.newChat')}
           >
             {c.title || t('sidebar.newChat')}
@@ -977,13 +983,13 @@ function ConversationRow({
         )}
       </div>
       {!editing && (
-        <div className={cn('flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 has-[[data-state=open]]:opacity-100', active && 'opacity-100')}>
+        <div className={cn('flex shrink-0 gap-0.5 transition-opacity has-[[data-state=open]]:opacity-100 md:opacity-0 md:group-hover:opacity-100', active && 'md:opacity-100')}>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-5 w-5 hover:bg-transparent data-[state=open]:bg-transparent"
+                className="h-7 w-7 hover:bg-transparent data-[state=open]:bg-transparent md:h-5 md:w-5"
                 onClick={(e) => e.stopPropagation()}
                 title={t('sidebar.more')}
               >

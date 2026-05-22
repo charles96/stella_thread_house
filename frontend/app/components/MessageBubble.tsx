@@ -833,15 +833,18 @@ function ImageScatter({
   }
 
   return (
-    <div ref={containerRef} className="mb-2">
-      {!hideInlinePagination && totalPages > 1 && (
-        <div className="mb-1 flex items-center justify-end gap-1 text-muted-foreground">
+    <div ref={containerRef} className="mb-2 pl-4">
+      {totalPages > 1 && (
+        <div className={cn(
+          'mb-1 flex items-center justify-end gap-1 text-muted-foreground',
+          hideInlinePagination && 'md:hidden',
+        )}>
           <button
             type="button"
             onClick={() => canPrev && setPage((p) => p - 1)}
             disabled={!canPrev}
             aria-label="이전 페이지"
-            className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-secondary disabled:pointer-events-none disabled:opacity-30"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-md hover:bg-secondary disabled:pointer-events-none disabled:opacity-30 md:h-6 md:w-6"
           >
             <span className="text-base">&lt;</span>
           </button>
@@ -850,7 +853,7 @@ function ImageScatter({
             onClick={() => canNext && setPage((p) => p + 1)}
             disabled={!canNext}
             aria-label="다음 페이지"
-            className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-secondary disabled:pointer-events-none disabled:opacity-30"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-md hover:bg-secondary disabled:pointer-events-none disabled:opacity-30 md:h-6 md:w-6"
           >
             <span className="text-base">&gt;</span>
           </button>
@@ -1200,6 +1203,10 @@ export default function MessageBubble({
   // contenteditable span 으로 구현: inline 흐름을 유지해 ordinal/주변 텍스트가 시각적으로 이동하지 않음.
   const [headingEditing, setHeadingEditing] = useState(false);
   const headingEditableRef = useRef<HTMLSpanElement>(null);
+  // 모바일 전용 풀스크린 편집 상태
+  const [mobileHeadingOpen, setMobileHeadingOpen] = useState(false);
+  const [mobileHeadingDraft, setMobileHeadingDraft] = useState('');
+  const mobileHeadingRef = useRef<HTMLTextAreaElement>(null);
   // 편집 진입 시점에 캡처한 원본 본문 — message.content 가 mid-edit 으로 바뀌어도
   // useEffect 가 사용자 입력을 덮어쓰지 않도록 별도 보관.
   const headingInitialRef = useRef<string>('');
@@ -1219,9 +1226,21 @@ export default function MessageBubble({
     sel?.removeAllRanges();
     sel?.addRange(range);
   }, [headingEditing]);
+  useEffect(() => {
+    if (!mobileHeadingOpen) return;
+    const el = mobileHeadingRef.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, [mobileHeadingOpen]);
   function startHeadingEdit() {
     headingInitialRef.current = message.content ?? '';
-    setHeadingEditing(true);
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      setMobileHeadingDraft(message.content ?? '');
+      setMobileHeadingOpen(true);
+    } else {
+      setHeadingEditing(true);
+    }
   }
   function commitHeadingEdit() {
     const el = headingEditableRef.current;
@@ -1230,6 +1249,13 @@ export default function MessageBubble({
       onEditContent?.(message.id, next);
     }
     setHeadingEditing(false);
+  }
+  function commitMobileHeadingEdit() {
+    const next = mobileHeadingDraft.trim();
+    if (next && next !== (message.content ?? '').trim()) {
+      onEditContent?.(message.id, next);
+    }
+    setMobileHeadingOpen(false);
   }
   function cancelHeadingEdit() {
     setHeadingEditing(false);
@@ -1734,16 +1760,17 @@ export default function MessageBubble({
           // 테이블 가독성 강화 — 헤더 배경 강조 + 짝수 행 zebra striping + 호버 하이라이트
           // + primary 톤 외곽 보더로 본문 텍스트와 시각적 분리.
           // 사면 padding 으로 그림자가 그려질 공간을 모두 확보.
-          <div className="my-3 w-full max-w-full overflow-x-auto px-2 py-2">
+          <div className="my-3 w-full max-w-full overflow-x-auto overscroll-x-contain touch-pan-x px-2 py-2">
             <table
               {...rest}
               className={cn(
                 // table-auto + min-w-full — 컬럼은 컨텐츠 너비로 늘어나며, 컨테이너가 더 넓으면 채움.
                 // 줄바꿈은 단어/한글 구절 단위로만 발생, 가로가 넘치면 외곽 wrapper 의 overflow-x-auto 가 스크롤.
                 'min-w-full w-auto table-auto border-collapse text-[13px] shadow-[0_2px_10px_rgba(0,0,0,0.18)]',
-                // 헤더: primary 컬러 배경 + 두꺼운 글씨 + 한 줄 (헤더는 보통 짧음 → nowrap).
+                // 헤더: primary 컬러 배경 + 두꺼운 글씨. whitespace-nowrap 제거 — 다열 한글 헤더가 nowrap이면
+                // 최소 테이블 너비가 화면을 초과해 모바일에서 잘림 발생. break-keep 으로 단어 단위만 줄바꿈.
                 '[&_thead]:bg-primary/15',
-                '[&_th]:border [&_th]:border-primary/30 [&_th]:bg-primary/15 [&_th]:text-primary [&_th]:font-semibold [&_th]:px-2.5 [&_th]:py-1.5 [&_th]:whitespace-nowrap [&_th]:text-left',
+                '[&_th]:border [&_th]:border-primary/30 [&_th]:bg-primary/15 [&_th]:text-primary [&_th]:font-semibold [&_th]:px-2.5 [&_th]:py-1.5 [&_th]:break-keep [&_th]:text-left',
                 // 본문 셀: 옅은 보더, 짝수 행 zebra, 호버 하이라이트. break-keep 으로 단어 단위 줄바꿈만.
                 '[&_td]:border [&_td]:border-border/70 [&_td]:px-2.5 [&_td]:py-1.5 [&_td]:break-keep [&_td]:align-top',
                 '[&_tbody_tr:nth-child(even)]:bg-secondary/30',
@@ -1771,7 +1798,7 @@ export default function MessageBubble({
             <pre
               className={cn(
                 // 두 테마 모두 동일 — Solarized base02 (#073642) 터미널 배경 + 옅은 글씨.
-                'overflow-x-auto rounded-md border border-border bg-[#073642] p-3 pr-12 text-[12.5px] text-zinc-100 shadow-[0_4px_14px_rgba(0,0,0,0.35)]',
+                'overflow-x-auto touch-pan-x overscroll-x-contain rounded-md border border-border bg-[#073642] p-3 pr-12 text-[12.5px] text-zinc-100 shadow-[0_4px_14px_rgba(0,0,0,0.35)]',
                 className,
               )}
               {...rest}
@@ -1854,7 +1881,7 @@ export default function MessageBubble({
               : 'max-w-[92%]'
             : 'min-w-0 flex-1',
           // 쓰레드 모드의 assistant 컬럼은 user 헤딩(좌측 풀폭) 아래로 들여쓰기 — 응답·포커카드·References 모두 동일 폭으로.
-          !isUser && convKind === 'thread' && 'pl-12',
+          !isUser && convKind === 'thread' && 'pl-2',
         )}
       >
         {!isUser && (
@@ -1870,7 +1897,7 @@ export default function MessageBubble({
             {/* 포커 이미지 페이지네이션 — 행 맨 우측. ImageScatter 내부 inline 버튼은 hide.
                 특정 이미지를 pin/확대한 상태(expandedImageIndex !== null) 에선 스캐터가 보이지 않으므로 < > 도 숨김. */}
             {scatterTotalPages > 1 && expandedImageIndex === null && (
-              <div className="ml-auto flex items-center gap-1 self-center pr-2 text-muted-foreground">
+              <div className="ml-auto hidden items-center gap-1 self-center pr-2 text-muted-foreground md:flex">
                 <button
                   type="button"
                   onClick={() =>
@@ -2653,6 +2680,37 @@ export default function MessageBubble({
               : 'items-stretch',
           )}
         >
+          {/* 모바일 전용 풀스크린 제목 편집기 */}
+          {mobileHeadingOpen && (
+            <div className="fixed inset-x-0 top-0 z-[500] flex h-dvh flex-col bg-background md:hidden">
+              <div className="flex shrink-0 items-center border-b border-border px-4 py-3">
+                <button
+                  type="button"
+                  onClick={() => setMobileHeadingOpen(false)}
+                  className="text-sm text-muted-foreground"
+                >
+                  {t('delete.cancel')}
+                </button>
+                <span className="flex-1 text-center text-sm font-medium">
+                  {t('edit.title')}
+                </span>
+                <button
+                  type="button"
+                  onClick={commitMobileHeadingEdit}
+                  className="text-sm font-semibold text-primary"
+                >
+                  {t('edit.save')}
+                </button>
+              </div>
+              <textarea
+                ref={mobileHeadingRef}
+                value={mobileHeadingDraft}
+                onChange={(e) => setMobileHeadingDraft(e.target.value)}
+                className="flex-1 resize-none bg-transparent p-5 text-[18px] font-semibold leading-snug text-foreground outline-none"
+              />
+            </div>
+          )}
+
           {message.content && isUser && convKind === 'thread' && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -2660,7 +2718,7 @@ export default function MessageBubble({
               id={`user-msg-${message.id}`}
               // 헤딩 전체가 클릭 → 편집 트리거. 내부 button/link 의 stopPropagation 으로 자기 영역 분리.
               onClick={
-                !headingEditing && onEditContent
+                !headingEditing && !mobileHeadingOpen && onEditContent
                   ? (e) => {
                       // 텍스트 드래그 선택 중에는 편집 진입 무시.
                       const sel = window.getSelection?.();
@@ -2672,8 +2730,9 @@ export default function MessageBubble({
               }
               className={cn(
                 // 일반 인라인 소제목 (sticky 제거, 헤더의 sub-heading 표시가 그 역할 대신).
-                'group/bubble relative mt-3 w-full max-w-full py-1 pl-6 pr-16 text-left text-[18px] font-semibold leading-snug tracking-tight text-foreground first:mt-0',
+                'group/bubble relative mt-3 w-full max-w-full py-1 pl-1 pr-16 text-left text-[18px] font-semibold leading-snug tracking-tight text-foreground first:mt-0',
                 !headingEditing &&
+                  !mobileHeadingOpen &&
                   onEditContent &&
                   'cursor-text rounded-sm transition-colors hover:bg-accent/40',
               )}
@@ -2820,7 +2879,7 @@ export default function MessageBubble({
               {/* relative z-[1] — 버블이 아래 탭 위에 올라가서 탭이 "뒷면에서 빠져나온" 느낌. */}
               <div
                 ref={answerBubbleRef}
-                className="relative z-[1] w-full min-w-0 max-w-full overflow-x-hidden rounded-2xl rounded-tl-md border border-border bg-bubble-bot px-3.5 py-2 text-[14.5px] leading-relaxed text-bubble-bot-foreground shadow-md"
+                className="relative z-[1] w-full min-w-0 max-w-full overflow-x-clip rounded-2xl rounded-tl-md border border-border bg-bubble-bot px-3.5 py-2 text-[14.5px] leading-relaxed text-bubble-bot-foreground shadow-md"
               >
                 {answerEditing ? (
                   <textarea

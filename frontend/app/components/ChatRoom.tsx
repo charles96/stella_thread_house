@@ -12,6 +12,7 @@ import SaveConfirmModal from './SaveConfirmModal';
 import ThreadDetailPanel from './ThreadDetailPanel';
 import DashboardPanel from './DashboardPanel';
 import DeleteConfirmModal from './DeleteConfirmModal';
+import PinLimitModal from './PinLimitModal';
 import DeleteMessagePairConfirmModal from './DeleteMessagePairConfirmModal';
 import Toaster, { type Toast } from './Toaster';
 import {
@@ -279,6 +280,7 @@ export default function ChatRoom() {
   // 메인 영역 표시 모드. 기본은 Dashboard. Thread 행 클릭 시 'thread' 로 전환.
   const [view, setView] = useState<'dashboard' | 'thread'>('dashboard');
   // 삭제 확인 모달 — 사용자가 이름을 정확히 입력해야 활성화됨.
+  const [pinLimitOpen, setPinLimitOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<
     | { kind: 'conversation' | 'folder'; id: string; name: string }
     | null
@@ -1016,6 +1018,10 @@ export default function ChatRoom() {
               : c,
           ),
         );
+        // 첫 페이지 로드 직후 다음 이전-페이지를 백그라운드로 미리 받아둠
+        if (hasMore && msgs.length > 0) {
+          void prefetchOlderMessages(activeId, msgs[0].id);
+        }
       } catch {
         if (cancelled) return;
         setConversations((prev) =>
@@ -1110,7 +1116,32 @@ export default function ChatRoom() {
     };
   }, [pollingPlaceholderMsgId, activeId, pending]);
 
-  // 스크롤이 상단 근처(< 200px)에 닿으면 더 과거 메시지를 prepend.
+  // 다음 이전-페이지를 미리 받아두는 캐시. { convId, beforeId } 로 키를 삼아 stale 체크.
+  const olderPrefetchRef = useRef<{
+    convId: string;
+    beforeId: string;
+    msgs: Message[];
+    hasMore: boolean;
+  } | null>(null);
+  const prefetchingRef = useRef(false);
+
+  const prefetchOlderMessages = useCallback(
+    async (convId: string, oldestMsgId: string) => {
+      if (prefetchingRef.current) return;
+      prefetchingRef.current = true;
+      try {
+        const { msgs, hasMore } = await fetchMessagesPage(convId, oldestMsgId);
+        olderPrefetchRef.current = { convId, beforeId: oldestMsgId, msgs, hasMore };
+      } catch {
+        // 실패는 무시 — 다음 스크롤 트리거 시 다시 시도
+      } finally {
+        prefetchingRef.current = false;
+      }
+    },
+    [fetchMessagesPage],
+  );
+
+  // 스크롤이 상단 근처에 닿으면 더 과거 메시지를 prepend.
   // 추가 도중에 시각적으로 점프하지 않도록 scrollHeight 차이만큼 scrollTop 보정.
   const loadOlderMessages = useCallback(async () => {
     const conv = conversations.find((c) => c.id === activeId);
@@ -1119,33 +1150,45 @@ export default function ChatRoom() {
     if (!conv.hasMoreMessages || conv.loadingOlder) return;
     if (conv.messages.length === 0) return;
     const oldestId = conv.messages[0].id;
-    setConversations((prev) =>
-      prev.map((c) =>
-        c.id === activeId ? { ...c, loadingOlder: true } : c,
-      ),
-    );
-    const prevHeight = el.scrollHeight;
-    const prevTop = el.scrollTop;
-    try {
-      const { msgs, hasMore } = await fetchMessagesPage(activeId, oldestId);
+
+    const applyOlderMsgs = (msgs: Message[], hasMore: boolean) => {
+      const prevHeight = el.scrollHeight;
+      const prevTop = el.scrollTop;
       setConversations((prev) =>
         prev.map((c) =>
           c.id === activeId
-            ? {
-                ...c,
-                messages: [...msgs, ...c.messages],
-                hasMoreMessages: hasMore,
-                loadingOlder: false,
-              }
+            ? { ...c, messages: [...msgs, ...c.messages], hasMoreMessages: hasMore, loadingOlder: false }
             : c,
         ),
       );
-      // DOM 업데이트 후 scroll 위치 보정
       requestAnimationFrame(() => {
-        const after = scrollRef.current;
-        if (!after) return;
-        after.scrollTop = prevTop + (after.scrollHeight - prevHeight);
+        requestAnimationFrame(() => {
+          const after = scrollRef.current;
+          if (!after) return;
+          after.scrollTop = prevTop + (after.scrollHeight - prevHeight);
+        });
       });
+      // 방금 prepend 한 페이지의 맨 앞 메시지 기준으로 다음 페이지를 미리 받아둠
+      if (hasMore && msgs.length > 0) {
+        void prefetchOlderMessages(activeId, msgs[0].id);
+      }
+    };
+
+    // 미리 받아둔 페이지가 있으면 즉시 적용 (네트워크 대기 없음)
+    const cached = olderPrefetchRef.current;
+    if (cached && cached.convId === activeId && cached.beforeId === oldestId) {
+      olderPrefetchRef.current = null;
+      applyOlderMsgs(cached.msgs, cached.hasMore);
+      return;
+    }
+
+    // 캐시 미스 — 직접 fetch
+    setConversations((prev) =>
+      prev.map((c) => (c.id === activeId ? { ...c, loadingOlder: true } : c)),
+    );
+    try {
+      const { msgs, hasMore } = await fetchMessagesPage(activeId, oldestId);
+      applyOlderMsgs(msgs, hasMore);
     } catch {
       setConversations((prev) =>
         prev.map((c) =>
@@ -1153,7 +1196,7 @@ export default function ChatRoom() {
         ),
       );
     }
-  }, [conversations, activeId, fetchMessagesPage]);
+  }, [conversations, activeId, fetchMessagesPage, prefetchOlderMessages]);
 
   // 스크롤 중일 때 입력창을 잠시 숨기기 위한 플래그. scroll 이벤트가 멈추고
   // ~250ms 가 지나면 false 로 복귀.
@@ -1175,7 +1218,7 @@ export default function ChatRoom() {
     const el = scrollRef.current;
     if (!el) return;
     const onScroll = () => {
-      if (el.scrollTop < 200) void loadOlderRef.current();
+      if (el.scrollTop < 800) void loadOlderRef.current();
       // 자동 스크롤 윈도우 안이면 isScrolling 토글 생략.
       if (Date.now() < programmaticScrollRef.current) return;
       setIsScrolling(true);
@@ -1913,7 +1956,10 @@ export default function ChatRoom() {
     const isCurrentlyPinned = target.pinned ?? false;
     if (!isCurrentlyPinned) {
       const pinnedCount = conversations.filter((c) => c.pinned).length;
-      if (pinnedCount >= 10) return;
+      if (pinnedCount >= 10) {
+        setPinLimitOpen(true);
+        return;
+      }
     }
     const nextPinned = !isCurrentlyPinned;
     setConversations((prev) =>
@@ -3201,7 +3247,7 @@ export default function ChatRoom() {
           </button>
         </div>
         <div
-          className="h-full overflow-y-auto overflow-x-hidden"
+          className="h-full overflow-y-auto overflow-x-clip touch-pan-y"
           ref={scrollRef}
         >
           <div
@@ -3550,6 +3596,8 @@ export default function ChatRoom() {
           setToasts((prev) => prev.filter((tt) => tt.id !== id))
         }
       />
+
+      <PinLimitModal open={pinLimitOpen} onClose={() => setPinLimitOpen(false)} />
 
       <DeleteConfirmModal
         open={!!pendingDelete}
