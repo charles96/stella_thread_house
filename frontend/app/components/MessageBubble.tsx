@@ -1760,7 +1760,7 @@ export default function MessageBubble({
           // 테이블 가독성 강화 — 헤더 배경 강조 + 짝수 행 zebra striping + 호버 하이라이트
           // + primary 톤 외곽 보더로 본문 텍스트와 시각적 분리.
           // 사면 padding 으로 그림자가 그려질 공간을 모두 확보.
-          <div className="my-3 w-full max-w-full overflow-x-auto overscroll-x-contain touch-pan-x px-2 py-2">
+          <div className="my-3 w-full max-w-full overflow-x-auto overscroll-x-contain [touch-action:pan-x_pan-y] px-2 py-2 [@media(pointer:coarse)]:select-none">
             <table
               {...rest}
               className={cn(

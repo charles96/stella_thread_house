@@ -315,7 +315,7 @@ export default function Sidebar({
                   setConvTab(c.kind ?? 'thread');
                 }}
                 className={cn(
-                  'group/pin flex w-full cursor-pointer items-center gap-2 overflow-hidden rounded-md px-2 py-3 text-[14px] transition-colors md:cursor-grab md:gap-1 md:py-0.5 md:text-[13px]',
+                  'group/pin flex w-full cursor-pointer select-none items-center gap-2 overflow-hidden rounded-md px-2 py-3 text-[14px] transition-colors md:cursor-grab md:gap-1 md:py-0.5 md:text-[13px]',
                   c.id === activeId
                     ? 'sidebar-title-no-fade bg-accent text-accent-foreground'
                     : 'sidebar-title-fade-hover text-foreground hover:bg-accent/50',
@@ -663,7 +663,7 @@ function FolderRow({
     <div ref={rowRef} className="flex flex-col">
       <div
         className={cn(
-          'sidebar-title-fade-hover group flex w-full cursor-pointer items-center gap-2 overflow-hidden rounded-md px-2 py-2.5 text-[14px] transition-colors hover:bg-accent/40 md:gap-1 md:py-0.5 md:text-sm',
+          'sidebar-title-fade-hover group flex w-full cursor-pointer select-none items-center gap-2 overflow-hidden rounded-md px-2 py-2.5 text-[14px] transition-colors hover:bg-accent/40 md:gap-1 md:py-0.5 md:text-sm',
           dragOver && 'bg-primary/15 ring-1 ring-primary',
           editing && 'bg-primary/10 ring-1 ring-primary/50',
         )}
@@ -932,7 +932,7 @@ function ConversationRow({
       }}
       onDragEnd={() => setDragging(false)}
       className={cn(
-        'group flex w-full cursor-pointer items-center gap-2 overflow-hidden rounded-md px-2 py-2.5 text-[14px] transition-colors md:gap-1 md:py-0.5 md:text-sm',
+        'group flex w-full cursor-pointer select-none items-center gap-2 overflow-hidden rounded-md px-2 py-2.5 text-[14px] transition-colors md:gap-1 md:py-0.5 md:text-sm',
         active ? 'sidebar-title-no-fade bg-accent text-accent-foreground' : 'sidebar-title-fade-hover hover:bg-accent/50',
         dragging && 'opacity-50',
         // 편집 중에도 행 높이를 그대로 유지하기 위해 layout 영향 없는 ring/bg만 사용.
