@@ -32,6 +32,7 @@ export type ConversationDto = {
   hashtags?: string[];
   // 사용자가 명시적으로 배제한 hashtag — 그래프/통합표시에서 제외.
   excludedHashtags?: string[];
+  pinned?: boolean;
 };
 
 export type MessageDto = {
@@ -55,6 +56,7 @@ export type ConversationUpdate = Partial<{
   runningSummaryAnswerCount: number | null;
   hashtags: string[];
   excludedHashtags: string[];
+  pinned: boolean;
 }>;
 
 export type ConversationCreate = {
@@ -273,6 +275,7 @@ export class ConversationsService implements OnModuleInit {
       excludedHashtags: Array.isArray(c.excludedHashtags)
         ? c.excludedHashtags
         : [],
+      pinned: c.pinned ?? false,
     };
   }
 
@@ -347,6 +350,7 @@ export class ConversationsService implements OnModuleInit {
     if (patch.hashtags !== undefined) existing.hashtags = patch.hashtags;
     if (patch.excludedHashtags !== undefined)
       existing.excludedHashtags = patch.excludedHashtags;
+    if (patch.pinned !== undefined) existing.pinned = patch.pinned;
 
     const saved = await this.conversations.save(existing);
     return this.toDto(saved);

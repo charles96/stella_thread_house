@@ -6,6 +6,7 @@ import {
   Folder as FolderIcon,
   FolderInput,
   FolderPlus,
+  GripVertical,
   Info,
   LayoutDashboard,
   LogIn,
@@ -14,8 +15,11 @@ import {
   MessageSquareText,
   MoreHorizontal,
   Pencil,
+  Pin,
+  PinOff,
   Plus,
   Settings as SettingsIcon,
+  Star,
   Trash2,
 } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -55,6 +59,9 @@ interface Props {
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;
   onMove: (id: string, folderId: string | null) => void;
+  onPin: (id: string) => void;
+  pinnedOrder: string[];
+  onReorderPinned: (orderedIds: string[]) => void;
   onCreateFolder: (kind: 'thread' | 'chat') => void;
   onRenameFolder: (id: string, name: string) => void;
   onDeleteFolder: (id: string) => void;
@@ -94,6 +101,9 @@ export default function Sidebar({
   onDelete,
   onRename,
   onMove,
+  onPin,
+  pinnedOrder,
+  onReorderPinned,
   onCreateFolder,
   onRenameFolder,
   onDeleteFolder,
@@ -161,6 +171,20 @@ export default function Sidebar({
     return map;
   }, [chatFolders, chats]);
 
+  const pinnedConvs = useMemo(() => {
+    const pinned = conversations.filter((c) => c.pinned);
+    return [...pinned].sort((a, b) => {
+      const ai = pinnedOrder.indexOf(a.id);
+      const bi = pinnedOrder.indexOf(b.id);
+      if (ai === -1 && bi === -1) return 0;
+      if (ai === -1) return 1;
+      if (bi === -1) return -1;
+      return ai - bi;
+    });
+  }, [conversations, pinnedOrder]);
+  const [pinnedDraggingId, setPinnedDraggingId] = useState<string | null>(null);
+  const [pinnedDragOverId, setPinnedDragOverId] = useState<string | null>(null);
+
   // Threads / Chat 탭 — 한 번에 한 섹션만 노출. 활성 conversation 의 kind 가
   // 바뀌면 (예: 다른 탭의 conversation 을 Dashboard 에서 클릭) 해당 탭으로 자동 전환.
   const [convTab, setConvTab] = useState<'thread' | 'chat'>('thread');
@@ -218,6 +242,78 @@ export default function Sidebar({
         <span>{t('dashboard.title')}</span>
       </button>
 
+      {/* Pinned — Dashboard 아래에 고정 노출. 드래그로 순서 변경 가능. */}
+      {pinnedConvs.length > 0 && (
+        <div className="mx-3 mt-2">
+          <div className="mb-1 flex items-center gap-1 px-1">
+            <Pin className="h-3 w-3 text-primary" />
+            <span className="text-[11px] font-medium text-muted-foreground">
+              {t('sidebar.pinned')}
+            </span>
+          </div>
+          <div className="flex flex-col gap-0.5">
+            {pinnedConvs.map((c) => (
+              <div
+                key={c.id}
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.effectAllowed = 'move';
+                  e.dataTransfer.setData('text/plain', c.id);
+                  setPinnedDraggingId(c.id);
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                  if (pinnedDragOverId !== c.id) setPinnedDragOverId(c.id);
+                }}
+                onDragLeave={() => {
+                  if (pinnedDragOverId === c.id) setPinnedDragOverId(null);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const srcId = e.dataTransfer.getData('text/plain');
+                  setPinnedDraggingId(null);
+                  setPinnedDragOverId(null);
+                  if (!srcId || srcId === c.id) return;
+                  const ids = pinnedConvs.map((p) => p.id);
+                  const next = ids.filter((x) => x !== srcId);
+                  const targetIdx = next.indexOf(c.id);
+                  if (targetIdx >= 0) next.splice(targetIdx, 0, srcId);
+                  onReorderPinned(next);
+                }}
+                onDragEnd={() => {
+                  setPinnedDraggingId(null);
+                  setPinnedDragOverId(null);
+                }}
+                onClick={() => {
+                  onSelect(c.id);
+                  setConvTab(c.kind ?? 'thread');
+                }}
+                className={cn(
+                  'group/pin flex w-full cursor-grab items-center gap-1.5 overflow-hidden rounded-md px-2 py-1 text-left text-[12.5px] transition-colors',
+                  c.id === activeId
+                    ? 'sidebar-title-no-fade bg-accent text-accent-foreground'
+                    : 'sidebar-title-fade-hover text-foreground hover:bg-accent/50',
+                  pinnedDraggingId === c.id && 'opacity-40',
+                  pinnedDragOverId === c.id && pinnedDraggingId !== c.id
+                    ? 'border border-primary/60 bg-primary/10'
+                    : 'border border-transparent',
+                )}
+                title={c.title}
+              >
+                {c.kind === 'chat' ? (
+                  <MessageSquare className="h-3 w-3 shrink-0 text-primary" fill="currentColor" stroke="none" />
+                ) : (
+                  <MessageSquareText className="h-3 w-3 shrink-0 text-primary" />
+                )}
+                <span className="sidebar-title-fade min-w-0 flex-1 overflow-hidden whitespace-nowrap">{c.title || t('sidebar.newChat')}</span>
+                <GripVertical className="h-3 w-3 shrink-0 text-muted-foreground/40 opacity-0 group-hover/pin:opacity-100" />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Threads / Chat 탭 — Dashboard 탭과 톤 통일: 활성 탭만 하단 primary 언더라인. */}
       <div className="mx-2 mt-3 flex items-center gap-1 border-b border-border">
         <button
@@ -246,32 +342,61 @@ export default function Sidebar({
         </button>
       </div>
 
+      {/* New / Folder 버튼 — 스크롤 영역 밖 고정 */}
+      <div className="shrink-0 px-3 pb-1.5 pt-2">
+        {convTab === 'thread' ? (
+          <div className="grid grid-cols-2 gap-1.5">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 justify-start gap-1.5 bg-secondary/40 px-2 hover:bg-secondary"
+              onClick={onNew}
+              title={t('sidebar.newChat')}
+            >
+              <Plus className="h-3.5 w-3.5 text-primary" />
+              <span className="truncate text-[12px]">{t('sidebar.newChat')}</span>
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 justify-start gap-1.5 bg-secondary/40 px-2 hover:bg-secondary"
+              onClick={() => onCreateFolder('thread')}
+              title={t('sidebar.folder')}
+            >
+              <FolderPlus className="h-3.5 w-3.5 text-primary" />
+              <span className="truncate text-[12px]">{t('sidebar.folder')}</span>
+            </Button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-1.5">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 justify-start gap-1.5 bg-secondary/40 px-2 hover:bg-secondary"
+              onClick={onNewChat}
+              title={t('sidebar.newChatConv')}
+            >
+              <Plus className="h-3.5 w-3.5 text-primary" />
+              <span className="truncate text-[12px]">{t('sidebar.newChatConv')}</span>
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 justify-start gap-1.5 bg-secondary/40 px-2 hover:bg-secondary"
+              onClick={() => onCreateFolder('chat')}
+              title={t('sidebar.folder')}
+            >
+              <FolderPlus className="h-3.5 w-3.5 text-primary" />
+              <span className="truncate text-[12px]">{t('sidebar.folder')}</span>
+            </Button>
+          </div>
+        )}
+      </div>
+
       <ScrollArea className="flex-1">
-        <div className="flex flex-col px-2 pb-3 pt-2">
+        <div className="flex flex-col px-2 pb-3 pt-1">
           {convTab === 'thread' ? (
             <>
-              <div className="mb-1.5 grid grid-cols-2 gap-1.5 px-1 pt-1">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 justify-start gap-1.5 bg-secondary/40 px-2 hover:bg-secondary"
-                  onClick={onNew}
-                  title={t('sidebar.newChat')}
-                >
-                  <Plus className="h-3.5 w-3.5 text-primary" />
-                  <span className="truncate text-[12px]">{t('sidebar.newChat')}</span>
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 justify-start gap-1.5 bg-secondary/40 px-2 hover:bg-secondary"
-                  onClick={() => onCreateFolder('thread')}
-                  title={t('sidebar.folder')}
-                >
-                  <FolderPlus className="h-3.5 w-3.5 text-primary" />
-                  <span className="truncate text-[12px]">{t('sidebar.folder')}</span>
-                </Button>
-              </div>
               {threadFolders.map((folder) => {
                 const items = threadItemsByFolder.get(folder.id) ?? [];
                 return (
@@ -286,6 +411,7 @@ export default function Sidebar({
                     onDelete={onDelete}
                     onRename={onRename}
                     onMove={onMove}
+                    onPin={onPin}
                     onRenameFolder={onRenameFolder}
                     onDeleteFolder={onDeleteFolder}
                     onToggleFolder={onToggleFolder}
@@ -310,34 +436,13 @@ export default function Sidebar({
                     onDelete={onDelete}
                     onRename={onRename}
                     onMove={onMove}
+                    onPin={onPin}
                   />
                 ))}
               </RootDropZone>
             </>
           ) : (
             <>
-              <div className="mb-1.5 grid grid-cols-2 gap-1.5 px-1 pt-1">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 justify-start gap-1.5 bg-secondary/40 px-2 hover:bg-secondary"
-                  onClick={onNewChat}
-                  title={t('sidebar.newChatConv')}
-                >
-                  <Plus className="h-3.5 w-3.5 text-primary" />
-                  <span className="truncate text-[12px]">{t('sidebar.newChatConv')}</span>
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 justify-start gap-1.5 bg-secondary/40 px-2 hover:bg-secondary"
-                  onClick={() => onCreateFolder('chat')}
-                  title={t('sidebar.folder')}
-                >
-                  <FolderPlus className="h-3.5 w-3.5 text-primary" />
-                  <span className="truncate text-[12px]">{t('sidebar.folder')}</span>
-                </Button>
-              </div>
               {chatFolders.map((folder) => {
                 const items = chatItemsByFolder.get(folder.id) ?? [];
                 return (
@@ -352,6 +457,7 @@ export default function Sidebar({
                     onDelete={onDelete}
                     onRename={onRename}
                     onMove={onMove}
+                    onPin={onPin}
                     onRenameFolder={onRenameFolder}
                     onDeleteFolder={onDeleteFolder}
                     onToggleFolder={onToggleFolder}
@@ -376,6 +482,7 @@ export default function Sidebar({
                     onDelete={onDelete}
                     onRename={onRename}
                     onMove={onMove}
+                    onPin={onPin}
                   />
                 ))}
               </RootDropZone>
@@ -461,6 +568,7 @@ function FolderRow({
   onDelete,
   onRename,
   onMove,
+  onPin,
   onRenameFolder,
   onDeleteFolder,
   onToggleFolder,
@@ -474,6 +582,7 @@ function FolderRow({
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;
   onMove: (id: string, folderId: string | null) => void;
+  onPin: (id: string) => void;
   onRenameFolder: (id: string, name: string) => void;
   onDeleteFolder: (id: string) => void;
   onToggleFolder: (id: string) => void;
@@ -583,7 +692,7 @@ function FolderRow({
           {items.length}
         </span>
         {!editing && (
-          <div className="flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+          <div className="flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 has-[[data-state=open]]:opacity-100">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -655,6 +764,7 @@ function FolderRow({
                   onDelete={onDelete}
                   onRename={onRename}
                   onMove={onMove}
+                  onPin={onPin}
                 />
               </div>
             );
@@ -715,6 +825,7 @@ function ConversationRow({
   onDelete,
   onRename,
   onMove,
+  onPin,
 }: {
   c: Conversation;
   active: boolean;
@@ -723,6 +834,7 @@ function ConversationRow({
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;
   onMove: (id: string, folderId: string | null) => void;
+  onPin: (id: string) => void;
 }) {
   const { t } = useI18n();
   const [dragging, setDragging] = useState(false);
@@ -821,13 +933,13 @@ function ConversationRow({
         )}
       </div>
       {!editing && (
-        <div className={cn('flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover:opacity-100', active && 'opacity-100')}>
+        <div className={cn('flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 has-[[data-state=open]]:opacity-100', active && 'opacity-100')}>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-5 w-5"
+                className="h-5 w-5 hover:bg-transparent data-[state=open]:bg-transparent"
                 onClick={(e) => e.stopPropagation()}
                 title={t('sidebar.more')}
               >
@@ -838,6 +950,18 @@ function ConversationRow({
               align="end"
               onClick={(e) => e.stopPropagation()}
             >
+              <DropdownMenuItem
+                onSelect={() => onPin(c.id)}
+                className="gap-2"
+              >
+                {c.pinned ? (
+                  <PinOff className="h-3 w-3" />
+                ) : (
+                  <Pin className="h-3 w-3" />
+                )}
+                <span>{c.pinned ? t('sidebar.unpin') : t('sidebar.pin')}</span>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
               <DropdownMenuItem
                 onSelect={() => {
                   setDraft(c.title || '');

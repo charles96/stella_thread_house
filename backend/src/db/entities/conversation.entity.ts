@@ -70,6 +70,9 @@ export class Conversation {
   })
   excludedHashtags!: string[];
 
+  @Column({ type: 'boolean', default: false })
+  pinned!: boolean;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;
 

@@ -141,6 +141,7 @@ export interface Conversation {
   hashtags?: string[];
   // 사용자가 우측 패널 Hashtags 에서 배제한 태그 — 그래프/표시에서 제외. 영속(server-side).
   excludedHashtags?: string[];
+  pinned?: boolean;
   // 페이지네이션 상태
   messagesLoaded?: boolean; // 한 번이라도 메시지를 fetch 했는지
   hasMoreMessages?: boolean; // 더 과거 메시지가 DB에 남아있는지
@@ -262,6 +263,14 @@ export default function ChatRoom() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [pinnedOrder, setPinnedOrder] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem('stella:pinnedOrder');
+      return stored ? (JSON.parse(stored) as string[]) : [];
+    } catch {
+      return [];
+    }
+  });
   // 메인 영역 표시 모드. 기본은 Dashboard. Thread 행 클릭 시 'thread' 로 전환.
   const [view, setView] = useState<'dashboard' | 'thread'>('dashboard');
   // 삭제 확인 모달 — 사용자가 이름을 정확히 입력해야 활성화됨.
@@ -805,6 +814,7 @@ export default function ChatRoom() {
               title: c.title,
               model: c.model ?? null,
               folderId: c.folderId ?? null,
+              pinned: c.pinned ?? false,
             }),
           }),
         );
@@ -1848,6 +1858,38 @@ export default function ChatRoom() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title }),
     }).catch(() => {});
+  }
+
+  function togglePinConversation(id: string) {
+    const target = conversations.find((c) => c.id === id);
+    if (!target) return;
+    const isCurrentlyPinned = target.pinned ?? false;
+    if (!isCurrentlyPinned) {
+      const pinnedCount = conversations.filter((c) => c.pinned).length;
+      if (pinnedCount >= 10) return;
+    }
+    const nextPinned = !isCurrentlyPinned;
+    setConversations((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, pinned: nextPinned } : c)),
+    );
+    setPinnedOrder((prev) => {
+      const next = nextPinned
+        ? prev.includes(id) ? prev : [...prev, id]
+        : prev.filter((x) => x !== id);
+      try { localStorage.setItem('stella:pinnedOrder', JSON.stringify(next)); } catch { /* */ }
+      return next;
+    });
+    void fetch(`${API_URL}/conversations/${id}`, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pinned: nextPinned }),
+    }).catch(() => {});
+  }
+
+  function reorderPinned(orderedIds: string[]) {
+    setPinnedOrder(orderedIds);
+    try { localStorage.setItem('stella:pinnedOrder', JSON.stringify(orderedIds)); } catch { /* */ }
   }
 
   // user msg id 기준 turn 접힘 토글
@@ -2923,6 +2965,9 @@ export default function ChatRoom() {
             }}
             onRename={renameConversation}
             onMove={moveConversation}
+            onPin={togglePinConversation}
+            pinnedOrder={pinnedOrder}
+            onReorderPinned={reorderPinned}
             onCreateFolder={createFolder}
             onRenameFolder={renameFolder}
             onDeleteFolder={(id) => {

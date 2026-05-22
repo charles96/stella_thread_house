@@ -65,6 +65,8 @@ CREATE TABLE IF NOT EXISTS conversations (
   updated_at                   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS pinned BOOLEAN NOT NULL DEFAULT false;
+
 CREATE INDEX IF NOT EXISTS conversations_user_idx         ON conversations (user_id);
 CREATE INDEX IF NOT EXISTS conversations_folder_idx       ON conversations (folder_id);
 CREATE INDEX IF NOT EXISTS conversations_user_updated_idx ON conversations (user_id, updated_at DESC);
