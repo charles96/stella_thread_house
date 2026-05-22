@@ -731,6 +731,10 @@ export default function ChatRoom() {
   //   view=thread + activeId → /?c=<id>
   //   view=dashboard         → /dashboard
   //   pathname=/settings 일 땐 URL 을 건드리지 않음 (settings 가 우선 경로).
+  //
+  // thread→thread 전환은 replaceState: 스레드 간 이동마다 history entry가 쌓이면
+  // 모바일 swipe back이 main list 대신 이전 스레드로 이동하는 버그가 발생.
+  // dashboard→thread / thread→dashboard 만 pushState (back gesture로 복귀 가능).
   const lastUrlRef = useRef<string>('');
   useEffect(() => {
     if (!hydratedRef.current) return;
@@ -743,8 +747,14 @@ export default function ChatRoom() {
       url = '/dashboard';
     }
     if (url === lastUrlRef.current) return;
+    const prevUrl = lastUrlRef.current;
     lastUrlRef.current = url;
-    window.history.pushState({}, '', url);
+    // thread→thread: replaceState — 스레드 목록 탐색이 history를 오염시키지 않도록.
+    if (prevUrl.startsWith('/?c=') && url.startsWith('/?c=')) {
+      window.history.replaceState({}, '', url);
+    } else {
+      window.history.pushState({}, '', url);
+    }
   }, [view, activeId]);
 
   // 초기 마운트 시 — direct URL (/settings, /dashboard) 진입 케이스 처리.
@@ -784,6 +794,10 @@ export default function ChatRoom() {
           }
         }
         setView('dashboard');
+        // 모바일 — swipe back으로 list 화면에 돌아왔을 때 사이드바(대화 목록) 복원.
+        if (typeof window !== 'undefined' && window.innerWidth < 768) {
+          setSidebarOpen(true);
+        }
         lastUrlRef.current = `${path}${window.location.search}`;
       } catch {
         // ignore
