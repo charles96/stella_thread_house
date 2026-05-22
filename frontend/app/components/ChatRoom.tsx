@@ -2981,10 +2981,8 @@ export default function ChatRoom() {
               }
             }}
             onSelect={(id) => {
-              startThreadTransition(() => {
-                setActiveId(id);
-                setView('thread');
-              });
+              setActiveId(id);
+              setView('thread');
               // 모바일 — thread 선택 시 사이드바 자동 닫기 (full-screen overlay 였음).
               if (typeof window !== 'undefined' && window.innerWidth < 768) {
                 setSidebarOpen(false);
@@ -3217,6 +3215,30 @@ export default function ChatRoom() {
             )}
           >
             <div>
+              {!active?.messagesLoaded && (
+                <div className="flex flex-col gap-8 animate-pulse pt-2">
+                  <div className="flex justify-end pr-2">
+                    <div className="h-10 w-2/5 rounded-2xl bg-muted" />
+                  </div>
+                  <div className="flex flex-col gap-2 pl-2">
+                    <div className="h-4 w-3/4 rounded bg-muted" />
+                    <div className="h-4 w-1/2 rounded bg-muted" />
+                    <div className="h-4 w-2/3 rounded bg-muted" />
+                  </div>
+                  <div className="flex justify-end pr-2">
+                    <div className="h-10 w-1/3 rounded-2xl bg-muted" />
+                  </div>
+                  <div className="flex flex-col gap-2 pl-2">
+                    <div className="h-4 w-4/5 rounded bg-muted" />
+                    <div className="h-4 w-3/5 rounded bg-muted" />
+                    <div className="h-4 w-1/2 rounded bg-muted" />
+                    <div className="h-4 w-2/3 rounded bg-muted" />
+                  </div>
+                  <div className="flex justify-end pr-2">
+                    <div className="h-10 w-1/4 rounded-2xl bg-muted" />
+                  </div>
+                </div>
+              )}
               {(() => {
                 const msgs = active?.messages ?? [];
                 if (msgs.length === 0) return null;
