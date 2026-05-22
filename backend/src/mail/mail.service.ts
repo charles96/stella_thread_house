@@ -74,10 +74,19 @@ export class MailService {
       );
     }
     const port = cfg.port ?? 587;
+    // 포트별 TLS 방식이 고정되어 있으므로 사용자 secure 설정보다 포트를 우선.
+    // 465: immediate TLS (secure=true), 587/25/2525: STARTTLS (secure=false).
+    // 사용자가 587에 secure=true를 설정하면 "wrong version number" SSL 오류 발생 → 강제 보정.
+    const secure =
+      port === 465
+        ? true
+        : port === 587 || port === 25 || port === 2525
+          ? false
+          : (cfg.secure ?? false);
     this.transporter = nodemailer.createTransport({
       host: cfg.host,
       port,
-      secure: cfg.secure ?? port === 465,
+      secure,
       auth:
         cfg.user && cfg.password
           ? { user: cfg.user, pass: cfg.password }

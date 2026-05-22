@@ -1270,7 +1270,13 @@ function SmtpSection() {
             <input
               type="number"
               value={port}
-              onChange={(e) => setPort(e.target.value)}
+              onChange={(e) => {
+                const v = e.target.value;
+                setPort(v);
+                const n = Number(v);
+                if (n === 465) setSecure(true);
+                else if (n === 587 || n === 25 || n === 2525) setSecure(false);
+              }}
               placeholder="587"
               className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-[12.5px] outline-none focus:ring-2 focus:ring-ring"
             />
@@ -1323,15 +1329,20 @@ function SmtpSection() {
             autoComplete="off"
           />
         </div>
-        <label className="flex items-center gap-2 text-[12px] text-foreground">
-          <input
-            type="checkbox"
-            checked={secure}
-            onChange={(e) => setSecure(e.target.checked)}
-            className="h-3.5 w-3.5"
-          />
-          <span>{t('settings.smtp.tls')}</span>
-        </label>
+        <div className="space-y-0.5">
+          <label className="flex items-center gap-2 text-[12px] text-foreground">
+            <input
+              type="checkbox"
+              checked={secure}
+              onChange={(e) => setSecure(e.target.checked)}
+              className="h-3.5 w-3.5"
+            />
+            <span>{t('settings.smtp.tls')}</span>
+          </label>
+          <p className="pl-[22px] text-[10.5px] text-muted-foreground">
+            {t('settings.smtp.tlsHint')}
+          </p>
+        </div>
         <div className="flex items-center justify-between gap-3 pt-1">
           <span className="text-[11px] text-muted-foreground">
             {error

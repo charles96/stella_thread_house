@@ -23,6 +23,13 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  html,
+  body {
+    touch-action: pan-x pan-y;
+  }
+}
+
 /* 사이드바 제목 — 기본: 우측 페이드, 호버/활성: 그라디언트 제거 */
 .sidebar-title-fade {
   -webkit-mask-image: linear-gradient(to right, black calc(100% - 2rem), transparent 100%);
