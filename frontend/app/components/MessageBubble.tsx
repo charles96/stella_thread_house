@@ -1358,7 +1358,10 @@ export default function MessageBubble({
       (message.readPages?.some(
         (p) => p.images?.some((i) => i.analyzing || i.analysis),
       ) ?? false));
-  const thinkingLabel = isVisioning ? t('bot.visioning') : t('bot.thinking');
+  const isStreaming = !isUser && !contentEverArrived;
+  const thinkingLabel = isStreaming
+    ? (isVisioning ? t('bot.visioning') : t('bot.thinking'))
+    : (isVisioning ? t('bot.visioned') : t('bot.thought'));
   const ThinkingIcon = isVisioning ? Eye : Sparkles;
   // 합쳐진 처리 패널: 생각 과정 또는 읽은 페이지 둘 중 하나라도 있으면 표시
   // 진행 중 status도 패널 안에 표시되도록 포함.
@@ -1369,8 +1372,7 @@ export default function MessageBubble({
     hasReadPagesData ||
     hasPrecedingUserImages ||
     hasStatusPending ||
-    (hasThinkingText && !contentEverArrived);
-  const isStreaming = !isUser && !contentEverArrived;
+    (hasThinkingText && isStreaming);
   // 스트리밍 중에는 자동 펼침, 본문 도착 후에는 자동으로 접힘 (사용자 클릭으로 다시 펼침 가능)
   const autoOpen = isStreaming && hasProcessPanel;
   const open = override ?? autoOpen;
@@ -2396,7 +2398,7 @@ export default function MessageBubble({
               )}
               {/* 우측: 스트리밍 중엔 Thinking 토글, 스트리밍 종료 후엔 Image Edit 으로 교체.
                   같은 자리에 한 가지만 표시 → 둘이 겹치지 않음. */}
-              {isStreaming && hasThinkingText ? (
+              {isStreaming && hasThinkingText && !hasStatusPending ? (
                 <button
                   type="button"
                   onClick={toggle}
@@ -2406,8 +2408,7 @@ export default function MessageBubble({
                   <ThinkingIcon className="h-3 w-3 text-primary" />
                   <span>
                     {thinkingLabel}
-                    {' '}
-                    {t('bot.thinkingWriting')}
+                    {isStreaming && <>{' '}{t('bot.thinkingWriting')}</>}
                   </span>
                   {open ? (
                     <ChevronDown className="h-3 w-3" />
@@ -2500,8 +2501,20 @@ export default function MessageBubble({
 
             {/* 2) 진행 상태 — 웹 링크 아래에 표시 (URL 처리/Tavily 폴백 단계) */}
             {hasStatusPending && (
-              <div className="mt-2">
+              <div className="mt-2 flex items-center gap-2">
                 <StatusBadge status={message.status!} />
+                {isStreaming && hasThinkingText && (
+                  <button
+                    type="button"
+                    onClick={toggle}
+                    className="ml-auto inline-flex items-center gap-1 rounded-full border border-border bg-background/40 px-2 py-0.5 text-[10.5px] font-normal text-muted-foreground hover:text-foreground"
+                    title={thinkingLabel}
+                  >
+                    <ThinkingIcon className="h-3 w-3 text-primary" />
+                    <span>{thinkingLabel}{isStreaming && <>{' '}{t('bot.thinkingWriting')}</>}</span>
+                    {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                  </button>
+                )}
               </div>
             )}
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import MessageBubble from './MessageBubble';
 import InputBar, { type InputBarHandle } from './InputBar';
@@ -260,9 +260,14 @@ function makeConversation(
 export default function ChatRoom() {
   const { t, lang } = useI18n();
   const { tavilyTopRead } = useThreadSettings();
+  const [, startThreadTransition] = useTransition();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [hasMoreConvs, setHasMoreConvs] = useState(false);
+  const convCursorRef = useRef<string | null>(null);
+  const loadingMoreConvsRef = useRef(false);
+  const [loadingMoreConvs, setLoadingMoreConvs] = useState(false);
   const [pinnedOrder, setPinnedOrder] = useState<string[]>(() => {
     try {
       const stored = localStorage.getItem('stella:pinnedOrder');
@@ -430,6 +435,47 @@ export default function ChatRoom() {
   }, [isDirty, doLogout]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const hydratedRef = useRef(false);
+
+  const loadMoreConversations = useCallback(async () => {
+    if (!hasMoreConvs || loadingMoreConvsRef.current || !convCursorRef.current) return;
+    loadingMoreConvsRef.current = true;
+    setLoadingMoreConvs(true);
+    try {
+      const res = await fetch(
+        `${API_URL}/conversations?cursor=${encodeURIComponent(convCursorRef.current)}&limit=50`,
+        { credentials: 'include' },
+      );
+      if (!res.ok) return;
+      const page = (await res.json()) as {
+        data: Conversation[];
+        nextCursor: string | null;
+        hasMore: boolean;
+      };
+      convCursorRef.current = page.nextCursor;
+      setHasMoreConvs(page.hasMore);
+      const newConvs = page.data.map(
+        (c): Conversation => ({
+          ...c,
+          kind: c.kind ?? 'thread',
+          messages: [],
+          messagesLoaded: false,
+          hasMoreMessages: true,
+        }),
+      );
+      setConversations((prev) => {
+        const existingIds = new Set(prev.map((c) => c.id));
+        const toAdd = newConvs.filter((c) => !existingIds.has(c.id));
+        toAdd.forEach((c) => serverConvsRef.current.set(c.id, c));
+        return [...prev, ...toAdd];
+      });
+    } catch {
+      // ignore
+    } finally {
+      loadingMoreConvsRef.current = false;
+      setLoadingMoreConvs(false);
+    }
+  }, [hasMoreConvs]);
+
   // 현재 viewport 상단에 가장 가깝게 보이는 user 메시지 id — Message Navigator 하이라이트 동기화용.
   const [visibleUserMessageId, setVisibleUserMessageId] = useState<
     string | null
@@ -600,15 +646,22 @@ export default function ChatRoom() {
     (async () => {
       try {
         const [convRes, foldRes] = await Promise.all([
-          fetch(`${API_URL}/conversations`, { credentials: 'include' }),
+          fetch(`${API_URL}/conversations?limit=50`, { credentials: 'include' }),
           fetch(`${API_URL}/folders`, { credentials: 'include' }),
         ]);
         if (convRes.ok && foldRes.ok) {
-          const sConvs = (await convRes.json()) as Conversation[];
+          const page = (await convRes.json()) as {
+            data: Conversation[];
+            nextCursor: string | null;
+            hasMore: boolean;
+          };
+          const sConvs = page.data;
           const sFolds = (await foldRes.json()) as Folder[];
           serverConvsRef.current = new Map(sConvs.map((c) => [c.id, c]));
           serverFoldersRef.current = new Map(sFolds.map((f) => [f.id, f]));
+          convCursorRef.current = page.nextCursor;
           if (cancelled) return;
+          setHasMoreConvs(page.hasMore);
           if (sConvs.length > 0) {
             // 서버는 메시지 없이 메타만 반환 → 빈 messages 로 초기화.
             const init = sConvs.map(
@@ -1363,17 +1416,11 @@ export default function ChatRoom() {
       if (distFromBottom > threshold) return;
     }
     // 자동 스크롤 시작 — onScroll 핸들러가 isScrolling 을 토글하지 않도록 짧게 표시.
-    programmaticScrollRef.current = Date.now() + (jumpInstant ? 50 : 600);
+    programmaticScrollRef.current = Date.now() + (jumpInstant || pending ? 50 : 600);
     // 첫 진입(switched / firstLoadAfterMount):
-    //  - Thread: 문서처럼 위에서부터 읽도록 최상단으로 점프.
-    //  - Chat: 마지막 user 발화 위치 → 답변이 아래로 펼쳐지므로 본인 질문부터 자연스럽게 읽힘.
-    //  - 마지막 user 메시지가 없거나 ref 가 아직 마운트되지 않았으면 하단 점프 fallback (chat 한정).
+    //  - Thread / Chat 모두 최신 메시지(맨 아래)에서 시작.
+    //  - 마지막 user 메시지가 없거나 ref 가 아직 마운트되지 않았으면 하단 점프 fallback.
     if (jumpInstant) {
-      const isThread = (active?.kind ?? 'thread') === 'thread';
-      if (isThread) {
-        el.scrollTo({ top: 0, behavior: 'auto' });
-        return;
-      }
       const lastUserId = (() => {
         const msgs = active?.messages ?? [];
         for (let i = msgs.length - 1; i >= 0; i--) {
@@ -1391,9 +1438,9 @@ export default function ChatRoom() {
     }
     el.scrollTo({
       top: el.scrollHeight,
-      // forceFollow(=send 직후) 도 instant — smooth 애니메이션 도중 streaming chunk 가 도착해
-      // 다음 effect 가 거리 가드에 막혀 스크롤이 멈추는 경쟁 상태 회피.
-      behavior: jumpInstant || forceFollow ? 'auto' : 'smooth',
+      // 스트리밍 중(pending)에는 chunk 마다 effect 가 재실행되어 smooth 애니메이션이 충돌 → auto 로 즉시 이동.
+      // 스트리밍 종료 후에만 smooth 를 사용해 자연스러운 마지막 이동 처리.
+      behavior: jumpInstant || forceFollow || pending ? 'auto' : 'smooth',
     });
     // pending 도 의존 — 스트리밍 종료 후 마지막 렌더에서도 한번 더 따라 내려가도록.
   }, [active?.id, active?.messages, pending]);
@@ -2934,8 +2981,10 @@ export default function ChatRoom() {
               }
             }}
             onSelect={(id) => {
-              setActiveId(id);
-              setView('thread');
+              startThreadTransition(() => {
+                setActiveId(id);
+                setView('thread');
+              });
               // 모바일 — thread 선택 시 사이드바 자동 닫기 (full-screen overlay 였음).
               if (typeof window !== 'undefined' && window.innerWidth < 768) {
                 setSidebarOpen(false);
@@ -3002,6 +3051,9 @@ export default function ChatRoom() {
               }
             }}
             onOpenAbout={() => setAboutOpen(true)}
+            hasMoreConversations={hasMoreConvs}
+            loadingMoreConversations={loadingMoreConvs}
+            onLoadMoreConversations={loadMoreConversations}
           />
         </div>
       </div>
@@ -3314,7 +3366,7 @@ export default function ChatRoom() {
             라운드 버튼에 의해 sharp 하게 잘려보이지 않고 부드럽게 사라지도록 한다. */}
         <div
           className={cn(
-            'pointer-events-none absolute inset-x-0 bottom-0 z-10 flex min-h-[68px] items-end transition-opacity duration-200',
+            'pointer-events-none absolute inset-x-0 bottom-0 z-30 flex min-h-[68px] items-end transition-opacity duration-200',
             isScrolling ? 'opacity-0' : 'opacity-100',
           )}
         >
@@ -3322,7 +3374,7 @@ export default function ChatRoom() {
               라운드 버튼(bg-card 불투명)을 가리지 않도록 wrapper bg 가 아니라 별도 absolute 레이어로. */}
           <div
             aria-hidden
-            className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-background via-background/85 to-transparent"
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-background via-background/95 to-transparent"
           />
           <div
             className={cn(

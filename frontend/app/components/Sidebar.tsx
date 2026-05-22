@@ -72,6 +72,9 @@ interface Props {
   onLogout: () => void;
   onOpenSettings: () => void;
   onOpenAbout: () => void;
+  hasMoreConversations?: boolean;
+  loadingMoreConversations?: boolean;
+  onLoadMoreConversations?: () => void;
 }
 
 function relativeTime(ts: number) {
@@ -114,8 +117,30 @@ export default function Sidebar({
   onLogout,
   onOpenSettings,
   onOpenAbout,
+  hasMoreConversations = false,
+  loadingMoreConversations = false,
+  onLoadMoreConversations,
 }: Props) {
   const { t } = useI18n();
+
+  const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const sentinel = loadMoreSentinelRef.current;
+    if (!sentinel || !onLoadMoreConversations || !hasMoreConversations) return;
+    const observer = new IntersectionObserver(
+      (entries) => { if (entries[0].isIntersecting) onLoadMoreConversations(); },
+      { threshold: 0.1 },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasMoreConversations, onLoadMoreConversations]);
+
+  // 터치 기기에서는 draggable 이 첫 탭을 "드래그 선택"으로 처리해 두 번 탭해야 클릭되는 문제가 있음.
+  // 마운트 후 터치 지원 여부를 감지해 드래그를 비활성화.
+  const [canDrag, setCanDrag] = useState(true);
+  useEffect(() => {
+    if ('ontouchstart' in window || navigator.maxTouchPoints > 0) setCanDrag(false);
+  }, []);
 
   const threadFolders = useMemo(
     () => folders.filter((f) => (f.kind ?? 'thread') === 'thread'),
@@ -255,7 +280,7 @@ export default function Sidebar({
             {pinnedConvs.map((c) => (
               <div
                 key={c.id}
-                draggable
+                draggable={canDrag}
                 onDragStart={(e) => {
                   e.dataTransfer.effectAllowed = 'move';
                   e.dataTransfer.setData('text/plain', c.id);
@@ -407,6 +432,7 @@ export default function Sidebar({
                     folders={threadFolders}
                     kind="thread"
                     activeId={activeId}
+                    canDrag={canDrag}
                     onSelect={onSelect}
                     onDelete={onDelete}
                     onRename={onRename}
@@ -432,6 +458,7 @@ export default function Sidebar({
                     c={c}
                     active={c.id === activeId}
                     folders={threadFolders}
+                    canDrag={canDrag}
                     onSelect={onSelect}
                     onDelete={onDelete}
                     onRename={onRename}
@@ -453,6 +480,7 @@ export default function Sidebar({
                     folders={chatFolders}
                     kind="chat"
                     activeId={activeId}
+                    canDrag={canDrag}
                     onSelect={onSelect}
                     onDelete={onDelete}
                     onRename={onRename}
@@ -478,6 +506,7 @@ export default function Sidebar({
                     c={c}
                     active={c.id === activeId}
                     folders={chatFolders}
+                    canDrag={canDrag}
                     onSelect={onSelect}
                     onDelete={onDelete}
                     onRename={onRename}
@@ -489,6 +518,16 @@ export default function Sidebar({
             </>
           )}
         </div>
+
+        {/* 무한 스크롤 sentinel */}
+        {hasMoreConversations && (
+          <div ref={loadMoreSentinelRef} className="h-4 w-full shrink-0" />
+        )}
+        {loadingMoreConversations && (
+          <div className="flex items-center justify-center py-2">
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-border border-t-primary" />
+          </div>
+        )}
       </ScrollArea>
 
       <div className="flex h-[68px] shrink-0 items-center border-t border-border px-3">
@@ -564,6 +603,7 @@ function FolderRow({
   folders,
   kind,
   activeId,
+  canDrag,
   onSelect,
   onDelete,
   onRename,
@@ -578,6 +618,7 @@ function FolderRow({
   folders: Folder[];
   kind: 'thread' | 'chat';
   activeId: string | null;
+  canDrag: boolean;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;
@@ -760,6 +801,7 @@ function FolderRow({
                   c={c}
                   active={c.id === activeId}
                   folders={folders}
+                  canDrag={canDrag}
                   onSelect={onSelect}
                   onDelete={onDelete}
                   onRename={onRename}
@@ -821,6 +863,7 @@ function ConversationRow({
   c,
   active,
   folders,
+  canDrag,
   onSelect,
   onDelete,
   onRename,
@@ -830,6 +873,7 @@ function ConversationRow({
   c: Conversation;
   active: boolean;
   folders: Folder[];
+  canDrag: boolean;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;
@@ -873,7 +917,7 @@ function ConversationRow({
         if (editing) return;
         onSelect(c.id);
       }}
-      draggable={!editing}
+      draggable={canDrag && !editing}
       onDragStart={(e) => {
         // kind 별 MIME 으로 — 다른 섹션 폴더는 자기 MIME 만 listen 하므로 자동으로 거부됨.
         e.dataTransfer.setData(dragMime(c.kind ?? 'thread'), c.id);

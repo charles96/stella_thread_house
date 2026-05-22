@@ -12,6 +12,12 @@ import { Conversation } from '../db/entities/conversation.entity';
 import { Message } from '../db/entities/message.entity';
 import { AttachmentsService } from '../attachments/attachments.service';
 
+export type ConversationPageDto = {
+  data: ConversationDto[];
+  nextCursor: string | null;
+  hasMore: boolean;
+};
+
 // 메시지를 제외한 conversation 메타.
 export type ConversationDto = {
   id: string;
@@ -294,13 +300,40 @@ export class ConversationsService implements OnModuleInit {
     };
   }
 
-  async listForUser(userId: string): Promise<ConversationDto[]> {
-    const rows = await this.conversations.find({
-      where: { userId },
-      order: { updatedAt: 'DESC' },
-    });
-    // hashtags 는 conversation 컬럼에서 직접 — 더 이상 message metadata 에서 모으지 않음.
-    return rows.map((r) => this.toDto(r));
+  async listForUser(
+    userId: string,
+    cursor?: string,
+    limit = 50,
+  ): Promise<ConversationPageDto> {
+    const cap = Math.min(Math.max(limit, 1), 200);
+    const qb = this.conversations
+      .createQueryBuilder('c')
+      .where('c.user_id = :userId', { userId })
+      .orderBy('c.updated_at', 'DESC')
+      .addOrderBy('c.id', 'DESC')
+      .take(cap + 1);
+
+    if (cursor) {
+      const [tsStr, cursorId] = cursor.split('|');
+      if (tsStr && cursorId) {
+        qb.andWhere(
+          '(c.updated_at < :ts OR (c.updated_at = :ts AND c.id < :cid))',
+          { ts: new Date(tsStr), cid: cursorId },
+        );
+      }
+    }
+
+    const rows = await qb.getMany();
+    const hasMore = rows.length > cap;
+    if (hasMore) rows.pop();
+
+    const last = rows[rows.length - 1];
+    const nextCursor =
+      hasMore && last
+        ? `${last.updatedAt.toISOString()}|${last.id}`
+        : null;
+
+    return { data: rows.map((r) => this.toDto(r)), nextCursor, hasMore };
   }
 
   async getOwned(userId: string, id: string): Promise<Conversation> {

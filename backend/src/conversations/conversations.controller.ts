@@ -19,6 +19,7 @@ import {
   ConversationsService,
   ConversationUpdate,
   MessageInput,
+  ConversationPageDto,
 } from './conversations.service';
 
 interface AppendMessagesBody {
@@ -49,8 +50,13 @@ export class ConversationsController {
   }
 
   @Get()
-  list(@Req() req: Request) {
-    return this.service.listForUser(this.uid(req));
+  list(
+    @Req() req: Request,
+    @Query('cursor') cursor?: string,
+    @Query('limit') limit?: string,
+  ): Promise<ConversationPageDto> {
+    const lim = Math.min(Math.max(parseInt(limit ?? '50', 10) || 50, 1), 200);
+    return this.service.listForUser(this.uid(req), cursor, lim);
   }
 
   @Get('graph')

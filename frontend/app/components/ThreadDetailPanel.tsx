@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
   FileText,
@@ -98,6 +98,12 @@ export default function ThreadDetailPanel({
 }: Props) {
   const isChatKind = activeKind === 'chat';
   const { t } = useI18n();
+
+  // threads 는 대화 수에 비례해 그래프 계산 비용이 큼.
+  // useDeferredValue 로 메시지 렌더를 먼저 처리하고, 여유 시간에 그래프를 재계산.
+  const deferredThreads = useDeferredValue(threads);
+  const deferredActiveThreadId = useDeferredValue(activeThreadId);
+  const isGraphStale = deferredActiveThreadId !== activeThreadId;
   // 마지막으로 클릭한 질문 id — 타임라인 노란색 하이라이트.
   // 외부 activeQuestionId(스크롤 동기화) 가 들어오면 그것을 우선 사용.
   const [clickedQuestionId, setClickedQuestionId] = useState<string | null>(
@@ -164,18 +170,18 @@ export default function ThreadDetailPanel({
       related: [] as { id: string; title: string; shared: number }[],
       sharedTagsMap: new Map<string, string[]>(),
     };
-    if (!threads || !activeThreadId) return empty;
+    if (!deferredThreads || !deferredActiveThreadId) return empty;
 
     // O(1) lookup map — threads.find() 를 루프 안에서 반복 호출하지 않도록.
-    const threadsById = new Map(threads.map((t) => [t.id, t]));
-    const me = threadsById.get(activeThreadId) ?? null;
+    const threadsById = new Map(deferredThreads.map((t) => [t.id, t]));
+    const me = threadsById.get(deferredActiveThreadId) ?? null;
     if (!me) return empty;
 
     const visibleHashtags = new Set<string>();
     const connectedThreadIds = new Set<string>();
     const sharedTagsMap = new Map<string, string[]>();
 
-    for (const t of threads) {
+    for (const t of deferredThreads) {
       if (t.id === me.id) continue;
       const shared = intersectTags(me.hashtags, t.hashtags);
       if (shared.length >= relatedThreshold) {
@@ -188,7 +194,7 @@ export default function ThreadDetailPanel({
     // thread 노드: 현재 thread(isActive) + 연결된 thread
     const threadNodes: BipartiteNode[] = [
       { id: me.id, label: me.title, type: 'thread', isActive: true },
-      ...threads
+      ...deferredThreads
         .filter((t) => connectedThreadIds.has(t.id))
         .map((t) => ({ id: t.id, label: t.title, type: 'thread' as const })),
     ];
@@ -229,7 +235,7 @@ export default function ThreadDetailPanel({
       related,
       sharedTagsMap,
     };
-  }, [threads, activeThreadId, relatedThreshold]);
+  }, [deferredThreads, deferredActiveThreadId, relatedThreshold]);
   const hashtagsAvailable =
     !!onAddHashtag || (threadHashtags && threadHashtags.length > 0);
   return (
@@ -573,15 +579,22 @@ export default function ThreadDetailPanel({
           내부에 Thread Graph / List 두 탭. 기본은 Thread Graph.
           chat kind 는 hashtag 자체를 안 만들기에 섹션 전체를 숨김. */}
       {!isChatKind && activeThread && (
-        <RelatedDocumentsSection
-          graphNodes={graphNodes}
-          graphEdges={graphEdges}
-          related={related}
-          sharedTagsMap={sharedTagsMap}
-          onSelectThread={onSelectThread}
-          threshold={relatedThreshold}
-          onChangeThreshold={setRelatedThreshold}
-        />
+        <div className="relative flex min-h-0 basis-0 flex-1 flex-col">
+          {isGraphStale && (
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded bg-background/40 backdrop-blur-[1px]">
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-border border-t-primary" />
+            </div>
+          )}
+          <RelatedDocumentsSection
+            graphNodes={graphNodes}
+            graphEdges={graphEdges}
+            related={related}
+            sharedTagsMap={sharedTagsMap}
+            onSelectThread={onSelectThread}
+            threshold={relatedThreshold}
+            onChangeThreshold={setRelatedThreshold}
+          />
+        </div>
       )}
     </aside>
   );
