@@ -537,7 +537,7 @@ function ImageScatter({
     // 가로형 카드(landscape)는 w-28(112px), 세로형은 w-[5.5rem](88px). 혼합 케이스에서
     // 행 폭 계산이 실제 너비와 어긋나 overflow → 인접 표 깨짐. worst-case(112) 기준으로 계산해 항상 적합.
     const CARD_W = 112;
-    const SAFE_MARGIN = 12; // 회전/jitter 여유
+    const SAFE_MARGIN = 40; // 회전(최대 13°, 카드 상단 ~25px 수평 이동) + GPU overflow 여유
     const update = () => {
       const w = el.clientWidth - SAFE_MARGIN;
       // n=1: CARD_W. n>=2: CARD_W + (n-1)*(CARD_W - cardOverlap)
@@ -681,6 +681,7 @@ function ImageScatter({
         .map(([k]) => k),
     ),
   );
+
 
   // 카드별 비율 추적 — onLoad 에서 자연 가로/세로 비교 후 'landscape'/'portrait' 저장.
   // 캐시된 orient 가 있으면 마운트 즉시 반영해 layout shift 방지.
@@ -1760,7 +1761,7 @@ export default function MessageBubble({
           // 테이블 가독성 강화 — 헤더 배경 강조 + 짝수 행 zebra striping + 호버 하이라이트
           // + primary 톤 외곽 보더로 본문 텍스트와 시각적 분리.
           // 사면 padding 으로 그림자가 그려질 공간을 모두 확보.
-          <div className="my-3 w-full min-w-0 max-w-full overflow-x-auto overscroll-x-contain touch-pan-y px-2 py-2 [@media(pointer:coarse)]:select-none">
+          <div className="my-3 w-full min-w-0 max-w-full overflow-x-clip px-2 py-2 [@media(pointer:coarse)]:select-none">
             <table
               {...rest}
               className={cn(
@@ -1774,7 +1775,6 @@ export default function MessageBubble({
                 // 본문 셀: 옅은 보더, 짝수 행 zebra, 호버 하이라이트. break-keep 으로 단어 단위 줄바꿈만.
                 '[&_td]:border [&_td]:border-border/70 [&_td]:px-2.5 [&_td]:py-1.5 [&_td]:break-keep [&_td]:align-top',
                 '[&_tbody_tr:nth-child(even)]:bg-secondary/30',
-                '[&_tbody_tr:hover]:bg-primary/10 [&_tbody_tr]:transition-colors',
               )}
             >
               {children}
@@ -1798,7 +1798,7 @@ export default function MessageBubble({
             <pre
               className={cn(
                 // 두 테마 모두 동일 — Solarized base02 (#073642) 터미널 배경 + 옅은 글씨.
-                'overflow-x-auto touch-pan-y overscroll-x-contain rounded-md border border-border bg-[#073642] p-3 pr-12 text-[12.5px] text-zinc-100 shadow-[0_4px_14px_rgba(0,0,0,0.35)]',
+                'overflow-x-clip [@media(pointer:fine)]:overflow-x-auto touch-pan-y [@media(pointer:fine)]:overscroll-x-contain rounded-md border border-border bg-[#073642] p-3 pr-12 text-[12.5px] text-zinc-100 shadow-[0_4px_14px_rgba(0,0,0,0.35)]',
                 className,
               )}
               {...rest}
@@ -2879,7 +2879,7 @@ export default function MessageBubble({
               {/* relative z-[1] — 버블이 아래 탭 위에 올라가서 탭이 "뒷면에서 빠져나온" 느낌. */}
               <div
                 ref={answerBubbleRef}
-                className="relative z-[1] w-full min-w-0 max-w-full overflow-x-clip rounded-2xl rounded-tl-md border border-border bg-bubble-bot px-3.5 py-2 text-[14.5px] leading-relaxed text-bubble-bot-foreground shadow-md"
+                className="relative z-[1] w-full min-w-0 max-w-full overflow-x-clip transform-gpu rounded-2xl rounded-tl-md border border-border bg-bubble-bot px-3.5 py-2 text-[14.5px] leading-relaxed text-bubble-bot-foreground shadow-md"
               >
                 {answerEditing ? (
                   <textarea
