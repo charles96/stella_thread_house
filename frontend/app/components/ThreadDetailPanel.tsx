@@ -118,6 +118,25 @@ export default function ThreadDetailPanel({
     null,
   );
   const reorderEnabled = !!onReorderQuestions;
+  const tocScrollRef = useRef<HTMLDivElement>(null);
+  // selectedQuestionId 가 바뀌면 TOC 내 해당 항목이 보이도록 viewport 를 자동 스크롤.
+  useEffect(() => {
+    if (!selectedQuestionId) return;
+    const viewport = tocScrollRef.current?.querySelector<HTMLElement>(
+      '[data-radix-scroll-area-viewport]',
+    );
+    const item = tocScrollRef.current?.querySelector<HTMLElement>(
+      `[data-qid="${selectedQuestionId}"]`,
+    );
+    if (!viewport || !item) return;
+    const vpTop = viewport.getBoundingClientRect().top;
+    const vpH = viewport.clientHeight;
+    const itemTop = item.getBoundingClientRect().top - vpTop;
+    const itemH = item.offsetHeight;
+    if (itemTop < 0 || itemTop + itemH > vpH) {
+      viewport.scrollBy({ top: itemTop - vpH / 2 + itemH / 2, behavior: 'smooth' });
+    }
+  }, [selectedQuestionId]);
   // 편집 중인 질문 id + 임시 draft 텍스트. id 가 null 이면 모든 항목이 read-only.
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingDraft, setEditingDraft] = useState('');
@@ -288,7 +307,7 @@ export default function ThreadDetailPanel({
             아직 질문이 없습니다.
           </div>
         ) : detailTab === 'toc' ? (
-          <ScrollArea className="min-h-0 flex-1">
+          <ScrollArea ref={tocScrollRef} className="min-h-0 flex-1">
             <ol
               className="relative my-3 ml-7 mr-3"
               // li 들 사이의 mt-2 갭 영역은 li 의 hit-test 박스 밖 → 그 위에서 drop 해도 li onDrop 이 안 잡힘.
@@ -378,6 +397,7 @@ export default function ThreadDetailPanel({
                 return (
                   <li
                     key={q.id}
+                    data-qid={q.id}
                     draggable={reorderEnabled && editingId !== q.id}
                     onDragStart={(e) => {
                       if (!reorderEnabled || editingId === q.id) return;

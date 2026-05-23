@@ -1,6 +1,6 @@
 'use client';
 
-import { Globe, LogIn, UserPlus } from 'lucide-react';
+import { LogIn, UserPlus } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { useI18n } from '@/lib/i18n';
@@ -97,10 +97,6 @@ export default function LoginScreen({ onLogin }: { onLogin: () => void }) {
     }
   }
 
-  function loginGoogle() {
-    window.location.href = `${API_URL}/auth/google`;
-  }
-
   const heading =
     mode === 'register'
       ? inviteToken
@@ -185,22 +181,6 @@ export default function LoginScreen({ onLogin }: { onLogin: () => void }) {
                 : '로그인'}
           </Button>
         </form>
-
-        {/* Google 버튼 — 등록 모드에서도 노출 (이미 가입된 사용자가 잘못 들어왔을 때 빠른 진입) */}
-        <div className="flex w-full items-center gap-2">
-          <span className="h-px flex-1 bg-border" />
-          <span className="text-[11px] text-muted-foreground">또는</span>
-          <span className="h-px flex-1 bg-border" />
-        </div>
-        <Button
-          size="lg"
-          variant="outline"
-          onClick={loginGoogle}
-          className="w-full gap-2"
-        >
-          <Globe className="h-4 w-4" />
-          {t('login.googleLogin')}
-        </Button>
 
       </div>
     </div>

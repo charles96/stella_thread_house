@@ -102,6 +102,7 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
   const [visionOn, setVisionOn] = useState(false);
   const [pulse, setPulse] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [cameraModal, setCameraModal] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -112,6 +113,7 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
     setIsMobile(mq.matches);
     const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
     mq.addEventListener('change', handler);
+    setIsIOS(/iPhone|iPad|iPod/i.test(navigator.userAgent));
     return () => mq.removeEventListener('change', handler);
   }, []);
 
@@ -306,7 +308,7 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
       )}
 
       {/* 히든 인풋 */}
-      <input ref={fileRef} type="file" accept="image/*,.heic,.heif" multiple hidden onChange={onPick} />
+      <input ref={fileRef} type="file" accept={isIOS ? 'image/*' : 'image/*,.heic,.heif'} multiple hidden onChange={onPick} />
       <input ref={cameraRef} type="file" accept="image/*" capture="environment" hidden onChange={onPick} />
 
       {/* 입력 + 팝업 래퍼 */}
@@ -379,7 +381,11 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
           <div className="shrink-0 p-1.5">
             <button
               type="button"
-              onClick={() => { if (!attachDisabled) setMenuOpen((v) => !v); }}
+              onClick={() => {
+                if (attachDisabled) return;
+                if (isIOS) { fileRef.current?.click(); }
+                else { setMenuOpen((v) => !v); }
+              }}
               disabled={attachDisabled}
               aria-label={t('input.attach')}
               className={cn(

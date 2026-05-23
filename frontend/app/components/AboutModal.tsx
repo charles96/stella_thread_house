@@ -45,6 +45,7 @@ export default function AboutModal({ open, onClose }: Props) {
   if (!open) return null;
 
   const REPO_URL = 'https://github.com/charles96/stella_thread_house';
+  const LICENSE_URL = `${REPO_URL}/blob/main/LICENSE`;
 
   return (
     <div
@@ -102,6 +103,16 @@ export default function AboutModal({ open, onClose }: Props) {
             <span className="truncate text-right text-primary hover:underline">
               {REPO_URL.replace(/^https?:\/\//, '')}
             </span>
+          </a>
+          <a
+            href={LICENSE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center justify-between gap-3 px-3 py-2 transition-colors hover:bg-secondary"
+            title={LICENSE_URL}
+          >
+            <span className="text-muted-foreground">License</span>
+            <span className="truncate text-right text-primary hover:underline">MIT</span>
           </a>
         </div>
       </div>
