@@ -17,13 +17,13 @@ format_version: 10
 #   3. GoCD Agent에 'docker' resource 태그 부여
 #      Admin > Agents > 해당 Agent > Resources: docker
 #
-#   4. git tag → 파이프라인 자동 트리거 방법 (아래 중 하나 선택):
-#      A) GoCD UI에서 "Trigger with Options" → 태그 revision 선택 (수동)
-#      B) Git 서버(GitHub/Gitea)의 Tag webhook → GoCD API 호출 (자동, 권장)
-#         POST http://<GOCD_SERVER>:8153/go/api/pipelines/stella-chatbot/schedule
-#         Authorization: Bearer <GOCD_API_TOKEN>
-#         Content-Type: application/json
-#         Body: {"materials":[{"fingerprint":"<material_fingerprint>","revision":"<tag_sha>"}]}
+#   4. 자동 트리거 설정 (GitHub Actions webhook 방식)
+#      .github/workflows/gocd-trigger.yml 이 git tag push 시 자동으로 이 파이프라인을 호출.
+#      GitHub 저장소 Settings > Secrets and variables > Actions 에 아래 두 값 등록:
+#        GOCD_SERVER_URL  — GoCD 서버 주소 (예: http://gocd.example.com:8153)
+#                           GoCD 서버가 GitHub Actions에서 접근 가능해야 함 (공개 IP 또는 터널)
+#        GOCD_API_TOKEN   — GoCD 서버의 API 토큰
+#                           GoCD UI > 우상단 프로필 > Personal Access Tokens 에서 생성
 # ──────────────────────────────────────────────────────────────────────────────
 
 pipelines:

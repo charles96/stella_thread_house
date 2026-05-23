@@ -4,8 +4,12 @@
 set -euo pipefail
 
 # ── 1. Git tag 감지 ─────────────────────────────────────────────────────────
-# GoCD는 특정 revision에서 체크아웃하므로 HEAD에 달린 태그를 읽는다.
-# DEPLOY_VERSION 환경변수가 있으면 그 값을 우선 사용 (수동 트리거 시 유용).
+# DEPLOY_VERSION이 설정되어 있으면 (GitHub Actions webhook 경유) 그 값을 사용.
+# 없으면 HEAD에 달린 태그를 직접 읽는다.
+if [ -z "${DEPLOY_VERSION:-}" ]; then
+  # GoCD checkout은 기본적으로 태그를 포함하지 않을 수 있으므로 fetch
+  git fetch --tags --force 2>/dev/null || true
+fi
 GIT_TAG="${DEPLOY_VERSION:-$(git describe --tags --exact-match HEAD 2>/dev/null || echo "")}"
 
 if [ -z "$GIT_TAG" ]; then
