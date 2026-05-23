@@ -2,6 +2,7 @@
 # Docker 이미지를 git tag 기준으로 빌드하고 private registry에 푸시한다.
 # GoCD build-and-push stage에서 실행됨.
 set -euo pipefail
+export DOCKER_API_VERSION=1.43
 
 # ── 1. Git tag 감지 ─────────────────────────────────────────────────────────
 # DEPLOY_VERSION이 설정되어 있으면 (GitHub Actions webhook 경유) 그 값을 사용.
