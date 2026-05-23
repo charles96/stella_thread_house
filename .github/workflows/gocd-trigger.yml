@@ -29,26 +29,17 @@ jobs:
           GOCD_SERVER_URL: ${{ secrets.GOCD_SERVER_URL }}
           GOCD_API_TOKEN: ${{ secrets.GOCD_API_TOKEN }}
         run: |
-          # GOCD_API_TOKEN이 설정된 경우에만 Authorization 헤더 추가
-          AUTH_HEADER=""
+          AUTH_ARGS=()
           if [ -n "${GOCD_API_TOKEN:-}" ]; then
-            AUTH_HEADER="-H \"Authorization: Bearer ${GOCD_API_TOKEN}\""
+            AUTH_ARGS=(-H "Authorization: Bearer ${GOCD_API_TOKEN}")
           fi
 
           HTTP_STATUS=$(curl -s -o /tmp/gocd_response.json -w "%{http_code}" \
             -X POST "${GOCD_SERVER_URL}/go/api/pipelines/stella-chatbot/schedule" \
-            $AUTH_HEADER \
+            "${AUTH_ARGS[@]}" \
             -H "Accept: application/vnd.go.cd.v1+json" \
             -H "Content-Type: application/json" \
-            -d "{
-              \"environment_variables\": [
-                {
-                  \"name\": \"DEPLOY_VERSION\",
-                  \"value\": \"${TAG_NAME}\",
-                  \"secure\": false
-                }
-              ]
-            }")
+            -d "{\"environment_variables\":[{\"name\":\"DEPLOY_VERSION\",\"value\":\"${TAG_NAME}\",\"secure\":false}]}")
 
           echo "GoCD response (HTTP ${HTTP_STATUS}):"
           cat /tmp/gocd_response.json
