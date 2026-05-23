@@ -40,6 +40,8 @@ pipelines:
       git_repo:
         git: https://github.com/charles96/stella_thread_house.git
         branch: main
+        username: charles96
+        encrypted_password: "AES:gR6mVX/liWW+Mt4ph+5Raw==:u4OjbIEXGwu1u+qIuhKE8nwwitRbZdPcUVFBjS4MmxhASvcdiLEqmG2NZxIFFi/H"
         shallow_clone: false
 
     stages:
