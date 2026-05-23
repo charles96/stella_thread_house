@@ -145,8 +145,10 @@ export interface Conversation {
   pinned?: boolean;
   // 페이지네이션 상태
   messagesLoaded?: boolean; // 한 번이라도 메시지를 fetch 했는지
-  hasMoreMessages?: boolean; // 더 과거 메시지가 DB에 남아있는지
+  hasMoreMessages?: boolean; // 더 과거 메시지가 DB에 남아있는지 (Chat: 위 스크롤)
+  hasMoreNewerMessages?: boolean; // 더 미래 메시지가 DB에 남아있는지 (Thread: 아래 스크롤)
   loadingOlder?: boolean; // 현재 위로 추가 fetch 중
+  loadingNewer?: boolean; // 현재 아래로 추가 fetch 중 (Thread 전용)
 }
 
 export interface Folder {
@@ -974,9 +976,11 @@ export default function ChatRoom() {
     async (
       convId: string,
       before: string | null,
+      after?: string | null,
     ): Promise<{ msgs: Message[]; hasMore: boolean }> => {
       const qs = new URLSearchParams();
       if (before) qs.set('before', before);
+      if (after != null) qs.set('after', after);
       qs.set('limit', String(MSG_PAGE));
       const res = await fetch(
         `${API_URL}/conversations/${convId}/messages?${qs.toString()}`,
@@ -1010,15 +1014,19 @@ export default function ChatRoom() {
     [],
   );
 
-  // 활성 thread 가 바뀌고 아직 메시지를 한 번도 fetch 하지 않았으면 최신 페이지를 가져온다.
+  // 활성 conversation 이 바뀌고 아직 메시지를 한 번도 fetch 하지 않았으면 첫 페이지를 가져온다.
+  // Thread: 가장 오래된 메시지(문서 처음)부터 순방향으로 시작. Chat: 최신 메시지부터 역방향.
   useEffect(() => {
     if (!activeId) return;
     const conv = conversations.find((c) => c.id === activeId);
     if (!conv || conv.messagesLoaded) return;
+    const isThreadKind = (conv.kind ?? 'thread') === 'thread';
     let cancelled = false;
     (async () => {
       try {
-        const { msgs, hasMore } = await fetchMessagesPage(activeId, null);
+        const { msgs, hasMore } = isThreadKind
+          ? await fetchMessagesPage(activeId, null, '__start__')
+          : await fetchMessagesPage(activeId, null);
         if (cancelled) return;
         setConversations((prev) =>
           prev.map((c) =>
@@ -1027,21 +1035,23 @@ export default function ChatRoom() {
                   ...c,
                   messages: msgs,
                   messagesLoaded: true,
-                  hasMoreMessages: hasMore,
+                  hasMoreMessages: isThreadKind ? false : hasMore,
+                  hasMoreNewerMessages: isThreadKind ? hasMore : false,
                 }
               : c,
           ),
         );
-        // 첫 페이지 로드 직후 다음 이전-페이지를 백그라운드로 미리 받아둠
+        // Thread: 다음 순방향 페이지 미리 받아둠. Chat: 역방향 페이지 미리 받아둠.
         if (hasMore && msgs.length > 0) {
-          void prefetchOlderMessages(activeId, msgs[0].id);
+          if (isThreadKind) void prefetchNewerMessages(activeId, msgs[msgs.length - 1].id);
+          else void prefetchOlderMessages(activeId, msgs[0].id);
         }
       } catch {
         if (cancelled) return;
         setConversations((prev) =>
           prev.map((c) =>
             c.id === activeId
-              ? { ...c, messagesLoaded: true, hasMoreMessages: false }
+              ? { ...c, messagesLoaded: true, hasMoreMessages: false, hasMoreNewerMessages: false }
               : c,
           ),
         );
@@ -1155,6 +1165,83 @@ export default function ChatRoom() {
     [fetchMessagesPage],
   );
 
+  // Thread 순방향 prefetch 캐시
+  const newerPrefetchRef = useRef<{
+    convId: string;
+    afterId: string;
+    msgs: Message[];
+    hasMore: boolean;
+  } | null>(null);
+  const prefetchingNewerRef = useRef(false);
+
+  const prefetchNewerMessages = useCallback(
+    async (convId: string, newestMsgId: string) => {
+      if (prefetchingNewerRef.current) return;
+      prefetchingNewerRef.current = true;
+      try {
+        const { msgs, hasMore } = await fetchMessagesPage(convId, null, newestMsgId);
+        newerPrefetchRef.current = { convId, afterId: newestMsgId, msgs, hasMore };
+      } catch {
+        // 실패는 무시
+      } finally {
+        prefetchingNewerRef.current = false;
+      }
+    },
+    [fetchMessagesPage],
+  );
+
+  // Thread 전용: 아래 스크롤 시 더 새로운 메시지를 append.
+  const loadNewerMessages = useCallback(async () => {
+    const conv = conversations.find((c) => c.id === activeId);
+    const el = scrollRef.current;
+    if (!conv || !activeId || !el) return;
+    if (!conv.hasMoreNewerMessages || conv.loadingNewer) return;
+    if (conv.messages.length === 0) return;
+    const newestId = conv.messages[conv.messages.length - 1].id;
+
+    const applyNewerMsgs = (msgs: Message[], hasMore: boolean) => {
+      const prevHeight = el.scrollHeight;
+      const prevTop = el.scrollTop;
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === activeId
+            ? { ...c, messages: [...c.messages, ...msgs], hasMoreNewerMessages: hasMore, loadingNewer: false }
+            : c,
+        ),
+      );
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          const after = scrollRef.current;
+          if (!after) return;
+          // 아래에 추가됐으므로 scrollTop 은 유지 (위치 점프 없음)
+          after.scrollTop = prevTop + (after.scrollHeight - prevHeight) * 0;
+        });
+      });
+      if (hasMore && msgs.length > 0) {
+        void prefetchNewerMessages(activeId, msgs[msgs.length - 1].id);
+      }
+    };
+
+    const cached = newerPrefetchRef.current;
+    if (cached && cached.convId === activeId && cached.afterId === newestId) {
+      newerPrefetchRef.current = null;
+      applyNewerMsgs(cached.msgs, cached.hasMore);
+      return;
+    }
+
+    setConversations((prev) =>
+      prev.map((c) => (c.id === activeId ? { ...c, loadingNewer: true } : c)),
+    );
+    try {
+      const { msgs, hasMore } = await fetchMessagesPage(activeId, null, newestId);
+      applyNewerMsgs(msgs, hasMore);
+    } catch {
+      setConversations((prev) =>
+        prev.map((c) => (c.id === activeId ? { ...c, loadingNewer: false } : c)),
+      );
+    }
+  }, [conversations, activeId, fetchMessagesPage, prefetchNewerMessages]);
+
   // 스크롤이 상단 근처에 닿으면 더 과거 메시지를 prepend.
   // 추가 도중에 시각적으로 점프하지 않도록 scrollHeight 차이만큼 scrollTop 보정.
   const loadOlderMessages = useCallback(async () => {
@@ -1219,20 +1306,23 @@ export default function ChatRoom() {
   // effect 가 재등록될 때마다 클로저가 새로 만들어져 250ms 타이머가 영원히 못 끝나는 버그.
   // ref 로 빼서 effect 재실행과 무관하게 살아남음.
   const scrollStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // loadOlderMessages 의 최신 정체성을 ref 로 추적 — onScroll 클로저에서 호출만 하기 위함.
+  // loadOlderMessages / loadNewerMessages 의 최신 정체성을 ref 로 추적.
   const loadOlderRef = useRef(loadOlderMessages);
-  useEffect(() => {
-    loadOlderRef.current = loadOlderMessages;
-  }, [loadOlderMessages]);
+  const loadNewerRef = useRef(loadNewerMessages);
+  useEffect(() => { loadOlderRef.current = loadOlderMessages; }, [loadOlderMessages]);
+  useEffect(() => { loadNewerRef.current = loadNewerMessages; }, [loadNewerMessages]);
 
-  // 메시지 영역 스크롤 감지 — 위로 가면 과거 메시지 fetch + 사용자 스크롤 중 표시.
-  // 자동 스크롤(프로그래밍)으로 발생한 이벤트는 입력창을 숨기지 않는다.
+  // 메시지 영역 스크롤 감지.
+  // Chat: 위로 가면(scrollTop < 800) 과거 메시지 fetch.
+  // Thread: 아래로 가면(bottom < 800) 미래 메시지 fetch.
   // deps 를 [] 로 비워 mount 시 1회만 등록 → streaming 중 빈번한 re-render 와 무관.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const onScroll = () => {
       if (el.scrollTop < 800) void loadOlderRef.current();
+      const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      if (distFromBottom < 800) void loadNewerRef.current();
       // 자동 스크롤 윈도우 안이면 isScrolling 토글 생략.
       if (Date.now() < programmaticScrollRef.current) return;
       setIsScrolling(true);
@@ -1474,10 +1564,15 @@ export default function ChatRoom() {
     }
     // 자동 스크롤 시작 — onScroll 핸들러가 isScrolling 을 토글하지 않도록 짧게 표시.
     programmaticScrollRef.current = Date.now() + (jumpInstant || pending ? 50 : 600);
+    const activeIsThread = (active?.kind ?? 'thread') === 'thread';
     // 첫 진입(switched / firstLoadAfterMount):
-    //  - Thread / Chat 모두 최신 메시지(맨 아래)에서 시작.
-    //  - 마지막 user 메시지가 없거나 ref 가 아직 마운트되지 않았으면 하단 점프 fallback.
+    //  - Thread: 문서 처음(맨 위)에서 시작.
+    //  - Chat: 최신 메시지(맨 아래)에서 시작.
     if (jumpInstant) {
+      if (activeIsThread) {
+        el.scrollTo({ top: 0, behavior: 'auto' });
+        return;
+      }
       const lastUserId = (() => {
         const msgs = active?.messages ?? [];
         for (let i = msgs.length - 1; i >= 0; i--) {
@@ -1493,12 +1588,13 @@ export default function ChatRoom() {
         return;
       }
     }
-    el.scrollTo({
-      top: el.scrollHeight,
-      // 스트리밍 중(pending)에는 chunk 마다 effect 가 재실행되어 smooth 애니메이션이 충돌 → auto 로 즉시 이동.
-      // 스트리밍 종료 후에만 smooth 를 사용해 자연스러운 마지막 이동 처리.
-      behavior: jumpInstant || forceFollow || pending ? 'auto' : 'smooth',
-    });
+    // Chat 스트리밍/후속 업데이트: 하단 추종.
+    if (!activeIsThread || forceFollow) {
+      el.scrollTo({
+        top: el.scrollHeight,
+        behavior: jumpInstant || forceFollow || pending ? 'auto' : 'smooth',
+      });
+    }
     // pending 도 의존 — 스트리밍 종료 후 마지막 렌더에서도 한번 더 따라 내려가도록.
   }, [active?.id, active?.messages, pending]);
 

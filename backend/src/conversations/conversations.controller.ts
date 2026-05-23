@@ -98,19 +98,21 @@ export class ConversationsController {
     await this.service.delete(this.uid(req), id);
   }
 
-  // 메시지 keyset 페이지네이션. before(=과거 방향 cursor)가 없으면 최신 N개.
+  // 메시지 keyset 페이지네이션.
+  // before: 역방향(과거) cursor. after: 순방향(미래) cursor. after='__start__' 는 처음부터.
   @Get(':id/messages')
   async listMessages(
     @Req() req: Request,
     @Param('id') id: string,
     @Query('before') before?: string,
+    @Query('after') after?: string,
     @Query('limit') limit?: string,
   ) {
     const lim = limit ? parseInt(limit, 10) : 50;
     if (!Number.isFinite(lim) || lim <= 0) {
       throw new BadRequestException('limit 가 잘못되었습니다');
     }
-    return this.service.listMessages(this.uid(req), id, before ?? null, lim);
+    return this.service.listMessages(this.uid(req), id, before ?? null, after ?? null, lim);
   }
 
   @Post(':id/messages')

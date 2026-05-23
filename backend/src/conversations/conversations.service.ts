@@ -420,16 +420,39 @@ export class ConversationsService implements OnModuleInit {
   // ----- 메시지 -----
 
   // before 가 없으면 최신 limit 개. 있으면 해당 id 보다 작은(=과거 position) limit 개.
-  // position 기준 ORDER BY — 사용자 재정렬을 반영. before 는 message id 로 받아 해당
-  // 행의 position 을 조회 후 그보다 작은 position 으로 keyset 페이지네이션.
+  // after 가 있으면 해당 id 보다 큰(=미래 position) limit 개 — Thread 문서 순방향 페이지네이션.
+  // after='__start__' 는 position > -1 (전체 처음부터) 을 의미하는 sentinel.
   async listMessages(
     userId: string,
     convId: string,
     before: string | null,
+    after: string | null,
     limit: number,
   ): Promise<MessageDto[]> {
     await this.getOwned(userId, convId);
     const cap = Math.min(Math.max(limit, 1), 200);
+
+    if (after !== null) {
+      // 순방향(오래된→새로운) 페이지네이션
+      let cursorPos = -1;
+      if (after !== '__start__') {
+        const ref = await this.messages.findOne({
+          where: { id: after, conversationId: convId },
+          select: ['position'],
+        });
+        if (ref) cursorPos = ref.position;
+      }
+      const rows = await this.messages
+        .createQueryBuilder('m')
+        .where('m.conversation_id = :convId', { convId })
+        .andWhere('m.position > :pos', { pos: cursorPos })
+        .orderBy('m.position', 'ASC')
+        .take(cap)
+        .getMany();
+      return rows.map((m) => this.msgToDto(m));
+    }
+
+    // 역방향(새로운→오래된) 페이지네이션 — 기존 동작
     let cursorPos: number | null = null;
     if (before) {
       const ref = await this.messages.findOne({
