@@ -35,6 +35,7 @@ pipelines:
     environment_variables:
       REGISTRY_URL: registry.webnori.com
       IMAGE_NAME: stella-th
+      DEPLOY_VERSION: ""
 
     materials:
       git_repo:
