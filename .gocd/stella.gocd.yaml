@@ -36,6 +36,9 @@ pipelines:
       REGISTRY_URL: registry.webnori.com
       IMAGE_NAME: stella-th
       DEPLOY_VERSION: ""
+      REGISTRY_USER: psguest
+    secure_variables:
+      REGISTRY_PASS: "AES:eiVzUbYMOgexMTrYnWv0iQ==:18RNz5muhqttNeG2inlWTQ=="
 
     materials:
       git_repo:
