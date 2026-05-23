@@ -1640,6 +1640,7 @@ export default function MessageBubble({
   const [expandedImageIndex, setExpandedImageIndex] = useState<number | null>(
     null,
   );
+  const [expandedImageLoaded, setExpandedImageLoaded] = useState(false);
   // YouTube 핀 모드 — true 면 영상이 viewport 상단에 fixed 로 고정. 스크롤 방향 무관 항상 따라옴.
   // X 축은 클릭 시점의 인라인 위치 그대로 유지 → Y 만 변동. 핀 즉시 fixed → 자연 위치는 placeholder 로 메꿈.
   const [isYoutubePinned, setIsYoutubePinned] = useState(false);
@@ -1658,6 +1659,7 @@ export default function MessageBubble({
     window.addEventListener('resize', update);
     return () => window.removeEventListener('resize', update);
   }, [isYoutubePinned, expandedImageIndex]);
+  useEffect(() => { setExpandedImageLoaded(false); }, [expandedImageIndex]);
   // 카드의 × 클릭 시 — 라이트박스 열지 않고, 채팅창 안에서 직접 삭제 확인 다이얼로그를 띄움.
   const [pendingDeleteUrl, setPendingDeleteUrl] = useState<string | null>(null);
   // ImageScatter 의 현재 페이지를 부모에서 보존 — 확대 보기/삭제 후 ImageScatter 가
@@ -2052,12 +2054,14 @@ export default function MessageBubble({
                     className={cn(
                       'transition-opacity duration-150',
                       (pendingDeleteUrl === expanded.url ||
-                        (isYouTube && isYoutubePinned)) &&
+                        (isYouTube && isYoutubePinned) ||
+                        !expandedImageLoaded) &&
                         'pointer-events-none opacity-0',
                     )}
                     aria-hidden={
                       pendingDeleteUrl === expanded.url ||
-                      (isYouTube && isYoutubePinned)
+                      (isYouTube && isYoutubePinned) ||
+                      !expandedImageLoaded
                     }
                   >
                   {(() => {
@@ -2349,6 +2353,7 @@ export default function MessageBubble({
                         src={expanded.url}
                         alt={expanded.sourceTitle ?? '이미지'}
                         referrerPolicy="no-referrer"
+                        onLoad={() => setExpandedImageLoaded(true)}
                         // PIN 상태에서만 클릭하면 원본을 새 탭에서 열기 — Close/Delete 가 dim 된 PIN UX 와 일관.
                         onClick={
                           isPinnedEffective

@@ -1589,7 +1589,7 @@ export default function ChatRoom() {
       }
     }
     // Chat 스트리밍/후속 업데이트: 하단 추종.
-    if (!activeIsThread || forceFollow) {
+    if (!activeIsThread || forceFollow || pending) {
       el.scrollTo({
         top: el.scrollHeight,
         behavior: jumpInstant || forceFollow || pending ? 'auto' : 'smooth',

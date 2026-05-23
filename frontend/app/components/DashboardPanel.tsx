@@ -220,7 +220,7 @@ export default function DashboardPanel({
 
   return (
     <div className="flex h-full flex-col overflow-x-hidden overflow-y-auto">
-      <div className="flex shrink-0 items-center gap-2 border-b border-border px-6 py-4">
+      <div className="flex h-[68px] shrink-0 items-center gap-2 border-b border-border px-6">
         {!sidebarOpen && onExpandSidebar && (
           <Button
             variant="ghost"
