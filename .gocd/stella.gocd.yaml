@@ -1,0 +1,62 @@
+format_version: 10
+
+# ──────────────────────────────────────────────────────────────────────────────
+# GoCD Pipeline-as-Code 설정
+#
+# 사전 준비:
+#   1. GoCD 서버에서 이 저장소를 "Config Repository"로 등록
+#      Admin > Config Repositories > Add
+#      Plugin: YAML Configuration Plugin
+#      URL: 이 저장소 URL
+#
+#   2. GoCD 서버 UI에서 아래 Secure Environment Variables 설정
+#      Pipeline: stella-chatbot > Settings > Variables (Secure)
+#        REGISTRY_USER  — 레지스트리 로그인 사용자명
+#        REGISTRY_PASS  — 레지스트리 로그인 비밀번호
+#
+#   3. GoCD Agent에 'docker' resource 태그 부여
+#      Admin > Agents > 해당 Agent > Resources: docker
+#
+#   4. git tag → 파이프라인 자동 트리거 방법 (아래 중 하나 선택):
+#      A) GoCD UI에서 "Trigger with Options" → 태그 revision 선택 (수동)
+#      B) Git 서버(GitHub/Gitea)의 Tag webhook → GoCD API 호출 (자동, 권장)
+#         POST http://<GOCD_SERVER>:8153/go/api/pipelines/stella-chatbot/schedule
+#         Authorization: Bearer <GOCD_API_TOKEN>
+#         Content-Type: application/json
+#         Body: {"materials":[{"fingerprint":"<material_fingerprint>","revision":"<tag_sha>"}]}
+# ──────────────────────────────────────────────────────────────────────────────
+
+pipelines:
+  stella-chatbot:
+    group: stella
+    label_template: "${git_repo[:8]}"
+    lock_behavior: none
+
+    environment_variables:
+      REGISTRY_URL: registry.webnori.com
+      IMAGE_NAME: stella-th
+
+    materials:
+      git_repo:
+        git: https://github.com/charles96/stella_thread_house.git
+        branch: main
+        shallow_clone: false
+
+    stages:
+      # ── Stage 1: Docker 이미지 빌드 & Registry 푸시 ──────────────────────────
+      - build-and-push:
+          approval:
+            type: success           # 이전 stage 성공 시 자동 진행
+          jobs:
+            docker-build:
+              timeout: 60           # 분 단위
+              resources:
+                - docker            # docker 가 설치된 agent에서만 실행
+              tasks:
+                - exec:
+                    command: /bin/bash
+                    arguments:
+                      - scripts/ci-build.sh
+
+      # ── Stage 2: 서버 배포 (추후 추가) ──────────────────────────────────────
+      # 배포 방식 확정 후 여기에 deploy stage를 추가한다.
