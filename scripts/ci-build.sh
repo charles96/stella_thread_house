@@ -25,13 +25,15 @@ if [ -z "$GIT_TAG" ]; then
 fi
 
 echo "▶ Git tag: $GIT_TAG"
+# Docker 이미지 태그에서 v 접두사 제거 (v1.7.15 → 1.7.15)
+IMAGE_TAG="${GIT_TAG#v}"
 
 # ── 2. 환경변수 검증 ─────────────────────────────────────────────────────────
 : "${REGISTRY_URL:?REGISTRY_URL 환경변수가 필요합니다 (예: registry.example.com)}"
 : "${IMAGE_NAME:?IMAGE_NAME 환경변수가 필요합니다 (예: stella-chatbot)}"
 
 FULL_IMAGE="${REGISTRY_URL}/${IMAGE_NAME}"
-echo "▶ 이미지: ${FULL_IMAGE}:${GIT_TAG}"
+echo "▶ 이미지: ${FULL_IMAGE}:${IMAGE_TAG}"
 
 # ── 3. Registry 로그인 ───────────────────────────────────────────────────────
 if [ -n "${REGISTRY_USER:-}" ] && [ -n "${REGISTRY_PASS:-}" ]; then
@@ -45,18 +47,18 @@ fi
 echo "▶ 빌드 시작 (플랫폼: linux/amd64)"
 docker build \
   --platform linux/amd64 \
-  --build-arg BUILD_TAG="$GIT_TAG" \
-  -t "${FULL_IMAGE}:${GIT_TAG}" \
+  --build-arg BUILD_TAG="$IMAGE_TAG" \
+  -t "${FULL_IMAGE}:${IMAGE_TAG}" \
   -t "${FULL_IMAGE}:latest" \
   -f Dockerfile \
   .
 
 # ── 5. Registry 푸시 ─────────────────────────────────────────────────────────
-echo "▶ 푸시: ${FULL_IMAGE}:${GIT_TAG}"
-docker push "${FULL_IMAGE}:${GIT_TAG}"
+echo "▶ 푸시: ${FULL_IMAGE}:${IMAGE_TAG}"
+docker push "${FULL_IMAGE}:${IMAGE_TAG}"
 
 echo "▶ 푸시: ${FULL_IMAGE}:latest"
 docker push "${FULL_IMAGE}:latest"
 
 echo ""
-echo "✓ 완료: ${FULL_IMAGE}:${GIT_TAG} → Registry 등록 성공"
+echo "✓ 완료: ${FULL_IMAGE}:${IMAGE_TAG} → Registry 등록 성공"
