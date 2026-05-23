@@ -660,26 +660,11 @@ function HashtagsTabContent({
   }
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-      {canEdit && (
-        <div className="mb-2 flex justify-end">
-          <button
-            type="button"
-            onClick={() => setEditing((v) => !v)}
-            className={cn(
-              'rounded px-1.5 py-0.5 text-[10.5px] font-medium tracking-normal transition-colors',
-              editing
-                ? 'bg-primary text-primary-foreground'
-                : 'border border-border bg-background hover:bg-accent',
-            )}
-            title={editing ? '편집 종료' : '해시태그 편집'}
-          >
-            {editing ? 'Done' : 'Edit'}
-          </button>
-        </div>
-      )}
-      <div className="flex flex-wrap items-center gap-1">
-        {sortedTags.map((tag, i) => (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {/* 태그 목록 — 스크롤 가능 */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+        <div className="flex flex-wrap items-center gap-1">
+          {sortedTags.map((tag, i) => (
             <span
               key={i}
               className="inline-flex shrink-0 items-center gap-0.5 rounded-sm border border-primary/30 bg-primary/10 px-1.5 py-[1px] text-[11px] font-medium text-primary"
@@ -700,34 +685,63 @@ function HashtagsTabContent({
             </span>
           ))}
         </div>
-        {editing && onAdd && (
-          <div className="mt-2 flex items-center gap-1.5">
-            <input
-              type="text"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value.replace(/\s/g, '-'))}
-              onKeyDown={(e) => {
-                // IME 조합 중(한글) Enter 는 조합 확정용이라 무시. 그렇지 않으면 조합 확정 + commit 두 번 발생 → 부분 입력값까지 추가됨.
-                if (e.key !== 'Enter') return;
-                if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-                e.preventDefault();
-                commitAdd();
-              }}
-              placeholder="#태그 입력"
-              className="min-w-0 flex-1 rounded-sm border border-input bg-background px-2 py-0.5 text-[11px] outline-none focus:ring-1 focus:ring-primary/50"
-              spellCheck={false}
-              autoComplete="off"
-            />
-            <button
-              type="button"
-              onClick={commitAdd}
-              disabled={!draft.trim()}
-              className="rounded-sm border border-primary/40 bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary hover:text-primary-foreground disabled:opacity-40 disabled:hover:bg-primary/10 disabled:hover:text-primary"
-            >
-              Add
-            </button>
-          </div>
-        )}
+      </div>
+
+      {/* 하단 액션 바 — Edit / Add */}
+      {canEdit && (
+        <div className="shrink-0 border-t border-border px-3 py-2">
+          {editing ? (
+            <div className="flex items-center gap-1.5">
+              {onAdd && (
+                <>
+                  <input
+                    type="text"
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value.replace(/\s/g, '-'))}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter') return;
+                      if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                      e.preventDefault();
+                      commitAdd();
+                    }}
+                    placeholder="#태그 입력"
+                    className="min-w-0 flex-1 rounded-sm border border-input bg-background px-2 py-1 text-[11px] outline-none focus:ring-1 focus:ring-primary/50"
+                    spellCheck={false}
+                    autoComplete="off"
+                  />
+                  <button
+                    type="button"
+                    onClick={commitAdd}
+                    disabled={!draft.trim()}
+                    className="rounded-sm border border-primary/40 bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary transition-colors hover:bg-primary hover:text-primary-foreground disabled:opacity-40 disabled:hover:bg-primary/10 disabled:hover:text-primary"
+                  >
+                    Add
+                  </button>
+                </>
+              )}
+              <button
+                type="button"
+                onClick={() => { setEditing(false); setDraft(''); }}
+                className="rounded px-2 py-1 text-[10.5px] font-medium tracking-normal transition-colors bg-primary text-primary-foreground"
+                title="편집 종료"
+              >
+                Done
+              </button>
+            </div>
+          ) : (
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setEditing(true)}
+                className="rounded px-2 py-1 text-[10.5px] font-medium tracking-normal transition-colors border border-border bg-background hover:bg-accent"
+                title="해시태그 편집"
+              >
+                Edit
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
