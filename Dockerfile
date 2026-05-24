@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.6
+# syntax=docker/dockerfile:1
 #
 # Stella's Thread House — frontend(Next.js) + backend(NestJS) 통합 이미지.
 # 컨테이너 안에서 두 프로세스를 동시 실행한다.
@@ -63,26 +63,7 @@ COPY --from=frontend-build /src/public ./frontend/public
 # 두 프로세스 동시 실행 + 시그널 전파를 처리하는 작은 launcher 스크립트.
 # 이전엔 npm i -g concurrently (~52MB) 로 처리했지만, 단순 BE/FE 두 프로세스라
 # busybox sh 의 `wait -n` 한 줄이면 충분 — 이미지 사이즈 대폭 절감.
-COPY <<'EOF' /app/start.sh
-#!/bin/sh
-set -e
-
-trap 'echo "[start] received signal, shutting down"; kill 0 2>/dev/null; wait; exit 0' INT TERM
-
-cd /app/backend && PORT=4100 node dist/main.js &
-BE_PID=$!
-
-cd /app/frontend && PORT=3100 HOSTNAME=0.0.0.0 node server.js &
-FE_PID=$!
-
-# 둘 중 하나라도 종료되면 다른 하나도 종료시키고 그 exit code 로 컨테이너 종료.
-wait -n "$BE_PID" "$FE_PID"
-EXIT=$?
-echo "[start] one process exited with $EXIT — terminating siblings"
-kill 0 2>/dev/null || true
-wait
-exit "$EXIT"
-EOF
+COPY scripts/start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 
 # 첨부 이미지 영구 저장 위치 — compose 에서 named volume 마운트.
