@@ -1,6 +1,6 @@
 'use client';
 
-import { LogIn, UserPlus } from 'lucide-react';
+import { Eye, LogIn, UserPlus } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { useI18n } from '@/lib/i18n';
@@ -17,6 +17,8 @@ export default function LoginScreen({ onLogin }: { onLogin: () => void }) {
   const [password, setPassword] = useState('');
   const [password2, setPassword2] = useState('');
   const [busy, setBusy] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showPassword2, setShowPassword2] = useState(false);
   // 초대 토큰 (URL 의 ?token=...) — 등록 모드 자동 전환 + 폼 처리.
   // 첫 admin 은 별도 가입 폼이 없고, 그냥 로그인 시도하면 backend 가 0명 + env 매칭 시 자동 생성.
   const [inviteToken, setInviteToken] = useState<string | null>(null);
@@ -43,14 +45,14 @@ export default function LoginScreen({ onLogin }: { onLogin: () => void }) {
             `${API_URL}/auth/invitation/${encodeURIComponent(tok)}`,
           );
           if (!res.ok) {
-            setErrorMsg('유효하지 않은 초대 링크입니다.');
+            setErrorMsg(t('login.invalidInvite'));
             return;
           }
           const j = (await res.json()) as { email: string };
           setInvitedEmail(j.email);
           setEmail(j.email);
         } catch {
-          setErrorMsg('초대 정보를 불러오지 못했습니다.');
+          setErrorMsg(t('login.inviteLoadError'));
         }
       })();
     }
@@ -62,7 +64,7 @@ export default function LoginScreen({ onLogin }: { onLogin: () => void }) {
     setErrorMsg(null);
     // register 모드 — 비밀번호 일치 검증.
     if (mode === 'register' && password !== password2) {
-      setErrorMsg('비밀번호가 일치하지 않습니다.');
+      setErrorMsg(t('login.passwordMismatch'));
       return;
     }
     setBusy(true);
@@ -100,26 +102,24 @@ export default function LoginScreen({ onLogin }: { onLogin: () => void }) {
   const heading =
     mode === 'register'
       ? inviteToken
-        ? '초대받은 가입'
-        : '가입'
+        ? t('login.inviteRegister')
+        : t('login.doRegister')
       : t('login.title');
 
   return (
     <div className="flex h-screen w-screen items-center justify-center bg-background">
       <div className="flex w-full max-w-sm flex-col items-center gap-6 px-6 text-center">
-        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-primary-foreground text-2xl font-bold shadow-lg">
-          S
-        </div>
+        <img src="/logo.svg" alt="Stella" className="h-20 w-20" />
         <div className="space-y-1.5">
           <h1 className="text-2xl font-semibold tracking-tight">{heading}</h1>
           {mode === 'login' && (
-            <p className="whitespace-pre-line text-sm text-muted-foreground">
-              {t('login.subtitle')}
+            <p className="text-sm text-muted-foreground">
+              Co-creating knowledge with AI
             </p>
           )}
           {mode === 'register' && inviteToken && (
             <p className="text-sm text-muted-foreground">
-              비밀번호를 설정하여 가입을 완료하세요. 가입 후 Settings 에서 Google 계정을 연동할 수 있습니다.
+              {t('login.inviteDesc')}
             </p>
           )}
         </div>
@@ -142,31 +142,55 @@ export default function LoginScreen({ onLogin }: { onLogin: () => void }) {
             readOnly={!!invitedEmail}
             className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring read-only:bg-muted/40 read-only:cursor-not-allowed"
           />
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder={
-              mode === 'register' ? '비밀번호 (8자 이상)' : '비밀번호'
-            }
-            autoComplete={
-              mode === 'register' ? 'new-password' : 'current-password'
-            }
-            required
-            minLength={mode === 'register' ? 8 : undefined}
-            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
-          />
-          {mode === 'register' && (
+          <div className="relative">
             <input
-              type="password"
-              value={password2}
-              onChange={(e) => setPassword2(e.target.value)}
-              placeholder="비밀번호 확인"
-              autoComplete="new-password"
+              type={showPassword ? 'text' : 'password'}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder={
+                mode === 'register' ? t('login.passwordMin') : t('login.password')
+              }
+              autoComplete={
+                mode === 'register' ? 'new-password' : 'current-password'
+              }
               required
-              minLength={8}
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+              minLength={mode === 'register' ? 8 : undefined}
+              className="w-full rounded-md border border-input bg-background px-3 py-2 pr-10 text-sm outline-none focus:ring-2 focus:ring-ring"
             />
+            <button
+              type="button"
+              onPointerDown={() => setShowPassword(true)}
+              onPointerUp={() => setShowPassword(false)}
+              onPointerLeave={() => setShowPassword(false)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground select-none"
+              tabIndex={-1}
+            >
+              <Eye className="h-4 w-4" />
+            </button>
+          </div>
+          {mode === 'register' && (
+            <div className="relative">
+              <input
+                type={showPassword2 ? 'text' : 'password'}
+                value={password2}
+                onChange={(e) => setPassword2(e.target.value)}
+                placeholder={t('login.passwordConfirm')}
+                autoComplete="new-password"
+                required
+                minLength={8}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 pr-10 text-sm outline-none focus:ring-2 focus:ring-ring"
+              />
+              <button
+                type="button"
+                onPointerDown={() => setShowPassword2(true)}
+                onPointerUp={() => setShowPassword2(false)}
+                onPointerLeave={() => setShowPassword2(false)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground select-none"
+                tabIndex={-1}
+              >
+                <Eye className="h-4 w-4" />
+              </button>
+            </div>
           )}
           <Button size="lg" type="submit" disabled={busy} className="w-full gap-2">
             {mode === 'register' ? (
@@ -177,8 +201,8 @@ export default function LoginScreen({ onLogin }: { onLogin: () => void }) {
             {busy
               ? '...'
               : mode === 'register'
-                ? '가입'
-                : '로그인'}
+                ? t('login.doRegister')
+                : t('login.doLogin')}
           </Button>
         </form>
 

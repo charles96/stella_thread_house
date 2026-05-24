@@ -3,7 +3,6 @@
 import {
   createContext,
   useContext,
-  useEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -172,8 +171,18 @@ const dict = {
 
     'login.title': "Stella's Thread House",
     'login.subtitle':
-      'Ollama 기반의 개인 챗봇입니다.\n계속하려면 Google 계정으로 로그인해 주세요.',
+      'co-creating knowledge with ai',
     'login.googleLogin': 'Google로 로그인',
+    'login.password': '비밀번호',
+    'login.passwordMin': '비밀번호 (8자 이상)',
+    'login.passwordConfirm': '비밀번호 확인',
+    'login.doLogin': '로그인',
+    'login.doRegister': '가입',
+    'login.inviteRegister': '초대받은 가입',
+    'login.inviteDesc': '비밀번호를 설정하여 가입을 완료하세요. 가입 후 Settings 에서 Google 계정을 연동할 수 있습니다.',
+    'login.passwordMismatch': '비밀번호가 일치하지 않습니다.',
+    'login.invalidInvite': '유효하지 않은 초대 링크입니다.',
+    'login.inviteLoadError': '초대 정보를 불러오지 못했습니다.',
 
     'settings.title': '설정',
     'settings.language': '언어',
@@ -449,8 +458,18 @@ const dict = {
 
     'login.title': "Stella's Thread House",
     'login.subtitle':
-      'A personal chatbot powered by Ollama.\nSign in with your Google account to continue.',
+      'co-creating knowledge with ai',
     'login.googleLogin': 'Sign in with Google',
+    'login.password': 'Password',
+    'login.passwordMin': 'Password (min. 8 characters)',
+    'login.passwordConfirm': 'Confirm password',
+    'login.doLogin': 'Sign in',
+    'login.doRegister': 'Register',
+    'login.inviteRegister': 'Invited registration',
+    'login.inviteDesc': 'Set your password to complete registration. You can link your Google account in Settings afterwards.',
+    'login.passwordMismatch': 'Passwords do not match.',
+    'login.invalidInvite': 'Invalid invitation link.',
+    'login.inviteLoadError': 'Failed to load invitation details.',
 
     'settings.title': 'Settings',
     'settings.language': 'Language',
@@ -728,8 +747,18 @@ const dict = {
 
     'login.title': "Stella's Thread House",
     'login.subtitle':
-      'Ollama ベースのパーソナルチャットボットです。\n続行するには Google アカウントでログインしてください。',
+      'co-creating knowledge with ai',
     'login.googleLogin': 'Google でログイン',
+    'login.password': 'パスワード',
+    'login.passwordMin': 'パスワード（8文字以上）',
+    'login.passwordConfirm': 'パスワード確認',
+    'login.doLogin': 'ログイン',
+    'login.doRegister': '登録',
+    'login.inviteRegister': '招待登録',
+    'login.inviteDesc': 'パスワードを設定して登録を完了してください。登録後、Settings で Google アカウントを連携できます。',
+    'login.passwordMismatch': 'パスワードが一致しません。',
+    'login.invalidInvite': '無効な招待リンクです。',
+    'login.inviteLoadError': '招待情報を読み込めませんでした。',
 
     'settings.title': '設定',
     'settings.language': '言語',
@@ -1007,8 +1036,18 @@ const dict = {
 
     'login.title': "Stella's Thread House",
     'login.subtitle':
-      '基于 Ollama 的个人聊天机器人。\n请使用 Google 账号登录以继续。',
+      'co-creating knowledge with ai',
     'login.googleLogin': '使用 Google 登录',
+    'login.password': '密码',
+    'login.passwordMin': '密码（至少8个字符）',
+    'login.passwordConfirm': '确认密码',
+    'login.doLogin': '登录',
+    'login.doRegister': '注册',
+    'login.inviteRegister': '受邀注册',
+    'login.inviteDesc': '设置密码以完成注册。注册后可在 Settings 中关联 Google 账号。',
+    'login.passwordMismatch': '两次密码不一致。',
+    'login.invalidInvite': '无效的邀请链接。',
+    'login.inviteLoadError': '无法加载邀请信息。',
 
     'settings.title': '设置',
     'settings.language': '语言',
@@ -1286,8 +1325,18 @@ const dict = {
 
     'login.title': "Stella's Thread House",
     'login.subtitle':
-      'Chatbot pribadi berbasis Ollama.\nMasuk dengan akun Google untuk melanjutkan.',
+      'co-creating knowledge with ai',
     'login.googleLogin': 'Masuk dengan Google',
+    'login.password': 'Kata sandi',
+    'login.passwordMin': 'Kata sandi (min. 8 karakter)',
+    'login.passwordConfirm': 'Konfirmasi kata sandi',
+    'login.doLogin': 'Masuk',
+    'login.doRegister': 'Daftar',
+    'login.inviteRegister': 'Registrasi undangan',
+    'login.inviteDesc': 'Atur kata sandi untuk menyelesaikan registrasi. Setelah mendaftar, Anda dapat menghubungkan akun Google di Settings.',
+    'login.passwordMismatch': 'Kata sandi tidak cocok.',
+    'login.invalidInvite': 'Tautan undangan tidak valid.',
+    'login.inviteLoadError': 'Gagal memuat informasi undangan.',
 
     'settings.title': 'Pengaturan',
     'settings.language': 'Bahasa',
@@ -1423,17 +1472,20 @@ function isLang(v: unknown): v is Lang {
   return typeof v === 'string' && (SUPPORTED_LANGS as string[]).includes(v);
 }
 
-export function I18nProvider({ children }: { children: ReactNode }) {
-  const [lang, setLangState] = useState<Lang>('ko');
+function detectInitialLang(): Lang {
+  try {
+    const saved = localStorage.getItem(STORAGE);
+    if (isLang(saved)) return saved;
+  } catch { /* ignore */ }
+  try {
+    const browserLang = navigator.language.split('-')[0];
+    if (isLang(browserLang)) return browserLang;
+  } catch { /* ignore */ }
+  return 'en';
+}
 
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE);
-      if (isLang(saved)) setLangState(saved);
-    } catch {
-      // ignore
-    }
-  }, []);
+export function I18nProvider({ children }: { children: ReactNode }) {
+  const [lang, setLangState] = useState<Lang>(detectInitialLang);
 
   const setLang = (l: Lang) => {
     setLangState(l);
