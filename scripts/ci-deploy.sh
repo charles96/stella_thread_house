@@ -21,13 +21,21 @@ fi
 # 이미지 pull
 docker pull "$APP_IMAGE"
 
-# 전체 서비스 재시작
+# 전체 서비스 재시작 (docker-compose v1 / v2 모두 지원)
 echo "▶ docker compose up -d (전체)"
-docker compose \
-  -f "$COMPOSE_DIR/docker-compose.yml" \
-  -f "$COMPOSE_DIR/docker-compose.prod.yml" \
-  --env-file "$DEPLOY_ENV" \
-  up -d --no-build
+if docker compose version &>/dev/null 2>&1; then
+  docker compose \
+    -f "$COMPOSE_DIR/docker-compose.yml" \
+    -f "$COMPOSE_DIR/docker-compose.prod.yml" \
+    --env-file "$DEPLOY_ENV" \
+    up -d --no-build
+else
+  docker-compose \
+    -f "$COMPOSE_DIR/docker-compose.yml" \
+    -f "$COMPOSE_DIR/docker-compose.prod.yml" \
+    --env-file "$DEPLOY_ENV" \
+    up -d --no-build
+fi
 
 echo ""
 echo "✓ 배포 완료: $APP_IMAGE"
