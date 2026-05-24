@@ -2,6 +2,7 @@
 
 import {
   Children,
+  memo,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -1141,7 +1142,7 @@ const markdownClass = cn(
   '[&>:first-child]:mt-0 [&>:last-child]:mb-0',
 );
 
-export default function MessageBubble({
+function MessageBubble({
   message,
   onOpenArtifact,
   activeArtifactId,
@@ -2055,13 +2056,13 @@ export default function MessageBubble({
                       'transition-opacity duration-150',
                       (pendingDeleteUrl === expanded.url ||
                         (isYouTube && isYoutubePinned) ||
-                        !expandedImageLoaded) &&
+                        (!isYouTube && !expandedImageLoaded)) &&
                         'pointer-events-none opacity-0',
                     )}
                     aria-hidden={
                       pendingDeleteUrl === expanded.url ||
                       (isYouTube && isYoutubePinned) ||
-                      !expandedImageLoaded
+                      (!isYouTube && !expandedImageLoaded)
                     }
                   >
                   {(() => {
@@ -3580,3 +3581,5 @@ function DotsLoading() {
     </span>
   );
 }
+
+export default memo(MessageBubble);

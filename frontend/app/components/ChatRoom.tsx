@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import MessageBubble from './MessageBubble';
 import InputBar, { type InputBarHandle } from './InputBar';
@@ -259,6 +259,123 @@ function makeConversation(
     hasMoreMessages: false,
   };
 }
+
+// ── MessageItem ──────────────────────────────────────────────────────────────
+// memo 래퍼: 스트리밍 중 ChatRoom re-render 시 non-live 메시지가 bailout 하도록.
+// 부모에서 stable 콜백을 받아 내부에서 m.id 를 바인딩 → MessageBubble 에 안정된 함수 전달.
+interface MessageItemProps {
+  m: Message;
+  deleteTurnId: string | undefined;
+  isHiddenByCollapse: boolean;
+  isCollapsedSelf: boolean;
+  responsesCount: number;
+  precedingUserImages: string[] | undefined;
+  precedingUserImageNames: string[] | undefined;
+  convKind: 'thread' | 'chat';
+  userOrdinal: number | undefined;
+  activeArtifactId: string | null;
+  attachedSourceUrls: Set<string> | undefined;
+  isFresh: boolean;
+  isLive: boolean;
+  isCollapsed: boolean;
+  isGreeting: boolean;
+  onEditContent: (id: string, content: string) => void;
+  onPinImage: (id: string, url: string | null) => void;
+  onOpenArtifact: (a: Artifact) => void;
+  onAttachImage: (url: string) => void;
+  onFollowup: (text: string) => void;
+  onRemoveImageById: (id: string, url: string) => void;
+  onReorderImagesById: (id: string, urls: string[]) => void;
+  onUploadEditImageById: (id: string, dataUrl: string, fileName: string) => Promise<string | null>;
+  onDeleteTurnById: (id: string) => void;
+  onToggleTurnCollapse: (id: string) => void;
+  setMsgRef: (id: string, el: HTMLDivElement | null) => void;
+}
+
+const MessageItem = memo(function MessageItem({
+  m,
+  deleteTurnId,
+  isHiddenByCollapse,
+  isCollapsedSelf,
+  responsesCount,
+  precedingUserImages,
+  precedingUserImageNames,
+  convKind,
+  userOrdinal,
+  activeArtifactId,
+  attachedSourceUrls,
+  isFresh,
+  isLive,
+  isCollapsed,
+  isGreeting,
+  onEditContent,
+  onPinImage,
+  onOpenArtifact,
+  onAttachImage,
+  onFollowup,
+  onRemoveImageById,
+  onReorderImagesById,
+  onUploadEditImageById,
+  onDeleteTurnById,
+  onToggleTurnCollapse,
+  setMsgRef,
+}: MessageItemProps) {
+  const handleRemoveImage = useCallback((url: string) => onRemoveImageById(m.id, url), [m.id, onRemoveImageById]);
+  const handleReorderImages = useCallback((urls: string[]) => onReorderImagesById(m.id, urls), [m.id, onReorderImagesById]);
+  const handleUploadEditImage = useCallback((dataUrl: string, fileName: string) => onUploadEditImageById(m.id, dataUrl, fileName), [m.id, onUploadEditImageById]);
+  const handleDeleteTurn = useCallback(() => { if (deleteTurnId) onDeleteTurnById(deleteTurnId); }, [deleteTurnId, onDeleteTurnById]);
+  const handleToggle = useCallback(() => onToggleTurnCollapse(m.id), [m.id, onToggleTurnCollapse]);
+  const handleRef = useCallback((el: HTMLDivElement | null) => setMsgRef(m.id, el), [m.id, setMsgRef]);
+
+  return (
+    <div ref={handleRef} className="relative">
+      <div
+        className={cn(
+          'grid overflow-clip transition-[grid-template-rows,opacity,margin] duration-300 ease-out',
+          isHiddenByCollapse
+            ? 'grid-rows-[0fr] opacity-0 pointer-events-none -my-1'
+            : 'grid-rows-[1fr] opacity-100',
+        )}
+      >
+        <div className="min-h-0">
+          <MessageBubble
+            message={m}
+            convKind={convKind}
+            userOrdinal={userOrdinal}
+            isGreeting={isGreeting}
+            onEditContent={onEditContent}
+            onPinImage={onPinImage}
+            attachedSourceUrls={attachedSourceUrls}
+            onOpenArtifact={onOpenArtifact}
+            activeArtifactId={activeArtifactId}
+            onAttachImage={onAttachImage}
+            isFresh={isFresh}
+            isLive={isLive}
+            onFollowup={onFollowup}
+            isCollapsed={isCollapsed}
+            onRemoveImage={handleRemoveImage}
+            onReorderImages={handleReorderImages}
+            onUploadEditImage={handleUploadEditImage}
+            precedingUserImages={precedingUserImages}
+            precedingUserImageNames={precedingUserImageNames}
+            onDeleteTurn={deleteTurnId ? handleDeleteTurn : undefined}
+          />
+        </div>
+      </div>
+      {isCollapsedSelf && responsesCount > 0 && (
+        <button
+          type="button"
+          onClick={handleToggle}
+          className="mt-1 inline-flex items-center gap-1.5 self-start rounded-full border border-border bg-secondary/60 px-2.5 py-0.5 text-[11.5px] text-muted-foreground transition-colors hover:bg-secondary"
+        >
+          <ChevronRight className="h-3 w-3" />
+          <span>응답 {responsesCount}개 접힘 — 클릭하여 펼치기</span>
+        </button>
+      )}
+    </div>
+  );
+});
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function ChatRoom() {
   const { t, lang } = useI18n();
@@ -1306,6 +1423,9 @@ export default function ChatRoom() {
   // effect 가 재등록될 때마다 클로저가 새로 만들어져 250ms 타이머가 영원히 못 끝나는 버그.
   // ref 로 빼서 effect 재실행과 무관하게 살아남음.
   const scrollStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 스크롤 중 여부를 ref 로 추적 — scroll 이벤트마다 setIsScrolling(true) 를 호출하면
+  // 매 픽셀마다 re-render 가 트리거되므로, 이미 scrolling 상태면 state 업데이트를 생략.
+  const isScrollingRef = useRef(false);
   // loadOlderMessages / loadNewerMessages 의 최신 정체성을 ref 로 추적.
   const loadOlderRef = useRef(loadOlderMessages);
   const loadNewerRef = useRef(loadNewerMessages);
@@ -1325,9 +1445,14 @@ export default function ChatRoom() {
       if (distFromBottom < 800) void loadNewerRef.current();
       // 자동 스크롤 윈도우 안이면 isScrolling 토글 생략.
       if (Date.now() < programmaticScrollRef.current) return;
-      setIsScrolling(true);
+      // 이미 스크롤 중이면 불필요한 state 업데이트 생략 (매 픽셀마다 setIsScrolling 호출 방지).
+      if (!isScrollingRef.current) {
+        isScrollingRef.current = true;
+        setIsScrolling(true);
+      }
       if (scrollStopTimerRef.current) clearTimeout(scrollStopTimerRef.current);
       scrollStopTimerRef.current = setTimeout(() => {
+        isScrollingRef.current = false;
         setIsScrolling(false);
         scrollStopTimerRef.current = null;
       }, 250);
@@ -3094,6 +3219,62 @@ export default function ChatRoom() {
     return false;
   }
 
+  // ─── memo(MessageItem) 최적화용 stable 콜백 ───────────────────────────────
+  // 아래 함수들은 렌더마다 새 참조가 생성된다. ref 에 최신 버전을 저장해두고
+  // useCallback([], []) 으로 감싼 stable wrapper 를 MessageItem 에 내려보내면
+  // streaming 중 ChatRoom 이 re-render 되어도 non-live MessageItem 들이 bailout 한다.
+  // (ref 업데이트는 render 중 동기 수행 → 항상 최신 클로저를 가리킴)
+  const _rmImg = removeMessageImage;
+  const _roImg = reorderMessageImages;
+  const _upImg = uploadEditImage;
+  const _delTurn = deleteTurn;
+  const _toggleCollapse = toggleTurnCollapse;
+  const _editContent = editUserMessageContent;
+  const _pinImg = togglePinImage;
+  const _attachImg = attachImageFromUrl;
+  const _send = send;
+  const _stableRmImg = useRef(_rmImg);
+  const _stableRoImg = useRef(_roImg);
+  const _stableUpImg = useRef(_upImg);
+  const _stableDelTurn = useRef(_delTurn);
+  const _stableToggleCollapse = useRef(_toggleCollapse);
+  const _stableEditContent = useRef(_editContent);
+  const _stablePinImg = useRef(_pinImg);
+  const _stableAttachImg = useRef(_attachImg);
+  const _stableSend = useRef(_send);
+  _stableRmImg.current = _rmImg;
+  _stableRoImg.current = _roImg;
+  _stableUpImg.current = _upImg;
+  _stableDelTurn.current = _delTurn;
+  _stableToggleCollapse.current = _toggleCollapse;
+  _stableEditContent.current = _editContent;
+  _stablePinImg.current = _pinImg;
+  _stableAttachImg.current = _attachImg;
+  _stableSend.current = _send;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const stableRmImg = useCallback((id: string, url: string) => _stableRmImg.current(id, url), []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const stableRoImg = useCallback((id: string, urls: string[]) => _stableRoImg.current(id, urls), []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const stableUpImg = useCallback((id: string, dataUrl: string, fileName: string) => _stableUpImg.current(id, dataUrl, fileName), []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const stableDelTurn = useCallback((id: string) => _stableDelTurn.current(id), []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const stableToggleCollapse = useCallback((id: string) => _stableToggleCollapse.current(id), []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const stableEditContent = useCallback((id: string, content: string) => _stableEditContent.current(id, content), []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const stablePinImg = useCallback((id: string, url: string | null) => _stablePinImg.current(id, url), []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const stableAttachImg = useCallback((url: string) => _stableAttachImg.current(url), []);
+  const stableOpenArtifact = useCallback((a: Artifact) => setActiveArtifact(a), []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const stableFollowup = useCallback((text: string) => void _stableSend.current(text, [], []), []);
+  const stableSetMsgRef = useCallback((id: string, el: HTMLDivElement | null) => {
+    messageRefs.current.set(id, el);
+  }, []);
+  // ─────────────────────────────────────────────────────────────────────────
+
   if (!authChecked) {
     return <div className="h-dvh w-screen bg-background" />;
   }
@@ -3404,7 +3585,6 @@ export default function ChatRoom() {
                 const renderMessage = (m: Message, idx: number) => {
                 const isCollapsibleUser =
                   m.role === 'user' && turnHasResponse.has(m.id);
-                // 접힘으로 가려진 메시지 OR 삭제 모션 OR 재정렬 후 unfold 직전(잠깐 접힌) 메시지 — 동일 collapse 트랜지션 사용.
                 const isDeleting = deletingMessageIds.has(m.id);
                 const isUnfolding = unfoldingMessageIds.has(m.id);
                 const isHiddenByCollapse =
@@ -3413,10 +3593,9 @@ export default function ChatRoom() {
                   isCollapsibleUser && collapsedTurns.has(m.id);
                 const responsesCount =
                   isCollapsibleUser ? hiddenCountByTurn.get(m.id) ?? 0 : 0;
-                // assistant 메시지의 경우 직전 user 메시지의 첨부 이미지를 References 위 영역에 노출.
                 const precedingUser =
                   m.role === 'assistant' && idx > 0
-                    ? (active?.messages ?? [])[idx - 1]
+                    ? msgs[idx - 1]
                     : null;
                 const precedingUserImages =
                   precedingUser?.role === 'user' &&
@@ -3428,83 +3607,43 @@ export default function ChatRoom() {
                   precedingUser?.role === 'user'
                     ? precedingUser.imageNames
                     : undefined;
+                const deleteTurnId =
+                  m.role === 'user'
+                    ? m.id
+                    : msgs.slice(0, idx).reverse().find((mm) => mm.role === 'user')?.id;
                 return (
-                  <div
+                  <MessageItem
                     key={m.id}
-                    ref={(el) => {
-                      messageRefs.current.set(m.id, el);
-                    }}
-                    className="relative"
-                  >
-                    {/* turn 접힘 시 본문(메시지 버블 영역) 부드럽게 collapse. */}
-                    <div
-                      className={cn(
-                        'grid overflow-clip transition-[grid-template-rows,opacity,margin] duration-300 ease-out',
-                        isHiddenByCollapse
-                          ? 'grid-rows-[0fr] opacity-0 pointer-events-none -my-1'
-                          : 'grid-rows-[1fr] opacity-100',
-                      )}
-                    >
-                      <div className="min-h-0">
-                        <MessageBubble
-                          message={m}
-                          convKind={active?.kind ?? 'thread'}
-                          userOrdinal={userOrdinalByMsgId.get(m.id)}
-                          // greeting = 첫 user 메시지 전의 assistant 인사말 — 편집 탭 등 메타 UI 숨김.
-                          isGreeting={
-                            m.role === 'assistant' &&
-                            msgs.slice(0, idx).every((mm) => mm.role !== 'user')
-                          }
-                          onEditContent={editUserMessageContent}
-                          onPinImage={togglePinImage}
-                          attachedSourceUrls={attachedSourceUrls}
-                          onOpenArtifact={(a) => {
-                            setActiveArtifact(a);
-                          }}
-                          activeArtifactId={activeArtifact?.id ?? null}
-                          onAttachImage={attachImageFromUrl}
-                          isFresh={freshIds.has(m.id)}
-                          isLive={m.id === liveMessageId}
-                          onFollowup={(text) => {
-                            void send(text, [], []);
-                          }}
-                          isCollapsed={
-                            isCollapsibleUser && collapsedTurns.has(m.id)
-                          }
-                          onRemoveImage={(url) =>
-                            removeMessageImage(m.id, url)
-                          }
-                          onReorderImages={(orderedUrls) =>
-                            reorderMessageImages(m.id, orderedUrls)
-                          }
-                          onUploadEditImage={(dataUrl, fileName) =>
-                            uploadEditImage(m.id, dataUrl, fileName)
-                          }
-                          precedingUserImages={precedingUserImages}
-                          precedingUserImageNames={precedingUserImageNames}
-                          onDeleteTurn={
-                            m.role === 'user'
-                              ? () => deleteTurn(m.id)
-                              : (() => {
-                                  const prevUser = msgs.slice(0, idx).reverse().find((mm) => mm.role === 'user');
-                                  return prevUser ? () => deleteTurn(prevUser.id) : undefined;
-                                })()
-                          }
-                        />
-                      </div>
-                    </div>
-                    {/* user msg가 접힌 상태이면 응답 N개 접힘 표시 */}
-                    {isCollapsedSelf && responsesCount > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => toggleTurnCollapse(m.id)}
-                        className="mt-1 inline-flex items-center gap-1.5 self-start rounded-full border border-border bg-secondary/60 px-2.5 py-0.5 text-[11.5px] text-muted-foreground transition-colors hover:bg-secondary"
-                      >
-                        <ChevronRight className="h-3 w-3" />
-                        <span>{responsesCount}개의 응답이 접힘 — 클릭하여 펼치기</span>
-                      </button>
-                    )}
-                  </div>
+                    m={m}
+                    deleteTurnId={deleteTurnId}
+                    isHiddenByCollapse={isHiddenByCollapse}
+                    isCollapsedSelf={isCollapsedSelf}
+                    responsesCount={responsesCount}
+                    precedingUserImages={precedingUserImages}
+                    precedingUserImageNames={precedingUserImageNames}
+                    convKind={active?.kind ?? 'thread'}
+                    userOrdinal={userOrdinalByMsgId.get(m.id)}
+                    activeArtifactId={activeArtifact?.id ?? null}
+                    attachedSourceUrls={attachedSourceUrls}
+                    isFresh={freshIds.has(m.id)}
+                    isLive={m.id === liveMessageId}
+                    isCollapsed={isCollapsibleUser && collapsedTurns.has(m.id)}
+                    isGreeting={
+                      m.role === 'assistant' &&
+                      msgs.slice(0, idx).every((mm) => mm.role !== 'user')
+                    }
+                    onEditContent={stableEditContent}
+                    onPinImage={stablePinImg}
+                    onOpenArtifact={stableOpenArtifact}
+                    onAttachImage={stableAttachImg}
+                    onFollowup={stableFollowup}
+                    onRemoveImageById={stableRmImg}
+                    onReorderImagesById={stableRoImg}
+                    onUploadEditImageById={stableUpImg}
+                    onDeleteTurnById={stableDelTurn}
+                    onToggleTurnCollapse={stableToggleCollapse}
+                    setMsgRef={stableSetMsgRef}
+                  />
                 );
                 };
                 // 그룹화: 첫 user 메시지 이전은 leading (greeting 등), 이후엔 각 user 가 새 turn 의 시작.
@@ -3550,10 +3689,6 @@ export default function ChatRoom() {
         >
           {/* 페이드 마스크 — 입력창 영역(약 96px) 만큼 background 색이 아래에서 위로 옅어진다.
               라운드 버튼(bg-card 불투명)을 가리지 않도록 wrapper bg 가 아니라 별도 absolute 레이어로. */}
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-background via-background/95 to-transparent"
-          />
           <div
             className={cn(
               'relative w-full px-3 pb-2 transition-[max-width] duration-300 ease-out md:pl-4 md:pr-6',

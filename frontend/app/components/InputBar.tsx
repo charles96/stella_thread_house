@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState,
   KeyboardEvent,
@@ -105,6 +106,11 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
   const [isIOS, setIsIOS] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [cameraModal, setCameraModal] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
+  const [collapsedWidth, setCollapsedWidth] = useState(240);
+  const [streamingWidth, setStreamingWidth] = useState(164);
+  const measureRef = useRef<HTMLSpanElement>(null);
+  const streamingMeasureRef = useRef<HTMLSpanElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
@@ -248,9 +254,33 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
     setCameraModal(false);
   }
 
+  const placeholderText = isStreaming ? '' : isMobile ? 'Type a message' : t('input.placeholder');
+
+  useLayoutEffect(() => {
+    if (measureRef.current) {
+      // pl-3(12) + p-1.5+w-8+p-1.5(44) + w-px(1) + p-1.5+w-8+p-1.5(44) = 101px
+      setCollapsedWidth(measureRef.current.offsetWidth + 106);
+    }
+  }, [placeholderText]);
+
+  useLayoutEffect(() => {
+    if (streamingMeasureRef.current) {
+      // px-3 양쪽(24px) + stop 버튼 p-1.5+w-8+p-1.5(44px)
+      setStreamingWidth(streamingMeasureRef.current.offsetWidth + 68);
+    }
+  }, [liveTokRate]);
+
+  // 스트리밍 중에는 포커스 여부 무시 — 전송 직후 textarea 포커스가 남아 있어도 축소 상태로.
+  const isStreamingCollapsed = isStreaming && value.length === 0 && images.length === 0;
+  const isExpanded = !isStreamingCollapsed && (isFocused || value.length > 0 || images.length > 0);
+  // tok/s 데이터가 실제로 있는지 — 없으면 중지 버튼만 표시
+  const hasTokRate = typeof liveTokRate === 'number' && liveTokRate > 0;
+
   const sendDisabled = disabled || !value.trim();
   const attachDisabled = disabled || images.length >= MAX_FILES;
   const hasImages = images.length > 0;
+  // 중지 버튼만 있을 때 너비: glow border(3px) + p-1.5+w-8+p-1.5(44px) = 47px
+  const stopOnlyWidth = 47;
 
   return (
     <>
@@ -283,6 +313,23 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
         </div>
       </div>
     )}
+    {/* placeholder 너비 측정용 숨김 span */}
+    <span
+      ref={measureRef}
+      aria-hidden
+      className="pointer-events-none invisible absolute whitespace-nowrap text-sm"
+    >
+      {placeholderText}
+    </span>
+    {/* 스트리밍 tok/s 너비 측정용 숨김 span */}
+    <span
+      ref={streamingMeasureRef}
+      aria-hidden
+      className="pointer-events-none invisible absolute whitespace-nowrap text-sm font-medium tabular-nums"
+    >
+      {typeof liveTokRate === 'number' && liveTokRate > 0 ? `${liveTokRate.toFixed(1)} tok/s` : '…'}
+    </span>
+
     <div className="relative px-4 py-2">
       {/* 첨부 이미지 미리보기 */}
       {hasImages && (
@@ -314,13 +361,19 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
       {/* 입력 + 팝업 래퍼 */}
       <div className="relative" data-attach-menu>
 
-        {/* 팝업 메뉴 — 채팅창 뒤에서 슬라이드업 */}
+        {/* 통합 입력 컨테이너 (팝업 위에 렌더링) */}
+        <div
+          className="input-glow-border mx-auto transition-[width] duration-300 ease-in-out"
+          style={{ width: isMobile ? '100%' : isStreamingCollapsed ? `${hasTokRate ? streamingWidth : stopOnlyWidth}px` : isExpanded ? '100%' : `${collapsedWidth}px` }}
+        >
+        {/* 팝업 메뉴 — 채팅창 너비 기준으로 슬라이드업 */}
         {menuOpen && (
           <div className="absolute bottom-0 left-0 right-0 rounded-2xl border border-border bg-card shadow-[0_0_0_4px_rgba(0,0,0,0.12),0_-4px_24px_rgba(0,0,0,0.22)] animate-in slide-in-from-bottom-2 duration-200">
             <div aria-hidden className="pointer-events-none absolute inset-x-0 -top-8 h-8 bg-gradient-to-t from-background/60 via-background/30 to-transparent" />
             <div className="flex flex-col p-1 pb-14">
               <button
                 type="button"
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={() => { setMenuOpen(false); openCamera(); }}
                 className="flex items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-medium transition-colors hover:bg-accent active:bg-accent"
               >
@@ -332,6 +385,7 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
               <div className="mx-3 h-px bg-border" />
               <button
                 type="button"
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={() => { setMenuOpen(false); fileRef.current?.click(); }}
                 className="flex items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-medium transition-colors hover:bg-accent active:bg-accent"
               >
@@ -343,71 +397,88 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
             </div>
           </div>
         )}
-
-        {/* 통합 입력 컨테이너 (팝업 위에 렌더링) */}
         <div
+          onClick={() => { if (!isExpanded) textareaRef.current?.focus(); }}
           className={cn(
-            'relative flex items-center rounded-2xl bg-secondary shadow-md transition-transform duration-200',
+            'relative flex items-center bg-secondary transition-transform duration-300 ease-in-out',
             pulse && '-translate-y-1 scale-[0.98]',
+            !isExpanded && 'cursor-text',
           )}
         >
-          {/* Textarea */}
-          <div className="relative min-w-0 flex-1 pl-3">
-            <Textarea
-              ref={textareaRef}
-              value={value}
-              rows={1}
-              placeholder={isStreaming ? '' : isMobile ? 'Type a message' : t('input.placeholder')}
-              onChange={(e) => setValue(e.target.value)}
-              onKeyDown={onKeyDown}
-              disabled={disabled}
+          {/* 스트리밍 축소 상태 — tok/s: rate 생기면 grid 트릭으로 부드럽게 확장 */}
+          {isStreamingCollapsed && (
+            <div
               className={cn(
-                'min-h-[38px] w-full resize-none overflow-y-hidden border-0 bg-transparent py-[9px] px-0 shadow-none outline-none ring-0 ring-offset-0 focus-visible:ring-0 focus-visible:ring-offset-0',
-                disabled && 'cursor-not-allowed opacity-60',
-              )}
-            />
-            {isStreaming && (
-              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                <span className="animate-in fade-in tabular-nums text-[11px] text-muted-foreground/70 duration-200">
-                  {typeof liveTokRate === 'number' && liveTokRate > 0
-                    ? `${liveTokRate.toFixed(1)} tok/s`
-                    : '…'}
-                </span>
-              </div>
-            )}
-          </div>
-
-          {/* + 버튼 */}
-          <div className="shrink-0 p-1.5">
-            <button
-              type="button"
-              onClick={() => {
-                if (attachDisabled) return;
-                if (isIOS) { fileRef.current?.click(); }
-                else { setMenuOpen((v) => !v); }
-              }}
-              disabled={attachDisabled}
-              aria-label={t('input.attach')}
-              className={cn(
-                'flex h-8 w-8 items-center justify-center rounded-full transition-colors',
-                hasImages
-                  ? 'bg-primary text-primary-foreground'
-                  : 'text-muted-foreground hover:bg-accent hover:text-primary',
-                attachDisabled && 'cursor-not-allowed opacity-40',
+                'grid min-w-0 overflow-hidden transition-[grid-template-columns,opacity] duration-300 ease-in-out',
+                hasTokRate ? 'grid-cols-[1fr] opacity-100' : 'grid-cols-[0fr] opacity-0',
               )}
             >
-              <Plus className="h-4 w-4" />
-            </button>
-          </div>
+              <div className="min-w-0 overflow-hidden">
+                <span className="block whitespace-nowrap px-3 tabular-nums text-sm font-medium text-foreground/80">
+                  {hasTokRate ? `${liveTokRate!.toFixed(1)} tok/s` : ''}
+                </span>
+              </div>
+            </div>
+          )}
 
-          {/* 구분선 */}
-          <div className="shrink-0 self-center h-4 w-px bg-foreground/20" />
+          {/* Textarea + + 버튼 + 구분선 — 스트리밍 끝나면 fade-in 으로 자연스럽게 등장 */}
+          {!isStreamingCollapsed && (
+            <div className="flex min-w-0 flex-1 items-center animate-in fade-in duration-300">
+              <div className="relative min-w-0 flex-1 pl-3">
+                {!value && !isStreaming && (
+                  <span className="pointer-events-none absolute inset-y-0 left-0 right-0 pl-3 flex items-center text-sm text-muted-foreground truncate">
+                    {placeholderText}
+                  </span>
+                )}
+                <Textarea
+                  ref={textareaRef}
+                  value={value}
+                  rows={1}
+                  placeholder=""
+                  onChange={(e) => setValue(e.target.value)}
+                  onKeyDown={onKeyDown}
+                  onFocus={() => setIsFocused(true)}
+                  onBlur={() => setIsFocused(false)}
+                  disabled={disabled}
+                  className={cn(
+                    'min-h-[44px] w-full resize-none overflow-y-hidden border-0 bg-transparent py-3 px-0 leading-5 shadow-none outline-none ring-0 ring-offset-0 focus-visible:ring-0 focus-visible:ring-offset-0',
+                    disabled && 'cursor-not-allowed opacity-60',
+                  )}
+                />
+              </div>
+              <div className="shrink-0 p-1.5">
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (attachDisabled) return;
+                    if (isIOS) { fileRef.current?.click(); }
+                    else { setMenuOpen((v) => !v); }
+                  }}
+                  disabled={attachDisabled}
+                  aria-label={t('input.attach')}
+                  className={cn(
+                    'flex h-8 w-8 items-center justify-center rounded-full transition-colors',
+                    hasImages
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-muted-foreground hover:bg-accent hover:text-primary',
+                    attachDisabled && 'cursor-not-allowed opacity-40',
+                  )}
+                >
+                  <Plus className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="shrink-0 self-center h-4 w-px bg-foreground/20" />
+            </div>
+          )}
 
           {/* Send / Stop 버튼 */}
           <div className="shrink-0 p-1.5">
             {isStreaming && onStop ? (
               <button
                 type="button"
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={onStop}
                 title="Stop"
                 aria-label="Stop"
@@ -418,6 +489,7 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
             ) : (
               <button
                 type="button"
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={submit}
                 disabled={sendDisabled}
                 aria-label={t('input.send')}
@@ -432,6 +504,7 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
               </button>
             )}
           </div>
+        </div>
         </div>
       </div>
     </div>

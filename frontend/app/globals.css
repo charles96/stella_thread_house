@@ -1,6 +1,27 @@
 @import 'katex/dist/katex.min.css';
 @import url('https://fonts.googleapis.com/css2?family=Caveat:wght@400;500;600;700&family=Gaegu:wght@400;700&display=swap');
 
+/* 채팅창 그라디언트 보더 */
+.input-glow-border {
+  position: relative;
+  border-radius: 1rem;
+  padding: 1.5px;
+  background: linear-gradient(270deg, #3b82f6, #7c3aed, #ec4899, #ef4444);
+}
+.input-glow-border::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  background: inherit;
+  filter: blur(10px);
+  opacity: 0.5;
+  z-index: -1;
+}
+.input-glow-border > * {
+  border-radius: calc(1rem - 1.5px);
+}
+
 /* 손글씨/낙서 느낌 폰트 — Caveat(영문) + Gaegu(한글) 조합. 본문은 시스템 폰트 유지. */
 .font-doodle {
   font-family: 'Caveat', 'Gaegu', 'Apple SD Gothic Neo', 'Malgun Gothic', cursive;
