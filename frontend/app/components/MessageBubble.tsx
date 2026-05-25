@@ -2355,7 +2355,8 @@ function MessageBubble({
               // 인라인 확대 모드(expandedImageIndex !== null)에서는 큰 이미지 하단이 잘리니 비활성화.
               expandedImageIndex === null &&
                 (readPageImagesFlat.length >= 1 ||
-                  (precedingUserImages?.length ?? 0) >= 1) &&
+                  (precedingUserImages?.length ?? 0) >= 1 ||
+                  (message.editImages?.length ?? 0) >= 1) &&
                 'relative z-10 -mt-14',
             )}
           >
