@@ -1463,6 +1463,63 @@ export default function ChatRoom() {
     };
   }, []);
 
+  // InputBar overlay 의 wheel/touch 이벤트를 scrollRef 로 포워딩.
+  // document 에 리스너를 달고 핸들러에서 scrollRef.current 를 lazy 참조 → 조건부 렌더링 무관하게 동작.
+  useEffect(() => {
+    const isInputArea = (target: HTMLElement, scrollEl: HTMLElement): boolean => {
+      // scrollRef 안의 이벤트는 native scroll 이 처리하므로 skip.
+      if (scrollEl.contains(target)) return false;
+      // scrollRef 와 같은 <main> 안에 있는지 확인 → 다른 라우트의 wheel 은 무시.
+      const main = scrollEl.closest('main');
+      return !!main && main.contains(target);
+    };
+    const isScrollableTextarea = (target: HTMLElement): boolean =>
+      target.tagName === 'TEXTAREA' &&
+      (target as HTMLTextAreaElement).scrollHeight > target.clientHeight;
+
+    const onWheel = (e: WheelEvent) => {
+      const scrollEl = scrollRef.current;
+      if (!scrollEl) return;
+      const t = e.target as HTMLElement;
+      if (!isInputArea(t, scrollEl)) return;
+      if (isScrollableTextarea(t)) return;
+      scrollEl.scrollTop += e.deltaY;
+    };
+    let touchY = 0;
+    let touchActive = false;
+    const onTouchStart = (e: TouchEvent) => {
+      const scrollEl = scrollRef.current;
+      if (!scrollEl) return;
+      const t = e.target as HTMLElement;
+      if (!isInputArea(t, scrollEl)) { touchActive = false; return; }
+      touchActive = true;
+      touchY = e.touches[0].clientY;
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      if (!touchActive) return;
+      const scrollEl = scrollRef.current;
+      if (!scrollEl) return;
+      const t = e.target as HTMLElement;
+      if (isScrollableTextarea(t)) return;
+      scrollEl.scrollTop += touchY - e.touches[0].clientY;
+      touchY = e.touches[0].clientY;
+    };
+    const onTouchEnd = () => { touchActive = false; };
+
+    document.addEventListener('wheel', onWheel, { passive: true });
+    document.addEventListener('touchstart', onTouchStart, { passive: true });
+    document.addEventListener('touchmove', onTouchMove, { passive: true });
+    document.addEventListener('touchend', onTouchEnd, { passive: true });
+    document.addEventListener('touchcancel', onTouchEnd, { passive: true });
+    return () => {
+      document.removeEventListener('wheel', onWheel);
+      document.removeEventListener('touchstart', onTouchStart);
+      document.removeEventListener('touchmove', onTouchMove);
+      document.removeEventListener('touchend', onTouchEnd);
+      document.removeEventListener('touchcancel', onTouchEnd);
+    };
+  }, []);
+
   // 백엔드에 conversation 메타가 없으면 만든다 (첫 메시지 전송 직전에 호출).
   const ensureConversationOnServer = useCallback(
     async (c: Conversation): Promise<void> => {
@@ -2680,6 +2737,48 @@ export default function ChatRoom() {
     let streamStartedAt = 0;
     let lastRateUpdate = 0;
 
+    // SSE chunk 들을 rAF 단위(~60fps)로 모아 한 번에 patchConv → 매 chunk re-render 방지.
+    // content/thinking 은 누적 후 frame 마다 flush; 다른 필드(sources/pages 등)는 즉시 업데이트되어도
+    // 독립된 필드라 ordering 문제 없음.
+    let pendingContent = '';
+    let pendingThinking = '';
+    let pendingClearStatus = false;
+    let flushHandle: number | null = null;
+    const flushStream = () => {
+      if (flushHandle !== null) {
+        cancelAnimationFrame(flushHandle);
+        flushHandle = null;
+      }
+      if (!pendingContent && !pendingThinking && !pendingClearStatus) return;
+      const addedContent = pendingContent;
+      const addedThinking = pendingThinking;
+      const clearStatus = pendingClearStatus;
+      pendingContent = '';
+      pendingThinking = '';
+      pendingClearStatus = false;
+      patchConv((c) => ({
+        ...c,
+        messages: c.messages.map((m) =>
+          m.id === botId
+            ? {
+                ...m,
+                content: addedContent ? m.content + addedContent : m.content,
+                thinking: addedThinking
+                  ? (m.thinking ?? '') + addedThinking
+                  : m.thinking,
+                status: clearStatus ? undefined : m.status,
+              }
+            : m,
+        ),
+        updatedAt: Date.now(),
+      }));
+    };
+    const scheduleFlush = () => {
+      if (flushHandle === null) {
+        flushHandle = requestAnimationFrame(flushStream);
+      }
+    };
+
     // 스트리밍 abort 용 컨트롤러 — Stop 버튼이나 페이지 떠날 때 사용.
     const ctrl = new AbortController();
     streamAbortRef.current = ctrl;
@@ -2752,15 +2851,8 @@ export default function ChatRoom() {
             const json = JSON.parse(payload);
             if (json.error) throw new Error(json.error);
             if (json.type === 'thinking' && json.text) {
-              patchConv((c) => ({
-                ...c,
-                messages: c.messages.map((m) =>
-                  m.id === botId
-                    ? { ...m, thinking: (m.thinking ?? '') + json.text }
-                    : m,
-                ),
-                updatedAt: Date.now(),
-              }));
+              pendingThinking += json.text;
+              scheduleFlush();
             } else if (json.type === 'content' && json.text) {
               accumulatedContent += json.text;
               const now = Date.now();
@@ -2772,19 +2864,9 @@ export default function ChatRoom() {
                 }
                 lastRateUpdate = now;
               }
-              patchConv((c) => ({
-                ...c,
-                messages: c.messages.map((m) =>
-                  m.id === botId
-                    ? {
-                        ...m,
-                        content: m.content + json.text,
-                        status: undefined,
-                      }
-                    : m,
-                ),
-                updatedAt: Date.now(),
-              }));
+              pendingContent += json.text;
+              pendingClearStatus = true;
+              scheduleFlush();
             } else if (json.type === 'search' && Array.isArray(json.results)) {
               const rawImgs: unknown[] = Array.isArray(json.images)
                 ? json.images
@@ -2980,6 +3062,7 @@ export default function ChatRoom() {
               }));
             } else if (json.type === 'ai_done') {
               // AI 발화 완료 — 입력창 즉시 열기. 해시태그 SSE 는 이후에 도착.
+              flushStream();
               setPending(false);
               setLiveMessageId(null);
               setLiveTokRate(null);
@@ -3035,6 +3118,7 @@ export default function ChatRoom() {
         }));
       }
     } finally {
+      flushStream();
       streamAbortRef.current = null;
       streamMsgIdsRef.current = null;
       setPending(false);
@@ -3687,8 +3771,8 @@ export default function ChatRoom() {
             isScrolling ? 'opacity-0' : 'opacity-100',
           )}
         >
-          {/* 페이드 마스크 — 입력창 영역(약 96px) 만큼 background 색이 아래에서 위로 옅어진다.
-              라운드 버튼(bg-card 불투명)을 가리지 않도록 wrapper bg 가 아니라 별도 absolute 레이어로. */}
+          {/* 전체 가로 그라데이션 음영 — 입력창 아래 영역을 부드럽게 덮음 */}
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-36 bg-gradient-to-t from-background via-background/80 to-transparent" />
           <div
             className={cn(
               'relative w-full px-3 pb-2 transition-[max-width] duration-300 ease-out md:pl-4 md:pr-6',

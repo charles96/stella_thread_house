@@ -66,6 +66,16 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
   useEffect(() => { setVisionOn(images.length > 0); }, [images.length]);
   useEffect(() => { onAttachedChange?.(images); }, [images, onAttachedChange]);
 
+  // 스트리밍 종료 시 포커스 해제 → 채팅창이 unfocused 상태로 복귀
+  const prevStreamingRef = useRef(false);
+  useEffect(() => {
+    if (prevStreamingRef.current && !isStreaming) {
+      textareaRef.current?.blur();
+      setIsFocused(false);
+    }
+    prevStreamingRef.current = isStreaming;
+  }, [isStreaming]);
+
   // 바텀 시트 바깥 클릭 닫기
   useEffect(() => {
     if (!menuOpen) return;

@@ -6,7 +6,7 @@
   position: relative;
   border-radius: 1rem;
   padding: 1.5px;
-  background: linear-gradient(270deg, #3b82f6, #7c3aed, #ec4899, #ef4444);
+  background: linear-gradient(270deg, #3b82f6, #6366f1, #ef4444);
 }
 .input-glow-border::before {
   content: '';
@@ -15,7 +15,7 @@
   border-radius: inherit;
   background: inherit;
   filter: blur(10px);
-  opacity: 0.5;
+  opacity: 0.45;
   z-index: -1;
 }
 .input-glow-border > * {

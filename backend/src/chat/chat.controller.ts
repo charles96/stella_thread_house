@@ -229,17 +229,13 @@ export class ChatController {
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders?.();
 
-    // 클라이언트 연결 상태만 추적 — abort signal 과 분리.
-    // disconnect 해도 백엔드 처리는 끝까지 진행 → 메시지 보존.
     let clientConnected = true;
+    const abortCtrl = new AbortController();
     req.on('close', () => {
       clientConnected = false;
-      this.logger.log(
-        '[chat/stream] client disconnected — continuing in background',
-      );
+      abortCtrl.abort();
+      this.logger.log('[chat/stream] client disconnected — LLM stream aborted');
     });
-    // 명시적 abort 가 필요한 외부 의존(Tavily/Ollama) 호출은 자체 timeout 사용 — 여기선 결코 abort 되지 않는 신호를 넘김.
-    const noopCtrl = new AbortController();
 
     // persist 가 있으면 user 메시지 + assistant placeholder 를 즉시 저장.
     const userId = (req.user as { sub: string } | undefined)?.sub;
@@ -315,7 +311,7 @@ export class ChatController {
         visionModel: body.visionModel,
         useVision: body.useVision,
         endpoint: body.endpoint,
-        signal: noopCtrl.signal,
+        signal: abortCtrl.signal,
         kind: body.kind,
         userName,
         tavilyTopRead: body.tavilyTopRead,
@@ -334,9 +330,14 @@ export class ChatController {
       // AI 발화 완료 즉시 전송 → 프론트 입력창 바로 열림.
       writeIfConnected(`data: ${JSON.stringify({ type: 'ai_done' })}\n\n`);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'unknown error';
-      writeIfConnected(`data: ${JSON.stringify({ error: message })}\n\n`);
-      this.logger.warn(`[chat/stream] error during generation: ${message}`);
+      const isAbort =
+        abortCtrl.signal.aborted ||
+        (err instanceof Error && err.name === 'AbortError');
+      if (!isAbort) {
+        const message = err instanceof Error ? err.message : 'unknown error';
+        writeIfConnected(`data: ${JSON.stringify({ error: message })}\n\n`);
+        this.logger.warn(`[chat/stream] error during generation: ${message}`);
+      }
     } finally {
       clearInterval(heartbeat);
       if (persistCtx) {
