@@ -422,7 +422,7 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
                 onClick={onStop}
                 title="Stop"
                 aria-label="Stop"
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-destructive text-destructive-foreground transition-colors hover:bg-destructive/90"
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-destructive text-destructive-foreground shadow-[0_0_12px_3px_rgba(239,68,68,0.5)] transition-colors hover:bg-destructive/90 hover:shadow-[0_0_16px_5px_rgba(239,68,68,0.6)]"
               >
                 <Square className="h-3.5 w-3.5 fill-current" />
               </button>
