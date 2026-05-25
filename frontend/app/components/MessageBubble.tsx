@@ -1971,17 +1971,11 @@ function MessageBubble({
               <div aria-hidden className="mb-2 min-h-[170px]" />
             ) : null;
           }
-          // PIN 시각 상태 — 명시적 PIN 이거나, 이미지가 1장이라 자동 확대된 경우.
-          // 1장 케이스라도 사용자가 UNPIN 클릭으로 자동 PIN 을 해제한 URL 은 시각 PIN 끔 (autoPinOverrideUrls).
-          const isSingleAuto = combinedImages.length === 1;
+          // PIN 시각 상태 — 사용자가 명시적으로 PIN 한 경우에만 활성.
           const isExplicitlyPinned = expanded
             ? message.pinnedImageUrl === expanded.url
             : false;
-          const isAutoPinActive =
-            !!expanded &&
-            isSingleAuto &&
-            !autoPinOverrideUrls.has(expanded.url);
-          const isPinnedEffective = isExplicitlyPinned || isAutoPinActive;
+          const isPinnedEffective = isExplicitlyPinned;
           // 확대 모드 — 스캐터 자리에 큰 이미지 한 장. 클릭하면 다시 스캐터로 복귀.
           if (expanded) {
             const youtubeId = (() => {
@@ -2185,23 +2179,15 @@ function MessageBubble({
                           onMouseDown={(e) => e.preventDefault()}
                           onClick={() => {
                             if (isExplicitlyPinned) {
-                              // 명시적 PIN 해제 → DB 정리. 자동 PIN 도 같이 끄려면 override 에 추가.
+                              // 명시적 PIN 해제 → DB 정리.
                               onPinImage(message.id, null);
                               setAutoPinOverrideUrls((prev) => {
                                 const next = new Set(prev);
                                 next.add(expanded.url);
                                 return next;
                               });
-                            } else if (isAutoPinActive) {
-                              // 자동 PIN 해제 — 시각 PIN 표시만 끄고 이미지는 그대로 노출 유지.
-                              // 이후 Close/Delete 버튼이 활성화돼 다른 액션 가능.
-                              setAutoPinOverrideUrls((prev) => {
-                                const next = new Set(prev);
-                                next.add(expanded.url);
-                                return next;
-                              });
                             } else {
-                              // PIN 설정 → DB 저장. override 에 있었다면 제거 (다시 자동 PIN 인정).
+                              // PIN 설정 → DB 저장.
                               onPinImage(message.id, expanded.url);
                               setAutoPinOverrideUrls((prev) => {
                                 if (!prev.has(expanded.url)) return prev;

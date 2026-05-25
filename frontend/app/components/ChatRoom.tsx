@@ -118,7 +118,7 @@ export interface Message {
   };
   // 포커 이미지 판넬에서 사용자가 PIN 한 이미지 URL — 다음 방문 시에도 자동 확대 노출.
   // metadata 로 DB 영속 → 페이지 이탈 후 복귀해도 유지.
-  pinnedImageUrl?: string;
+  pinnedImageUrl?: string | null;
   // Image Edit 모달에서 사용자가 정한 이미지 순서 — URL 배열. 포커 이미지 판넬은 이 순서대로 노출.
   // 비어있으면(undefined) 자연 순서(첨부 → readPages → searchImages) 그대로.
   // metadata.imageOrder 로 DB 영속.
@@ -2249,7 +2249,7 @@ export default function ChatRoom() {
               ...c,
               messages: c.messages.map((m) =>
                 m.id === messageId
-                  ? { ...m, pinnedImageUrl: url ?? undefined }
+                  ? { ...m, pinnedImageUrl: url }
                   : m,
               ),
             }
