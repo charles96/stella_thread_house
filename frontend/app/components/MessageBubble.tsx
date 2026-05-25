@@ -1669,43 +1669,6 @@ function MessageBubble({
   // ImageScatter 의 totalPages 를 lift-up — Stella 이름 행 우측에 < > 버튼 노출하기 위함.
   const [scatterTotalPages, setScatterTotalPages] = useState(1);
   // 사용자가 Close 버튼을 한 번이라도 눌렀는지 — 마운트 lifetime 동안 자동 확대 effect 를 완전 차단.
-  // autoPinOverrideUrls 와 별개의 안전장치: pinnedImageUrl 의 URL 표현이 expanded.url 과
-  // 미세하게 달라서 Set 검사를 못 잡는 케이스를 커버.
-  const userClosedRef = useRef(false);
-  // 1장만 있을 때 자동 클릭 트리거 — 같은 url 에 대해선 한번만 발화 (사용자가 닫으면 다시 안 열림).
-  const autoExpandedKeyRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (isUser) return;
-    if (userClosedRef.current) return;
-    const attached = (precedingUserImages ?? []).length;
-    const total = attached + readPageImagesFlat.length;
-    if (total === 0) return;
-    // 모바일에서는 이미지 장수 무관 자동 확대. 데스크탑은 1장일 때만.
-    const isMobile =
-      typeof window !== 'undefined' && window.innerWidth < 768;
-    const shouldAutoExpand = isMobile || total === 1;
-    if (shouldAutoExpand && expandedImageIndex === null) {
-      const key =
-        attached >= 1
-          ? (precedingUserImages ?? [])[0]
-          : readPageImagesFlat[0]?.url;
-      if (key && autoExpandedKeyRef.current !== key) {
-        autoExpandedKeyRef.current = key;
-        setExpandedImageIndex(0);
-      }
-    } else if (!isMobile && total !== 1) {
-      // 데스크탑: 이미지가 복수로 늘어났을 때 자동 확대 상태라면 포커 스캐터로 복귀.
-      if (autoExpandedKeyRef.current !== null && expandedImageIndex !== null) {
-        setExpandedImageIndex(null);
-      }
-      autoExpandedKeyRef.current = null;
-    }
-  }, [
-    isUser,
-    precedingUserImages,
-    readPageImagesFlat,
-    expandedImageIndex,
-  ]);
   // 메시지 metadata 에 저장된 pinnedImageUrl 을 마운트 시 (또는 갱신 시) 복원.
   // 인덱스는 반드시 화면에 실제 노출되는 `combinedImagesForEdit` 순서 (imageOrder 적용됨) 기준.
   // 자연 순서 (attached + readPages) 로 indexOf 하면 imageOrder 가 설정된 메시지에서
@@ -2069,8 +2032,6 @@ function MessageBubble({
                         disabled={closeDisabled}
                         onClick={() => {
                           if (closeDisabled) return;
-                          // 이 세션 동안 자동 확대 effect 일체 차단.
-                          userClosedRef.current = true;
                           if (expanded?.url) {
                             setAutoPinOverrideUrls((prev) => {
                               if (prev.has(expanded.url)) return prev;
