@@ -2969,7 +2969,7 @@ function MessageBubble({
               {/* Edit / Save / Cancel — 답변 마크다운 직접 편집.
                   Thread 모드 전용 + greeting 메시지 제외.
                   본문 버블이 있으면 -mt-2 로 겹쳐 탭 느낌, Reference only 면 mt-1 로 분리. */}
-              {onEditContent && convKind === 'thread' && !isGreeting && !isLive && (
+              {onEditContent && !isGreeting && !isLive && (convKind === 'thread' || hasProcessPanel) && (
                 <div className={cn((message.content || answerEditing) ? '-mt-2' : 'mt-2', 'mr-3 flex items-start gap-1 self-end')}>
                   {!answerEditing ? (
                     <>
