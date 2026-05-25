@@ -328,7 +328,7 @@ const MessageItem = memo(function MessageItem({
   const handleRef = useCallback((el: HTMLDivElement | null) => setMsgRef(m.id, el), [m.id, setMsgRef]);
 
   return (
-    <div ref={handleRef} className="relative">
+    <div ref={handleRef} data-msg-id={m.id} className="relative">
       <div
         className={cn(
           'grid overflow-clip transition-[grid-template-rows,opacity,margin] duration-300 ease-out',
@@ -510,7 +510,9 @@ export default function ChatRoom() {
     setCollapsedTurns(new Set());
     setDeletingMessageIds(new Set());
     setUnfoldingMessageIds(new Set());
-    messageRefs.current.clear();
+    // messageRefs 는 clear 하지 않음 — 이미 캐시된 thread 로 전환 시
+    // MessageItem ref 가 이 effect 직전에 설정되므로 clear 가 freshly mounted ref 를 지워버림.
+    // unmount 시 setMsgRef(id, null) 로 자동으로 null 처리되어 stale 항목은 무해함.
   }, [activeId]);
 
   useEffect(() => {
@@ -647,7 +649,18 @@ export default function ChatRoom() {
 
   function scrollToMessage(messageId: string, delay = 0) {
     const doScroll = () => {
-      const el = messageRefs.current.get(messageId);
+      // ref Map 우선 — 빠르고 React lifecycle 와 동기화됨.
+      let el = messageRefs.current.get(messageId);
+      // ref 가 stale/누락된 경우 (thread 빈번 전환 등) DOM 에서 직접 조회 → 항상 동작 보장.
+      if (!el || !el.isConnected) {
+        const found = scrollRef.current?.querySelector<HTMLDivElement>(
+          `[data-msg-id="${CSS.escape(messageId)}"]`,
+        );
+        if (found) {
+          el = found;
+          messageRefs.current.set(messageId, found);
+        }
+      }
       if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
