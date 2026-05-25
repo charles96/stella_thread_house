@@ -2455,8 +2455,7 @@ function MessageBubble({
                     <ChevronRight className="h-3 w-3" />
                   )}
                 </button>
-              ) : onRemoveImage &&
-                combinedImagesForEdit.length > 3 ? (
+              ) : onRemoveImage ? (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
