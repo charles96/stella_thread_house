@@ -47,6 +47,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import { fileToResizedDataUrl, maybeConvertHeic } from '@/lib/imageUtils';
 import { hydrateImageStates, setImageState } from '@/lib/imageCache';
 import { extractArtifacts, type Artifact } from '@/lib/artifacts';
 import {
@@ -3383,35 +3384,35 @@ function MessageBubble({
                       {t('imageEdit.upload')}
                       <input
                         type="file"
-                        accept="image/*"
+                        accept="image/*,.heic,.heif"
                         multiple
                         className="sr-only"
                         onChange={(e) => {
                           const files = Array.from(e.target.files ?? []);
-                          // 같은 파일 재선택 허용을 위해 값 초기화 (onChange 전에 하면 files 가 비워짐 — 후처리)
                           const input = e.target;
                           if (!files.length) return;
                           for (const file of files) {
-                            const previewUrl = URL.createObjectURL(file);
                             const tempId = `pending-${Date.now()}-${Math.random()}`;
-                            setPendingUploads((prev) => [
-                              ...prev,
-                              { tempId, previewUrl },
-                            ]);
                             const uploadFn = onUploadEditImage;
                             void (async () => {
+                              // HEIC/HEIF 변환 + 리사이즈 → preview + upload 모두 동일 dataUrl 사용
+                              let dataUrl: string;
+                              let convertedName = file.name;
                               try {
-                                const dataUrl = await new Promise<string>(
-                                  (resolve, reject) => {
-                                    const reader = new FileReader();
-                                    reader.onload = () =>
-                                      resolve(reader.result as string);
-                                    reader.onerror = () =>
-                                      reject(new Error('FileReader error'));
-                                    reader.readAsDataURL(file);
-                                  },
-                                );
-                                const url = await uploadFn(dataUrl, file.name);
+                                const converted = await maybeConvertHeic(file);
+                                convertedName = converted.name;
+                                dataUrl = await fileToResizedDataUrl(converted);
+                              } catch (err) {
+                                console.error('[upload] 변환 실패', err);
+                                return;
+                              }
+                              const previewUrl = dataUrl;
+                              setPendingUploads((prev) => [
+                                ...prev,
+                                { tempId, previewUrl },
+                              ]);
+                              try {
+                                const url = await uploadFn(dataUrl, convertedName);
                                 if (url) {
                                   setEditingOrderUrls((prev) => [...prev, url]);
                                 }
@@ -3421,11 +3422,9 @@ function MessageBubble({
                                 setPendingUploads((prev) =>
                                   prev.filter((p) => p.tempId !== tempId),
                                 );
-                                URL.revokeObjectURL(previewUrl);
                               }
                             })();
                           }
-                          // 값 초기화 — 위 files 캡처 이후에 실행
                           input.value = '';
                         }}
                       />
