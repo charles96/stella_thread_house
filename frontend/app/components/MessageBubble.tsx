@@ -2885,11 +2885,12 @@ function MessageBubble({
             </>
           )}
 
-          {/* 어시스턴트 답변: 버블 그 자체 + 하단 우측에 포스트잇 해시태그 행 */}
-          {message.content && !isUser && (
+          {/* 어시스턴트 답변: 버블 그 자체 + 하단 우측에 포스트잇 해시태그 행.
+              본문이 없어도 Reference documents 가 있거나 편집 중이면 Edit/Delete 탭을 표시. */}
+          {!isUser && (message.content || hasProcessPanel || answerEditing) && (
             <>
               {/* relative z-[1] — 버블이 아래 탭 위에 올라가서 탭이 "뒷면에서 빠져나온" 느낌. */}
-              <div
+              {(message.content || answerEditing) && <div
                 ref={answerBubbleRef}
                 className="relative z-[1] w-full min-w-0 max-w-full overflow-x-clip transform-gpu rounded-2xl rounded-tl-md border border-border bg-bubble-bot px-3.5 py-2 text-[14.5px] leading-relaxed text-bubble-bot-foreground shadow-md"
               >
@@ -2964,14 +2965,12 @@ function MessageBubble({
                     </ReactMarkdown>
                   </div>
                 )}
-              </div>
+              </div>}
               {/* Edit / Save / Cancel — 답변 마크다운 직접 편집.
                   Thread 모드 전용 + greeting 메시지 제외.
-                  탭이 버블 뒤에서 살짝 빠져나온 폴더 탭 느낌:
-                  - 컨테이너 -mt-2 로 위로 끌어올려 버블 하단과 겹치고
-                  - z-[0] 으로 버블(z-[1]) 아래에 위치 */}
+                  본문 버블이 있으면 -mt-2 로 겹쳐 탭 느낌, Reference only 면 mt-1 로 분리. */}
               {onEditContent && convKind === 'thread' && !isGreeting && !isLive && (
-                <div className="-mt-2 mr-3 flex items-start gap-1 self-end">
+                <div className={cn((message.content || answerEditing) ? '-mt-2' : 'mt-2', 'mr-3 flex items-start gap-1 self-end')}>
                   {!answerEditing ? (
                     <>
                       <button
