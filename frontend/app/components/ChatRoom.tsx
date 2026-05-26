@@ -921,14 +921,23 @@ export default function ChatRoom() {
           if (exists) {
             setActiveId(cid);
             setView('thread');
+            // 모바일에서 thread 로 들어올 땐 sidebar 닫아서 thread 화면이 보이게.
+            if (typeof window !== 'undefined' && window.innerWidth < 768) {
+              setSidebarOpen(false);
+            }
             lastUrlRef.current = `${path}${window.location.search}`;
             return;
           }
         }
-        setView('dashboard');
-        // 모바일 — swipe back으로 list 화면에 돌아왔을 때 사이드바(대화 목록) 복원.
-        if (typeof window !== 'undefined' && window.innerWidth < 768) {
+        // 모바일에서는 thread → list 로 갈 때 view 를 바꾸지 않고 sidebar 만 열어,
+        // thread 컴포넌트를 mount 상태로 유지 → swipe-back 시 "다시 로딩되는 느낌" 제거.
+        // (in-app 백 버튼과 동일한 동작.)
+        const isMobile =
+          typeof window !== 'undefined' && window.innerWidth < 768;
+        if (isMobile) {
           setSidebarOpen(true);
+        } else {
+          setView('dashboard');
         }
         lastUrlRef.current = `${path}${window.location.search}`;
       } catch {
