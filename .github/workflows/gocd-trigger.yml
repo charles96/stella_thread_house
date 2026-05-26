@@ -33,22 +33,12 @@ jobs:
 
           # update_materials_before_scheduling: GoCD 가 trigger 직전에 git fetch 하여
           #   방금 push 된 tag/commit 을 받아오게 함 (auto_update: false 와 함께 동작).
-          PAYLOAD=$(cat <<JSON
-          {
-            "environment_variables": [
-              { "name": "DEPLOY_VERSION", "value": "${TAG_NAME}", "secure": false }
-            ],
-            "update_materials_before_scheduling": true
-          }
-          JSON
-          )
-
           HTTP_STATUS=$(curl -s -o /tmp/gocd_response.json -w "%{http_code}" \
             -X POST "${GOCD_SERVER_URL}/go/api/pipelines/stella-chatbot/schedule" \
             "${AUTH_ARGS[@]}" \
             -H "Accept: application/vnd.go.cd.v1+json" \
             -H "Content-Type: application/json" \
-            -d "$PAYLOAD")
+            -d "{\"environment_variables\":[{\"name\":\"DEPLOY_VERSION\",\"value\":\"${TAG_NAME}\",\"secure\":false}],\"update_materials_before_scheduling\":true}")
 
           echo "GoCD response (HTTP ${HTTP_STATUS}):"
           cat /tmp/gocd_response.json

@@ -8,10 +8,14 @@ export DOCKER_CONFIG=$(mktemp -d)
 # ── 1. Git tag 감지 ─────────────────────────────────────────────────────────
 # DEPLOY_VERSION이 설정되어 있으면 (GitHub Actions webhook 경유) 그 값을 사용.
 # 없으면 HEAD에 달린 태그를 직접 읽는다.
-if [ -z "${DEPLOY_VERSION:-}" ]; then
-  # GoCD checkout은 기본적으로 태그를 포함하지 않을 수 있으므로 fetch
-  git fetch --tags --force 2>/dev/null || true
+# GoCD git material 은 기본적으로 tag 를 fetch 하지 않을 수 있으므로 항상 명시적으로 fetch.
+echo "▶ git fetch --tags"
+if ! git fetch --tags --force; then
+  echo "WARN: git fetch --tags 실패 (네트워크/SSH 설정 확인 필요)"
 fi
+echo "▶ git describe --tags --exact-match HEAD: $(git describe --tags --exact-match HEAD 2>/dev/null || echo '(없음)')"
+echo "▶ 근처 tags: $(git tag --sort=-creatordate 2>/dev/null | head -5 | tr '\n' ' ')"
+
 GIT_TAG="${DEPLOY_VERSION:-$(git describe --tags --exact-match HEAD 2>/dev/null || echo "")}"
 
 if [ -z "$GIT_TAG" ]; then
