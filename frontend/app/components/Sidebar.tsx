@@ -4,7 +4,9 @@ import {
   ChevronDown,
   ChevronRight,
   Folder as FolderIcon,
+  FolderDot as FolderDotIcon,
   FolderInput,
+  FolderOpen as FolderOpenIcon,
   FolderPlus,
   GripVertical,
   Info,
@@ -688,7 +690,13 @@ function FolderRow({
             folder.expanded && 'rotate-90',
           )}
         />
-        <FolderIcon className="h-3.5 w-3.5 shrink-0 text-primary" />
+        {folder.expanded ? (
+          <FolderOpenIcon className="h-3.5 w-3.5 shrink-0 text-primary" />
+        ) : items.length > 0 ? (
+          <FolderDotIcon className="h-3.5 w-3.5 shrink-0 text-primary" />
+        ) : (
+          <FolderIcon className="h-3.5 w-3.5 shrink-0 text-primary" />
+        )}
         <div className={cn("min-w-0 flex-1 overflow-hidden", !editing && "sidebar-title-fade")}>
           {editing ? (
             <input
