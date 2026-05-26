@@ -36,20 +36,21 @@ fi
 docker pull "$APP_IMAGE"
 
 # 전체 서비스 재시작 (docker-compose v1 / v2 모두 지원)
-echo "▶ docker compose up -d (전체)"
-if docker compose version &>/dev/null 2>&1; then
-  docker compose \
-    -f "$COMPOSE_DIR/docker-compose.yml" \
-    -f "$COMPOSE_DIR/docker-compose.prod.yml" \
-    --env-file "$DEPLOY_ENV" \
-    up -d --no-build
+if docker compose version >/dev/null 2>&1; then
+  COMPOSE_CMD=(docker compose)
+elif command -v docker-compose >/dev/null 2>&1; then
+  COMPOSE_CMD=(docker-compose)
 else
-  docker-compose \
-    -f "$COMPOSE_DIR/docker-compose.yml" \
-    -f "$COMPOSE_DIR/docker-compose.prod.yml" \
-    --env-file "$DEPLOY_ENV" \
-    up -d --no-build
+  echo "ERROR: docker compose (v2 plugin) 또는 docker-compose (v1) 가 설치되어 있지 않습니다."
+  echo "  설치 예) apt-get install -y docker-compose-plugin"
+  exit 1
 fi
+echo "▶ ${COMPOSE_CMD[*]} up -d (전체)"
+"${COMPOSE_CMD[@]}" \
+  -f "$COMPOSE_DIR/docker-compose.yml" \
+  -f "$COMPOSE_DIR/docker-compose.prod.yml" \
+  --env-file "$DEPLOY_ENV" \
+  up -d --no-build
 
 echo ""
 echo "✓ 배포 완료: $APP_IMAGE"
