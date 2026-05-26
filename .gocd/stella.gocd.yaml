@@ -35,6 +35,9 @@ pipelines:
     environment_variables:
       REGISTRY_URL: registry.webnori.com
       IMAGE_NAME: stella-th
+      # 빈 기본값 — GitHub Actions trigger 시 schedule API 가 이 값을 override.
+      # 사전 선언이 없으면 GoCD 가 422 로 거부함.
+      DEPLOY_VERSION: ""
       REGISTRY_USER: psguest
     secure_variables:
       REGISTRY_PASS: "AES:eiVzUbYMOgexMTrYnWv0iQ==:18RNz5muhqttNeG2inlWTQ=="
