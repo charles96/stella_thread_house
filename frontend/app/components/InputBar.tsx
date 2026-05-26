@@ -313,8 +313,11 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
 
         {/* 통합 입력 컨테이너 (팝업 위에 렌더링) */}
         <div
-          className="input-glow-border mx-auto transition-[width] duration-300 ease-in-out"
-          style={{ width: isMobile ? '100%' : isStreamingCollapsed ? `${hasTokRate ? streamingWidth : stopOnlyWidth}px` : isExpanded ? '100%' : `${collapsedWidth}px` }}
+          className="input-glow-border mx-auto transition-[width,border-radius] duration-300 ease-in-out"
+          style={{
+            width: isStreamingCollapsed ? `${hasTokRate ? streamingWidth : stopOnlyWidth}px` : isMobile ? '100%' : isExpanded ? '100%' : `${collapsedWidth}px`,
+            borderRadius: isStreamingCollapsed ? '9999px' : undefined,
+          }}
         >
         {/* 팝업 메뉴 — 채팅창 너비 기준으로 슬라이드업 */}
         {menuOpen && (
@@ -350,10 +353,11 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
         <div
           onClick={() => { if (!isExpanded) textareaRef.current?.focus(); }}
           className={cn(
-            'relative flex items-center bg-secondary transition-transform duration-300 ease-in-out',
+            'relative flex items-center bg-secondary transition-[transform,border-radius] duration-300 ease-in-out',
             pulse && '-translate-y-1 scale-[0.98]',
             !isExpanded && 'cursor-text',
           )}
+          style={{ borderRadius: isStreamingCollapsed ? '9999px' : undefined }}
         >
           {/* 스트리밍 축소 상태 — tok/s: rate 생기면 grid 트릭으로 부드럽게 확장 */}
           {isStreamingCollapsed && (
