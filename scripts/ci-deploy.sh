@@ -5,7 +5,21 @@ set -euo pipefail
 export DOCKER_API_VERSION=1.43
 export DOCKER_CONFIG=$(mktemp -d)
 
-IMAGE_TAG="${DEPLOY_VERSION#v}"
+# DEPLOY_VERSION 이 비어 있으면 (SCM auto-trigger 등 GitHub Actions 경유 아닐 때)
+# HEAD 의 git tag 를 읽어 fallback — ci-build.sh 와 동일한 로직.
+if [ -z "${DEPLOY_VERSION:-}" ]; then
+  git fetch --tags --force 2>/dev/null || true
+fi
+GIT_TAG="${DEPLOY_VERSION:-$(git describe --tags --exact-match HEAD 2>/dev/null || echo "")}"
+
+if [ -z "$GIT_TAG" ]; then
+  echo "ERROR: DEPLOY_VERSION 미설정 + HEAD 에 git tag 없음."
+  echo "  현재 HEAD: $(git rev-parse HEAD)"
+  echo "  근처 태그: $(git describe --tags 2>/dev/null || echo '없음')"
+  exit 1
+fi
+
+IMAGE_TAG="${GIT_TAG#v}"
 export APP_IMAGE="${REGISTRY_URL}/${IMAGE_NAME}:${IMAGE_TAG}"
 
 DEPLOY_ENV="/volume1/docker/stella/.env"

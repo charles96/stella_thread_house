@@ -44,5 +44,8 @@
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
     "typescript": "^5.3.3"
+  },
+  "overrides": {
+    "glob": "^13.0.6"
   }
 }

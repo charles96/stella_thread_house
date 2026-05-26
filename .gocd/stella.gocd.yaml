@@ -35,7 +35,6 @@ pipelines:
     environment_variables:
       REGISTRY_URL: registry.webnori.com
       IMAGE_NAME: stella-th
-      DEPLOY_VERSION: ""
       REGISTRY_USER: psguest
     secure_variables:
       REGISTRY_PASS: "AES:eiVzUbYMOgexMTrYnWv0iQ==:18RNz5muhqttNeG2inlWTQ=="
@@ -45,6 +44,10 @@ pipelines:
         git: git@github.com:charles96/stella_thread_house.git
         branch: main
         shallow_clone: false
+        # SCM auto-poll 비활성화 — 모든 commit 마다 자동 trigger 되는 것을 막음.
+        # 파이프라인은 오직 GitHub Actions (git tag v* push) 트리거로만 실행됨.
+        # API 트리거 시 update_materials_before_scheduling 로 최신 commit 을 받아옴.
+        auto_update: false
 
     stages:
       # ── Stage 1: Docker 이미지 빌드 & Registry 푸시 ──────────────────────────

@@ -19,13 +19,10 @@ jobs:
           echo "Tag: ${{ steps.tag.outputs.TAG_NAME }}"
           echo "SHA: ${{ github.sha }}"
 
-      # GoCD가 최신 커밋을 polling할 시간을 확보
-      - name: Wait for GoCD to poll
-        run: sleep 15
-
       - name: Trigger GoCD pipeline
         env:
           TAG_NAME: ${{ steps.tag.outputs.TAG_NAME }}
+          COMMIT_SHA: ${{ github.sha }}
           GOCD_SERVER_URL: ${{ secrets.GOCD_SERVER_URL }}
           GOCD_API_TOKEN: ${{ secrets.GOCD_API_TOKEN }}
         run: |
@@ -34,12 +31,24 @@ jobs:
             AUTH_ARGS=(-H "Authorization: Bearer ${GOCD_API_TOKEN}")
           fi
 
+          # update_materials_before_scheduling: GoCD 가 trigger 직전에 git fetch 하여
+          #   방금 push 된 tag/commit 을 받아오게 함 (auto_update: false 와 함께 동작).
+          PAYLOAD=$(cat <<JSON
+          {
+            "environment_variables": [
+              { "name": "DEPLOY_VERSION", "value": "${TAG_NAME}", "secure": false }
+            ],
+            "update_materials_before_scheduling": true
+          }
+          JSON
+          )
+
           HTTP_STATUS=$(curl -s -o /tmp/gocd_response.json -w "%{http_code}" \
             -X POST "${GOCD_SERVER_URL}/go/api/pipelines/stella-chatbot/schedule" \
             "${AUTH_ARGS[@]}" \
             -H "Accept: application/vnd.go.cd.v1+json" \
             -H "Content-Type: application/json" \
-            -d "{\"environment_variables\":[{\"name\":\"DEPLOY_VERSION\",\"value\":\"${TAG_NAME}\",\"secure\":false}]}")
+            -d "$PAYLOAD")
 
           echo "GoCD response (HTTP ${HTTP_STATUS}):"
           cat /tmp/gocd_response.json
