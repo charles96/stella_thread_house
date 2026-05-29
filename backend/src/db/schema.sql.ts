@@ -30,6 +30,8 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_deactivated BOOLEAN NOT NULL DEFAULT false;
+
 CREATE UNIQUE INDEX IF NOT EXISTS users_google_id_uidx
   ON users (google_id) WHERE google_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_uidx

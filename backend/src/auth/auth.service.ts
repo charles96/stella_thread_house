@@ -260,6 +260,9 @@ export class AuthService {
         '이메일 또는 비밀번호가 올바르지 않습니다.',
       );
     }
+    if (user.isDeactivated) {
+      throw new UnauthorizedException('비활성화된 계정입니다. 관리자에게 문의하세요.');
+    }
     await this.touchLastLogin(user.id);
     return this.toAuthUser(user);
   }
@@ -282,6 +285,9 @@ export class AuthService {
       where: { googleId: input.googleId },
     });
     if (user) {
+      if (user.isDeactivated) {
+        throw new ForbiddenException('비활성화된 계정입니다. 관리자에게 문의하세요.');
+      }
       user.email = input.email;
       user.name = input.name ?? null;
       user.picture = input.picture ?? null;
@@ -296,6 +302,9 @@ export class AuthService {
       .where('lower(u.email) = :e', { e: input.email.trim().toLowerCase() })
       .getOne();
     if (byEmail) {
+      if (byEmail.isDeactivated) {
+        throw new ForbiddenException('비활성화된 계정입니다. 관리자에게 문의하세요.');
+      }
       byEmail.googleId = input.googleId;
       byEmail.name = byEmail.name ?? input.name ?? null;
       byEmail.picture = byEmail.picture ?? input.picture ?? null;

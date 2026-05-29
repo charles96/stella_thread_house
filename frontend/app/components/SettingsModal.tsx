@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  AlertTriangle,
+  Ban,
   Bot,
   Brain,
   Check,
@@ -15,6 +17,7 @@ import {
   Lock,
   Mail,
   MessageSquareText,
+  MoreHorizontal,
   Palette,
   Server,
   Settings as SettingsIcon,
@@ -23,6 +26,7 @@ import {
   Terminal,
   Trash2,
   User,
+  UserCheck,
   Users,
   Wrench,
   X,
@@ -1400,6 +1404,7 @@ interface Member {
   name?: string | null;
   picture?: string | null;
   role: 'admin' | 'member';
+  isDeactivated?: boolean;
   lastLoginAt?: string | null;
   createdAt: string;
 }
@@ -1427,6 +1432,16 @@ function MembersTab({ currentUserId }: { currentUserId?: string }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  // 비활성화 확인 모달 대상 (null 이면 닫힘). label 은 표시용 이름/이메일.
+  const [deactivateTarget, setDeactivateTarget] = useState<{
+    id: string;
+    label: string;
+  } | null>(null);
+  // 초대 취소 확인 모달 대상 (null 이면 닫힘). label 은 표시용 이메일.
+  const [revokeTarget, setRevokeTarget] = useState<{
+    id: string;
+    label: string;
+  } | null>(null);
 
   async function loadAll() {
     try {
@@ -1506,8 +1521,41 @@ function MembersTab({ currentUserId }: { currentUserId?: string }) {
     }
   }
 
+  // 비활성화는 즉시 로그아웃 + 재로그인 차단이라 모달로 확인을 받는다(아래 deactivateTarget).
+  // 활성화는 확인 없이 즉시 실행. 실제 PATCH 는 이 함수가 담당.
+  async function toggleDeactivate(id: string, deactivated: boolean) {
+    setError(null);
+    // 낙관적 갱신.
+    const before = members;
+    setMembers((prev) =>
+      prev.map((m) => (m.id === id ? { ...m, isDeactivated: deactivated } : m)),
+    );
+    try {
+      const res = await fetch(`${API_URL}/admin/users/${id}/deactivate`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deactivated }),
+      });
+      if (!res.ok) {
+        let msg = t('settings.member.deactivateFailed');
+        try {
+          const j = (await res.json()) as { message?: string };
+          if (j.message) msg = j.message;
+        } catch {
+          // ignore
+        }
+        throw new Error(msg);
+      }
+    } catch (e) {
+      // 롤백.
+      setMembers(before);
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  // 확인은 모달(revokeTarget)에서 받고, 실제 DELETE 는 이 함수가 담당.
   async function revoke(id: string) {
-    if (!window.confirm(t('settings.member.revokeConfirm'))) return;
     try {
       const res = await fetch(`${API_URL}/admin/invitations/${id}`, {
         method: 'DELETE',
@@ -1531,6 +1579,7 @@ function MembersTab({ currentUserId }: { currentUserId?: string }) {
         name?: string | null;
         picture?: string | null;
         role: 'admin' | 'member';
+        isDeactivated?: boolean;
         lastLoginAt?: string | null;
         createdAt: string;
       }
@@ -1549,6 +1598,7 @@ function MembersTab({ currentUserId }: { currentUserId?: string }) {
         name: m.name,
         picture: m.picture,
         role: m.role,
+        isDeactivated: m.isDeactivated,
         lastLoginAt: m.lastLoginAt,
         createdAt: m.createdAt,
       }),
@@ -1620,7 +1670,15 @@ function MembersTab({ currentUserId }: { currentUserId?: string }) {
               </thead>
               <tbody className="divide-y divide-border">
                 {rows.map((r) => (
-                  <tr key={`${r.kind}-${r.id}`} className="align-middle">
+                  <tr
+                    key={`${r.kind}-${r.id}`}
+                    className={cn(
+                      'align-middle',
+                      r.kind === 'active' &&
+                        r.isDeactivated &&
+                        'opacity-50',
+                    )}
+                  >
                     {/* 유저명 (아바타 + 이름/이메일) */}
                     <td className="py-2 pr-3">
                       <div className="flex items-center gap-2 min-w-0">
@@ -1660,13 +1718,22 @@ function MembersTab({ currentUserId }: { currentUserId?: string }) {
                           {t('settings.member.typePending')}
                         </span>
                       ) : (
-                        <RoleSelect
-                          value={r.role}
-                          disabled={r.id === currentUserId}
-                          onChange={(role) => changeRole(r.id, role)}
-                          adminLabel={t('settings.member.typeAdmin')}
-                          memberLabel={t('settings.member.typeMember')}
-                        />
+                        <div className="flex items-center gap-1.5">
+                          <RoleSelect
+                            value={r.role}
+                            disabled={
+                              r.id === currentUserId || r.isDeactivated
+                            }
+                            onChange={(role) => changeRole(r.id, role)}
+                            adminLabel={t('settings.member.typeAdmin')}
+                            memberLabel={t('settings.member.typeMember')}
+                          />
+                          {r.isDeactivated && (
+                            <span className="inline-flex items-center rounded bg-red-500/15 px-1.5 py-0.5 text-[11px] font-medium text-red-400">
+                              {t('settings.member.typeDeactivated')}
+                            </span>
+                          )}
+                        </div>
                       )}
                     </td>
 
@@ -1677,18 +1744,69 @@ function MembersTab({ currentUserId }: { currentUserId?: string }) {
                         : t('settings.member.never')}
                     </td>
 
-                    {/* 액션 (pending 만 취소 버튼) */}
+                    {/* 액션: pending 은 초대 취소 / active member(관리자 제외) 는 ⋯ 메뉴 */}
                     <td className="py-2 text-right">
-                      {r.kind === 'pending' && (
+                      {r.kind === 'pending' ? (
                         <Button
                           variant="ghost"
                           size="icon"
                           className="h-7 w-7 text-red-500 hover:bg-red-500/15"
-                          onClick={() => revoke(r.id)}
+                          onClick={() =>
+                            setRevokeTarget({ id: r.id, label: r.email })
+                          }
                           title={t('settings.member.revokeTitle')}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
+                      ) : (
+                        // 관리자(admin)는 비활성화 대상에서 제외 → 메뉴 미노출.
+                        r.role !== 'admin' && (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-muted-foreground hover:bg-secondary"
+                              >
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent
+                              align="end"
+                              sideOffset={4}
+                              className="z-[120]"
+                            >
+                              {r.isDeactivated ? (
+                                <DropdownMenuItem
+                                  className="gap-2 text-emerald-500 focus:text-emerald-500"
+                                  onSelect={() =>
+                                    toggleDeactivate(r.id, false)
+                                  }
+                                >
+                                  <UserCheck className="h-4 w-4" />
+                                  <span>
+                                    {t('settings.member.activateTitle')}
+                                  </span>
+                                </DropdownMenuItem>
+                              ) : (
+                                <DropdownMenuItem
+                                  className="gap-2 text-red-500 focus:text-red-500"
+                                  onSelect={() =>
+                                    setDeactivateTarget({
+                                      id: r.id,
+                                      label: r.name ?? r.email,
+                                    })
+                                  }
+                                >
+                                  <Ban className="h-4 w-4" />
+                                  <span>
+                                    {t('settings.member.deactivateTitle')}
+                                  </span>
+                                </DropdownMenuItem>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        )
                       )}
                     </td>
                   </tr>
@@ -1711,6 +1829,97 @@ function MembersTab({ currentUserId }: { currentUserId?: string }) {
         </div>
       )}
 
+      {/* 비활성화 확인 모달 */}
+      {deactivateTarget && (
+        <div
+          className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-150"
+          onClick={() => setDeactivateTarget(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-lg border border-border bg-card p-5 shadow-xl animate-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-destructive" />
+              <h2 className="text-base font-semibold">
+                {t('settings.member.deactivateTitle')}
+              </h2>
+            </div>
+            <p className="mb-2 text-sm text-foreground">
+              {t('settings.member.deactivateConfirm')}
+            </p>
+            <div className="mb-4 truncate rounded-md border border-border bg-secondary/40 px-2.5 py-1.5 text-[12.5px] text-foreground">
+              {deactivateTarget.label}
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setDeactivateTarget(null)}
+              >
+                {t('delete.cancel')}
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => {
+                  const id = deactivateTarget.id;
+                  setDeactivateTarget(null);
+                  toggleDeactivate(id, true);
+                }}
+              >
+                {t('settings.member.deactivateTitle')}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 초대 취소 확인 모달 */}
+      {revokeTarget && (
+        <div
+          className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-150"
+          onClick={() => setRevokeTarget(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-lg border border-border bg-card p-5 shadow-xl animate-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-destructive" />
+              <h2 className="text-base font-semibold">
+                {t('settings.member.revokeTitle')}
+              </h2>
+            </div>
+            <p className="mb-2 text-sm text-foreground">
+              {t('settings.member.revokeConfirm')}
+            </p>
+            <div className="mb-4 truncate rounded-md border border-border bg-secondary/40 px-2.5 py-1.5 text-[12.5px] text-foreground">
+              {revokeTarget.label}
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setRevokeTarget(null)}
+              >
+                {t('delete.cancel')}
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => {
+                  const id = revokeTarget.id;
+                  setRevokeTarget(null);
+                  revoke(id);
+                }}
+              >
+                {t('settings.member.revokeTitle')}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

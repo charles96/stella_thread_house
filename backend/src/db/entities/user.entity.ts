@@ -39,6 +39,10 @@ export class User {
   @Column({ type: 'text', default: 'member' })
   role!: 'admin' | 'member';
 
+  // 관리자가 비활성화한 계정. true 면 로그인/모든 인증 요청이 401 로 거부됨.
+  @Column({ name: 'is_deactivated', type: 'boolean', default: false })
+  isDeactivated!: boolean;
+
   // 마지막 로그인 시각. 로그인 전엔 NULL.
   @Column({ name: 'last_login_at', type: 'timestamptz', nullable: true })
   lastLoginAt?: Date | null;

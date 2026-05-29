@@ -28,15 +28,21 @@ export class AdminUserController {
   async list() {
     const rows = await this.users.find({ order: { createdAt: 'ASC' } });
     // google_id 등 민감 필드 제외
-    return rows.map((u) => ({
+    return rows.map((u) => this.toView(u));
+  }
+
+  // 응답용 사용자 뷰 — 민감 필드(google_id, password_hash, settings) 제외.
+  private toView(u: User) {
+    return {
       id: u.id,
       email: u.email,
       name: u.name,
       picture: u.picture,
       role: u.role,
+      isDeactivated: u.isDeactivated,
       lastLoginAt: u.lastLoginAt,
       createdAt: u.createdAt,
-    }));
+    };
   }
 
   // 사용자 role 변경 — admin/member 토글.
@@ -70,14 +76,43 @@ export class AdminUserController {
 
     user.role = role;
     const saved = await this.users.save(user);
-    return {
-      id: saved.id,
-      email: saved.email,
-      name: saved.name,
-      picture: saved.picture,
-      role: saved.role,
-      lastLoginAt: saved.lastLoginAt,
-      createdAt: saved.createdAt,
-    };
+    return this.toView(saved);
+  }
+
+  // 사용자 비활성화/활성화 토글.
+  // 비활성화 시 해당 사용자는 즉시(다음 요청부터) 401 로 거부되고 재로그인 불가.
+  // - 자기 자신은 비활성화 금지.
+  // - 활성 admin 이 1명만 남는 상황을 막기 위해 마지막 활성 관리자는 비활성화 금지.
+  @Patch(':id/deactivate')
+  async setDeactivated(
+    @Param('id') id: string,
+    @Body() body: { deactivated: boolean },
+    @Req() req: Request,
+  ) {
+    const deactivated = body?.deactivated;
+    if (typeof deactivated !== 'boolean') {
+      throw new BadRequestException('deactivated 값이 잘못되었습니다.');
+    }
+    const user = await this.users.findOne({ where: { id } });
+    if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다.');
+
+    const requesterId = (req.user as { sub: string }).sub;
+    if (id === requesterId && deactivated) {
+      throw new ForbiddenException('자기 자신을 비활성화할 수 없습니다.');
+    }
+    if (deactivated && user.role === 'admin') {
+      const activeAdmins = await this.users.count({
+        where: { role: 'admin', isDeactivated: false },
+      });
+      if (activeAdmins <= 1) {
+        throw new ForbiddenException(
+          '마지막 활성 관리자는 비활성화할 수 없습니다.',
+        );
+      }
+    }
+
+    user.isDeactivated = deactivated;
+    const saved = await this.users.save(user);
+    return this.toView(saved);
   }
 }

@@ -65,15 +65,15 @@ export class InvitationService {
       const front = (process.env.TH_HOST ?? 'http://localhost:3100').replace(/\/$/, '');
       const inviteUrl = `${front}/login?token=${encodeURIComponent(token)}`;
       const inviterLabel =
-        inviter?.name ?? inviter?.email ?? '관리자';
+        inviter?.name ?? inviter?.email ?? 'Admin';
       await this.mail.send({
         to: email,
-        subject: 'Stella Book 초대',
-        text: `${inviterLabel}님이 Stella Book에 초대했습니다. 아래 링크에서 가입 폼을 열어 비밀번호를 설정하세요.\n\n${inviteUrl}`,
-        html: `<p><strong>${inviterLabel}</strong>님이 Stella Book에 초대했습니다.</p>
-<p>아래 링크에서 가입 폼을 열어 비밀번호를 설정하세요. 가입 후 Settings 에서 Google 계정을 연동할 수 있습니다.</p>
+        subject: "Invitation to Stella's Thread House",
+        text: `${inviterLabel} has invited you to Stella's Thread House. Open the link below to complete sign-up and set your password.\n\n${inviteUrl}`,
+        html: `<p><strong>${inviterLabel}</strong> has invited you to Stella's Thread House.</p>
+<p>Open the link below to complete sign-up and set your password.</p>
 <p><a href="${inviteUrl}">${inviteUrl}</a></p>
-<p style="color:#888;font-size:11px;">초대된 이메일: <code>${email}</code></p>`,
+<p style="color:#888;font-size:11px;">Invited email: <code>${email}</code></p>`,
       });
     } catch (e) {
       (saved as Invitation & { mailError?: string }).mailError =
