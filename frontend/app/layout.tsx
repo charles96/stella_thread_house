@@ -5,6 +5,7 @@ import { ThemeProvider } from '@/lib/theme';
 import { TimezoneProvider } from '@/lib/timezone';
 import { ThreadSettingsProvider } from '@/lib/threadSettings';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import SessionGuard from './components/SessionGuard';
 
 export const viewport: Viewport = {
   width: 'device-width',
@@ -32,6 +33,7 @@ export default function RootLayout({
             <TimezoneProvider>
               <ThreadSettingsProvider>
                 <TooltipProvider delayDuration={0} skipDelayDuration={0}>
+                  <SessionGuard />
                   {children}
                 </TooltipProvider>
               </ThreadSettingsProvider>
