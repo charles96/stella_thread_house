@@ -4,7 +4,7 @@
 # 컨테이너 안에서 두 프로세스를 동시 실행한다.
 #   - backend  : :4100  (NestJS)
 #   - frontend : :3100  (Next.js standalone)
-# DB(postgres) 는 별도 컨테이너 — docker-compose.yml 참고.
+# DB(postgres) 는 별도 컨테이너 — docker-compose-self.yml 참고.
 #
 # 단독 개발용 Dockerfile 은 backend/Dockerfile, frontend/Dockerfile 에 그대로 남겨둠.
 
