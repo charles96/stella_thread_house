@@ -214,6 +214,17 @@ function extractUrlsFromText(text: string): string[] {
   return out;
 }
 
+// Instagram / X 처럼 JS 로 렌더링되어 봇 차단이 잦은 소셜 URL 판별.
+// 검색 결과 경로에서 이런 URL 의 깊은 추출이 실패하면, "차단"으로 버리지 않고
+// Tavily 검색이 이미 준 content 스니펫을 본문으로 재활용한다.
+function isJsBlockedSocialUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase().replace(/^(www|m)\./, '');
+    return host === 'instagram.com' || host === 'x.com' || host === 'twitter.com';
+  } catch {
+    return false;
+  }
+}
 
 @Injectable()
 export class ChatService {
@@ -1608,8 +1619,19 @@ export class ChatService {
               ]);
               if (outcome.timedOut) {
                 this.logger.warn(`페이지 추출 타임아웃: ${r.url}`);
-                yield { type: 'page_timeout', url: r.url };
-                pageEvents.push({ url: r.url, title: r.title, chars: 0, ok: false });
+                // 인스타/X: 깊은 추출이 타임아웃이어도 Tavily 검색 스니펫이 있으면
+                // "차단"으로 버리지 않고 그 스니펫(r.content)을 본문으로 사용.
+                if (isJsBlockedSocialUrl(r.url) && r.content.trim().length > 0) {
+                  pageEvents.push({
+                    url: r.url,
+                    title: r.title,
+                    chars: r.content.length,
+                    ok: true,
+                  });
+                } else {
+                  yield { type: 'page_timeout', url: r.url };
+                  pageEvents.push({ url: r.url, title: r.title, chars: 0, ok: false });
+                }
                 continue;
               }
               const p = outcome.result;
@@ -1623,6 +1645,18 @@ export class ChatService {
                   ok: true,
                   images: imgs.length > 0 ? imgs : undefined,
                 });
+              } else if (
+                isJsBlockedSocialUrl(r.url) &&
+                r.content.trim().length > 0
+              ) {
+                // 인스타/X: embed fetch 가 비어(봇 차단) 추출이 실패해도,
+                // Tavily 검색이 이미 준 content 스니펫을 본문으로 사용 (차단 표시 대신).
+                pageEvents.push({
+                  url: r.url,
+                  title: p?.title ?? r.title,
+                  chars: r.content.length,
+                  ok: true,
+                });
               } else {
                 pageEvents.push({
                   url: r.url,
@@ -1635,12 +1669,22 @@ export class ChatService {
               this.logger.warn(
                 `검색 결과 추출 실패: ${r.url} (${e instanceof Error ? e.message : ''})`,
               );
-              pageEvents.push({
-                url: r.url,
-                title: r.title,
-                chars: 0,
-                ok: false,
-              });
+              // 인스타/X: 추출 예외여도 Tavily 검색 스니펫이 있으면 본문으로 사용.
+              if (isJsBlockedSocialUrl(r.url) && r.content.trim().length > 0) {
+                pageEvents.push({
+                  url: r.url,
+                  title: r.title,
+                  chars: r.content.length,
+                  ok: true,
+                });
+              } else {
+                pageEvents.push({
+                  url: r.url,
+                  title: r.title,
+                  chars: 0,
+                  ok: false,
+                });
+              }
             }
           }
           yield { type: 'pages', pages: pageEvents };

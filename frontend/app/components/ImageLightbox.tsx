@@ -196,7 +196,7 @@ export default function ImageLightbox({
         <>
           <button
             type="button"
-            className="absolute left-3 top-1/2 -translate-y-1/2 inline-flex h-12 w-12 items-center justify-center rounded-full bg-secondary/70 text-foreground hover:bg-secondary"
+            className="group absolute left-3 top-1/2 -translate-y-1/2 inline-flex h-12 w-12 items-center justify-center rounded-2xl border border-white/20 bg-white/10 text-white shadow-lg backdrop-blur-md transition-all duration-200 hover:scale-110 hover:border-white/40 hover:bg-white/20 active:scale-95"
             onClick={(e) => {
               e.stopPropagation();
               prev();
@@ -204,11 +204,11 @@ export default function ImageLightbox({
             title="이전 (←)"
             aria-label="이전 이미지"
           >
-            <ChevronLeft className="h-6 w-6" />
+            <ChevronLeft className="h-6 w-6 transition-transform duration-200 group-hover:-translate-x-0.5" />
           </button>
           <button
             type="button"
-            className="absolute right-3 top-1/2 -translate-y-1/2 inline-flex h-12 w-12 items-center justify-center rounded-full bg-secondary/70 text-foreground hover:bg-secondary"
+            className="group absolute right-3 top-1/2 -translate-y-1/2 inline-flex h-12 w-12 items-center justify-center rounded-2xl border border-white/20 bg-white/10 text-white shadow-lg backdrop-blur-md transition-all duration-200 hover:scale-110 hover:border-white/40 hover:bg-white/20 active:scale-95"
             onClick={(e) => {
               e.stopPropagation();
               next();
@@ -216,7 +216,7 @@ export default function ImageLightbox({
             title="다음 (→)"
             aria-label="다음 이미지"
           >
-            <ChevronRight className="h-6 w-6" />
+            <ChevronRight className="h-6 w-6 transition-transform duration-200 group-hover:translate-x-0.5" />
           </button>
         </>
       )}

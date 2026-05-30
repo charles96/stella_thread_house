@@ -270,6 +270,28 @@ function parseInstagramShortcode(u: URL): string | null {
   return m ? m[2] : null;
 }
 
+// 네이버 블로그는 본문이 mainFrame iframe 안에 들어 있어, PC URL
+// (blog.naver.com/{blogId}/{logNo})을 그냥 fetch 하면 본문 없는 빈 껍데기만 온다.
+// 모바일 URL(m.blog.naver.com/{blogId}/{logNo})은 본문/OG 태그를 직접 내려주므로
+// 그쪽으로 치환해서 가져온다. (URL 직접 모드/검색 모드 양쪽 모두 적용)
+// 매칭 시 모바일 URL 문자열, 아니면 null.
+function parseNaverBlogMobileUrl(u: URL): string | null {
+  const host = u.hostname.toLowerCase();
+  if (host !== 'blog.naver.com' && host !== 'm.blog.naver.com') return null;
+  // 형식 1: /{blogId}/{logNo}
+  const m = u.pathname.match(/^\/([A-Za-z0-9_-]+)\/(\d+)\/?$/);
+  if (m) return `https://m.blog.naver.com/${m[1]}/${m[2]}`;
+  // 형식 2: /PostView.naver?blogId=..&logNo=..  /  형식 3: /{blogId}?logNo=..
+  const blogId =
+    u.searchParams.get('blogId') ??
+    u.pathname.match(/^\/([A-Za-z0-9_-]+)\/?$/)?.[1];
+  const logNo = u.searchParams.get('logNo');
+  if (blogId && logNo && /^\d+$/.test(logNo)) {
+    return `https://m.blog.naver.com/${blogId}/${logNo}`;
+  }
+  return null;
+}
+
 function parseYoutubeUrl(u: URL): { videoId: string } | null {
   const host = u.hostname.toLowerCase().replace(/^(www|m)\./, '');
   const idRe = /^[A-Za-z0-9_-]{6,15}$/;
@@ -507,11 +529,15 @@ export class PageService {
     // Instagram 게시물은 일반 페이지가 봇 차단되므로 /embed/captioned/ 임베드 페이지를 fetch.
     // 공개 게시물이면 OG 태그(이미지/설명) + 캡션이 정상 추출된다.
     const igShortcode = parseInstagramShortcode(u);
+    // 네이버 블로그는 PC URL 이 빈 iframe 껍데기라 모바일 URL 로 치환해 본문을 받는다.
+    const naverMobileUrl = igShortcode ? null : parseNaverBlogMobileUrl(u);
     const fetchUrl = igShortcode
       ? new URL(
           `https://www.instagram.com/p/${igShortcode}/embed/captioned/`,
         )
-      : u;
+      : naverMobileUrl
+        ? new URL(naverMobileUrl)
+        : u;
 
     yield { type: 'stage', stage: 'fetch' };
     let fetchResult: PageExtractResult | null = null;
@@ -539,8 +565,18 @@ export class PageService {
       return r;
     };
 
+    // IG 필터 적용 후, 네이버는 모바일 URL 로 받아왔어도 결과 url 은 원본으로 표기.
+    const finalize = (r: PageExtractResult): PageExtractResult => {
+      const fr = finalizeIg(r);
+      if (naverMobileUrl) {
+        fr.url = u.toString();
+        fr.finalUrl = u.toString();
+      }
+      return fr;
+    };
+
     if (fetchResult && !this.looksBlocked(fetchResult)) {
-      yield { type: 'result', result: finalizeIg(fetchResult) };
+      yield { type: 'result', result: finalize(fetchResult) };
       return;
     }
 
@@ -561,7 +597,7 @@ export class PageService {
             setTimeout(() => reject(new Error('tavily extract timeout')), 30_000),
           ),
         ]);
-        yield { type: 'result', result: finalizeIg(tavilyResult) };
+        yield { type: 'result', result: finalize(tavilyResult) };
         return;
       }
     } catch (e) {
@@ -573,7 +609,7 @@ export class PageService {
 
     // 모든 폴백 실패 — fetch 결과라도 있으면 반환, 없으면 에러.
     if (fetchResult) {
-      yield { type: 'result', result: finalizeIg(fetchResult) };
+      yield { type: 'result', result: finalize(fetchResult) };
       return;
     }
     throw fetchError instanceof Error
