@@ -38,7 +38,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import type { AuthUser, Conversation, Folder } from './ChatRoom';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { version } from '../../package.json';
 
 // 사이드바 내 conversation 드래그 식별용 커스텀 MIME. kind 별로 분리해
@@ -211,6 +211,45 @@ export default function Sidebar({
   }, [conversations, pinnedOrder]);
   const [pinnedDraggingId, setPinnedDraggingId] = useState<string | null>(null);
   const [pinnedDragOverId, setPinnedDragOverId] = useState<string | null>(null);
+  // unpin 진행 중인 항목 — 접힘 애니메이션을 보여준 뒤 실제 onPin 으로 제거.
+  const [unpinningIds, setUnpinningIds] = useState<Set<string>>(new Set());
+  // pin 직후인 항목 — Pinned 섹션에 펼쳐지며 등장하는 애니메이션 표시용.
+  const [pinningIds, setPinningIds] = useState<Set<string>>(new Set());
+  // pin/unpin 토글 통합 핸들러 — Pinned 섹션·Thread/Chat 행·폴더 내 행 모두 이걸 거침.
+  // 어느 메뉴에서 눌러도 Pinned 항목이 동일한 애니메이션(unpin=접힘 / pin=펼침)으로 동작하도록 단일화.
+  const handleTogglePin = useCallback(
+    (id: string) => {
+      const conv = conversations.find((c) => c.id === id);
+      if (!conv?.pinned) {
+        // 핀 추가 → 즉시 onPin 후 Pinned 섹션에서 펼쳐지며 등장.
+        onPin(id);
+        setPinningIds((prev) => new Set(prev).add(id));
+        window.setTimeout(() => {
+          setPinningIds((prev) => {
+            const next = new Set(prev);
+            next.delete(id);
+            return next;
+          });
+        }, 300);
+        return;
+      }
+      // unpin → 접히며 사라진 뒤 실제 해제.
+      setUnpinningIds((prev) => {
+        if (prev.has(id)) return prev; // 중복 클릭 방지
+        return new Set(prev).add(id);
+      });
+      // 애니메이션 길이(280ms)와 맞춤 — 끝나면 핀 해제 + 상태 정리.
+      window.setTimeout(() => {
+        onPin(id);
+        setUnpinningIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }, 300);
+    },
+    [conversations, onPin],
+  );
 
   // Threads / Chat 탭 — 한 번에 한 섹션만 노출. 활성 conversation 의 kind 가
   // 바뀌면 (예: 다른 탭의 conversation 을 Dashboard 에서 클릭) 해당 탭으로 자동 전환.
@@ -273,11 +312,12 @@ export default function Sidebar({
               {t('sidebar.pinned')}
             </span>
           </div>
-          <div className="flex max-h-36 flex-col gap-1 overflow-y-auto md:max-h-48 md:gap-0.5">
+          {/* 좌측 세로 가이드 선 — References 리스트와 동일 톤(primary/30). Pin 아이콘 아래로 정렬. */}
+          <div className="ml-1.5 flex max-h-36 flex-col gap-1 overflow-y-auto border-l-2 border-primary/30 pl-2 md:max-h-48 md:gap-0.5">
             {pinnedConvs.map((c) => (
               <div
                 key={c.id}
-                draggable={canDrag}
+                draggable={canDrag && !unpinningIds.has(c.id)}
                 onDragStart={(e) => {
                   e.dataTransfer.effectAllowed = 'move';
                   e.dataTransfer.setData('text/plain', c.id);
@@ -320,6 +360,11 @@ export default function Sidebar({
                   pinnedDragOverId === c.id && pinnedDraggingId !== c.id
                     ? 'ring-1 ring-primary/60 bg-primary/10'
                     : '',
+                  // unpin 진행 중 — 위로 접히며 사라지는 collapse 애니메이션. 클릭/호버 비활성.
+                  unpinningIds.has(c.id) &&
+                    'pointer-events-none overflow-hidden animate-collapse-up',
+                  // pin 직후 — 아래로 펼쳐지며 등장하는 expand 애니메이션.
+                  pinningIds.has(c.id) && 'overflow-hidden animate-expand-down',
                 )}
                 title={c.title}
               >
@@ -330,6 +375,33 @@ export default function Sidebar({
                 )}
                 <span className="sidebar-title-fade min-w-0 flex-1 overflow-hidden whitespace-nowrap">{c.title || t('sidebar.newChat')}</span>
                 <GripVertical className="h-3 w-3 shrink-0 text-muted-foreground/40 opacity-0 group-hover/pin:opacity-100" />
+                {/* 우측 ... 메뉴 — 클릭 시 unpin. 행 클릭(선택)·드래그와 충돌하지 않게 stopPropagation. */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      draggable={false}
+                      className="h-7 w-7 shrink-0 transition-opacity hover:bg-transparent data-[state=open]:bg-transparent data-[state=open]:opacity-100 md:h-5 md:w-5 md:opacity-0 md:group-hover/pin:opacity-100"
+                      onClick={(e) => e.stopPropagation()}
+                      title={t('sidebar.more')}
+                    >
+                      <MoreHorizontal className="h-3.5 w-3.5" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    align="end"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <DropdownMenuItem
+                      onSelect={() => handleTogglePin(c.id)}
+                      className="gap-2"
+                    >
+                      <PinOff className="h-3 w-3" />
+                      <span>{t('sidebar.unpin')}</span>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             ))}
           </div>
@@ -434,7 +506,7 @@ export default function Sidebar({
                     onDelete={onDelete}
                     onRename={onRename}
                     onMove={onMove}
-                    onPin={onPin}
+                    onPin={handleTogglePin}
                     onRenameFolder={onRenameFolder}
                     onDeleteFolder={onDeleteFolder}
                     onToggleFolder={onToggleFolder}
@@ -460,7 +532,7 @@ export default function Sidebar({
                     onDelete={onDelete}
                     onRename={onRename}
                     onMove={onMove}
-                    onPin={onPin}
+                    onPin={handleTogglePin}
                   />
                 ))}
               </RootDropZone>
@@ -482,7 +554,7 @@ export default function Sidebar({
                     onDelete={onDelete}
                     onRename={onRename}
                     onMove={onMove}
-                    onPin={onPin}
+                    onPin={handleTogglePin}
                     onRenameFolder={onRenameFolder}
                     onDeleteFolder={onDeleteFolder}
                     onToggleFolder={onToggleFolder}
@@ -508,7 +580,7 @@ export default function Sidebar({
                     onDelete={onDelete}
                     onRename={onRename}
                     onMove={onMove}
-                    onPin={onPin}
+                    onPin={handleTogglePin}
                   />
                 ))}
               </RootDropZone>

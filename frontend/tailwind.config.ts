@@ -69,10 +69,40 @@ const config: Config = {
           '70%': { transform: 'scale(0.98)' },
           '100%': { transform: 'scale(1)' },
         },
+        // 사이드바 항목이 위로 접히며 사라지는 모션(unpin 등) — 높이/패딩/마진을 0 으로 줄여
+        // 아래 항목들이 자연스럽게 당겨 올라오게. overflow-hidden 과 함께 사용.
+        'collapse-up': {
+          '0%': { maxHeight: '3.5rem', opacity: '1' },
+          '70%': { opacity: '0' },
+          '100%': {
+            maxHeight: '0px',
+            opacity: '0',
+            paddingTop: '0',
+            paddingBottom: '0',
+            marginTop: '0',
+            marginBottom: '0',
+          },
+        },
+        // collapse-up 의 역방향 — 항목이 0 에서 펼쳐지며 등장(pin 추가). 패딩/마진은
+        // 100% 에서 미지정 → 브라우저가 자연값으로 복원(implicit keyframe)하므로 breakpoint 정확.
+        'expand-down': {
+          '0%': {
+            maxHeight: '0px',
+            opacity: '0',
+            paddingTop: '0',
+            paddingBottom: '0',
+            marginTop: '0',
+            marginBottom: '0',
+          },
+          '30%': { opacity: '0' },
+          '100%': { maxHeight: '3.5rem', opacity: '1' },
+        },
       },
       animation: {
         'caret-blink': 'caret-blink 1.25s ease-out infinite',
         'card-pop': 'card-pop 480ms cubic-bezier(0.34, 1.56, 0.64, 1) 1',
+        'collapse-up': 'collapse-up 280ms cubic-bezier(0.4, 0, 0.2, 1) forwards',
+        'expand-down': 'expand-down 280ms cubic-bezier(0.4, 0, 0.2, 1)',
       },
     },
   },
