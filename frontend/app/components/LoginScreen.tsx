@@ -81,19 +81,37 @@ export default function LoginScreen({ onLogin }: { onLogin: () => void }) {
         body: JSON.stringify(body),
       });
       if (!res.ok) {
-        let msg = `HTTP ${res.status}`;
+        // 백엔드가 message 를 주면 그대로 사용, 없으면 상태코드 노출 대신 사람이 읽을 영어 문구.
+        let msg = '';
         try {
           const j = (await res.json()) as { message?: string };
           if (j.message) msg = j.message;
         } catch {
           // ignore
         }
+        if (!msg) {
+          if (res.status >= 500) {
+            msg = 'Server error. Please try again in a moment.';
+          } else if (res.status === 401 || res.status === 403) {
+            msg = 'Incorrect email or password.';
+          } else if (res.status === 429) {
+            msg = 'Too many attempts. Please wait a moment and try again.';
+          } else {
+            msg = `Request failed (${res.status}). Please try again.`;
+          }
+        }
         throw new Error(msg);
       }
       // 로그인/등록 성공 → 부모(Auth check) 가 다시 /auth/me 로 fetch 하도록.
       onLogin();
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : String(err));
+      const m = err instanceof Error ? err.message : String(err);
+      // fetch 자체 실패(서버 미응답·네트워크 단절) — "Failed to fetch" 대신 명확한 영어 문구.
+      setErrorMsg(
+        /failed to fetch|networkerror|load failed/i.test(m)
+          ? 'Unable to reach the server. Please check your connection and try again.'
+          : m,
+      );
     } finally {
       setBusy(false);
     }

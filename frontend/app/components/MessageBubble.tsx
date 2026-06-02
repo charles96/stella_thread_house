@@ -2737,7 +2737,10 @@ function MessageBubble({
                   className="inline-block max-w-full align-top whitespace-pre-wrap break-words rounded-sm bg-transparent outline-none ring-1 ring-primary/40 focus:ring-2 focus:ring-primary/60"
                 />
               ) : (
-                <span key="heading-view" className="whitespace-pre-wrap break-words">
+                <span
+                  key="heading-view"
+                  className="doodle-underline inline-block max-w-full whitespace-pre-wrap break-words"
+                >
                   {linkifyText(message.content)}
                 </span>
               )}
