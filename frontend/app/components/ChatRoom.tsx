@@ -380,6 +380,197 @@ const MessageItem = memo(function MessageItem({
 });
 // ─────────────────────────────────────────────────────────────────────────────
 
+// 검색 처리 중 스트림 파트(search/pages/page_timeout/image_*/status)를 메시지 필드에 반영.
+// 능동 스트림과 수동(다른 기기) 실시간 미러 양쪽에서 공용 → Reference documents·팝콘 이미지 UI 동기화.
+// 처리하면 true, 아니면 false 반환(호출 측이 다른 type 으로 넘어가도록).
+function applyServerStreamPart(
+  json: Record<string, unknown>,
+  botId: string,
+  patchConv: (updater: (c: Conversation) => Conversation) => void,
+): boolean {
+  if (json.type === 'search' && Array.isArray(json.results)) {
+    const rawImgs: unknown[] = Array.isArray(json.images) ? json.images : [];
+    const imgs: SearchImage[] = rawImgs
+      .map((it) => {
+        if (typeof it === 'string') return { url: it };
+        if (
+          it &&
+          typeof it === 'object' &&
+          'url' in it &&
+          typeof (it as { url: unknown }).url === 'string'
+        ) {
+          const o = it as {
+            url: string;
+            sourceTitle?: string;
+            sourceUrl?: string;
+          };
+          return { url: o.url, sourceTitle: o.sourceTitle, sourceUrl: o.sourceUrl };
+        }
+        return null;
+      })
+      .filter((x): x is SearchImage => !!x);
+    patchConv((c) => ({
+      ...c,
+      messages: c.messages.map((m) =>
+        m.id === botId
+          ? {
+              ...m,
+              sources: json.results as Source[],
+              searchImages: imgs.length ? imgs : undefined,
+            }
+          : m,
+      ),
+      updatedAt: Date.now(),
+    }));
+    return true;
+  }
+  if (json.type === 'pages' && Array.isArray(json.pages)) {
+    const pages = (json.pages as unknown[])
+      .map((p) => {
+        if (!p || typeof p !== 'object') return null;
+        const o = p as Record<string, unknown>;
+        if (typeof o.url !== 'string') return null;
+        const rawImgs = Array.isArray(o.images) ? (o.images as unknown[]) : [];
+        const images = rawImgs
+          .map((it): ReadPageImage | null => {
+            if (!it || typeof it !== 'object') return null;
+            const r = it as Record<string, unknown>;
+            if (typeof r.src !== 'string') return null;
+            const alt = typeof r.alt === 'string' ? r.alt : undefined;
+            const kind =
+              r.kind === 'youtube' || r.kind === 'x' || r.kind === 'image'
+                ? r.kind
+                : undefined;
+            const linkUrl =
+              typeof r.linkUrl === 'string' ? r.linkUrl : undefined;
+            const out: ReadPageImage = { src: r.src };
+            if (alt) out.alt = alt;
+            if (kind) out.kind = kind;
+            if (linkUrl) out.linkUrl = linkUrl;
+            if (r.analyzing === true) out.analyzing = true;
+            return out;
+          })
+          .filter((x): x is ReadPageImage => x !== null);
+        return {
+          url: o.url,
+          title: typeof o.title === 'string' ? o.title : undefined,
+          chars: typeof o.chars === 'number' ? o.chars : 0,
+          ok: o.ok === true,
+          images: images.length > 0 ? images : undefined,
+        } as ReadPage;
+      })
+      .filter((x): x is ReadPage => !!x);
+    patchConv((c) => ({
+      ...c,
+      messages: c.messages.map((m) =>
+        m.id === botId ? { ...m, readPages: pages.length ? pages : undefined } : m,
+      ),
+      updatedAt: Date.now(),
+    }));
+    return true;
+  }
+  if (json.type === 'page_timeout' && typeof json.url === 'string') {
+    const timedUrl = json.url as string;
+    patchConv((c) => ({
+      ...c,
+      messages: c.messages.map((m) => {
+        if (m.id !== botId) return m;
+        const existing = m.readPages ?? [];
+        if (existing.some((p) => p.url === timedUrl)) return m;
+        const source = m.sources?.find((s) => s.url === timedUrl);
+        return {
+          ...m,
+          readPages: [
+            ...existing,
+            { url: timedUrl, title: source?.title, chars: 0, ok: false } as ReadPage,
+          ],
+        };
+      }),
+      updatedAt: Date.now(),
+    }));
+    return true;
+  }
+  if (
+    json.type === 'image_analyzing_start' &&
+    typeof json.pageUrl === 'string' &&
+    typeof json.src === 'string'
+  ) {
+    const pageUrl = json.pageUrl as string;
+    const src = json.src as string;
+    patchConv((c) => ({
+      ...c,
+      messages: c.messages.map((m) => {
+        if (m.id !== botId || !m.readPages) return m;
+        const nextPages = m.readPages.map((p) => {
+          if (p.url !== pageUrl || !p.images) return p;
+          const nextImages = p.images.map((img) =>
+            img.src === src ? { ...img, analyzing: true } : img,
+          );
+          return { ...p, images: nextImages };
+        });
+        return { ...m, readPages: nextPages };
+      }),
+      updatedAt: Date.now(),
+    }));
+    return true;
+  }
+  if (
+    json.type === 'image_analysis' &&
+    typeof json.pageUrl === 'string' &&
+    Array.isArray(json.analyses)
+  ) {
+    const pageUrl = json.pageUrl as string;
+    const analyses = (json.analyses as unknown[])
+      .map((it) => {
+        if (!it || typeof it !== 'object') return null;
+        const o = it as Record<string, unknown>;
+        if (typeof o.src !== 'string') return null;
+        return {
+          src: o.src,
+          relevant: o.relevant === true,
+          description: typeof o.description === 'string' ? o.description : '',
+        };
+      })
+      .filter(
+        (x): x is { src: string; relevant: boolean; description: string } => !!x,
+      );
+    patchConv((c) => ({
+      ...c,
+      messages: c.messages.map((m) => {
+        if (m.id !== botId || !m.readPages) return m;
+        const nextPages = m.readPages.map((p) => {
+          if (p.url !== pageUrl || !p.images) return p;
+          const lookup = new Map(analyses.map((a) => [a.src, a]));
+          const nextImages = p.images.map((img) => {
+            const a = lookup.get(img.src);
+            if (!a) return img;
+            return {
+              ...img,
+              analyzing: false,
+              analysis: { relevant: a.relevant, description: a.description },
+            };
+          });
+          return { ...p, images: nextImages };
+        });
+        return { ...m, readPages: nextPages };
+      }),
+      updatedAt: Date.now(),
+    }));
+    return true;
+  }
+  if (json.type === 'status' && json.text) {
+    patchConv((c) => ({
+      ...c,
+      messages: c.messages.map((m) =>
+        m.id === botId ? { ...m, status: json.text as string } : m,
+      ),
+      updatedAt: Date.now(),
+    }));
+    return true;
+  }
+  return false;
+}
+
 export default function ChatRoom() {
   const { t, lang } = useI18n();
   const { tavilyTopRead } = useThreadSettings();
@@ -414,8 +605,38 @@ export default function ChatRoom() {
   // 비동기 closure 가 "지금 사용자가 보고 있는 thread 인지" 판정할 때 쓰는 최신 activeId.
   const activeIdRef = useRef<string | null>(null);
   const [pending, setPending] = useState(false);
+  // 점진적 렌더링 — 긴 thread 를 열 때 처음엔 일부만 렌더(페이지 즉시 전환), idle/로딩에 맞춰 확장.
+  // Infinity = 전체 렌더(제한 없음). thread 에만 적용(chat 은 최신이 하단이라 위에서부터 자르면 안 됨).
+  const RENDER_INITIAL = 14;
+  const [renderLimit, setRenderLimit] = useState(Number.POSITIVE_INFINITY);
+  // ★ 핵심: cap 을 useEffect 가 아니라 "렌더 단계"에서 동기 적용 — 그래야 전체 메시지를
+  //   한 번에 렌더하는 비용(freeze)이 애초에 발생하지 않음. activeId/로드상태가 바뀌는 첫 렌더에
+  //   바로 cap 을 세팅하면 React 가 자식(메시지들) 렌더 전에 재렌더하므로 freeze 없음.
+  const renderCapKeyRef = useRef<string>('');
+  {
+    const ac = conversations.find((c) => c.id === activeId);
+    const key = `${activeId ?? ''}:${ac?.messagesLoaded ? '1' : '0'}`;
+    if (renderCapKeyRef.current !== key) {
+      renderCapKeyRef.current = key;
+      const isLongThread =
+        (ac?.kind ?? 'thread') === 'thread' &&
+        !!ac?.messagesLoaded &&
+        (ac?.messages.length ?? 0) > RENDER_INITIAL;
+      setRenderLimit(isLongThread ? RENDER_INITIAL : Number.POSITIVE_INFINITY);
+    }
+  }
+  // 현재 응답 생성 중인 conversation id 집합 (로컬+원격, user 단위 SSE 로 추적).
+  // size > 0 이면 "AI 응답 중" → 어느 thread/메뉴에 있어도 입력창을 전역 중지 상태로 유지.
+  const [streamingConvIds, setStreamingConvIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   // 현재 스트리밍 중인 assistant 메시지의 ID — ref 대신 state 로 관리해 concurrent 렌더에서 tearing 방지.
   const [liveMessageId, setLiveMessageId] = useState<string | null>(null);
+  // 이 탭이 직접 스트리밍 중인 assistant 메시지 id — 로컬 SSE 로 이미 렌더하므로
+  // 같은 id 의 실시간 미러 이벤트(start/delta/end/updated)는 무시해야 함(중복/충돌 방지).
+  const localStreamingIdRef = useRef<string | null>(null);
+  // 원격 스트림으로 인해 pending(입력창 잠금) 을 켰는지 — thread 이동 시 stale 해제용.
+  const remotePendingRef = useRef(false);
   const [activeArtifact, setActiveArtifact] = useState<Artifact | null>(null);
   const [mountedArtifact, setMountedArtifact] = useState<Artifact | null>(
     null,
@@ -1187,6 +1408,367 @@ export default function ChatRoom() {
     [],
   );
 
+  // 실시간 동기화 — 같은 thread 를 다른 기기/탭에서 열어둔 경우, 그쪽 변경(메시지 추가/최종답변)을
+  // EventSource(SSE)로 수신해 현재 화면에 새로고침 없이 병합.
+  // 변경을 일으킨 본인 탭도 echo 를 받지만 id dedup + liveMessageId 가드로 무해하게 무시됨.
+  useEffect(() => {
+    if (!activeId) return;
+    const convId = activeId;
+    const es = new EventSource(`${API_URL}/conversations/${convId}/events`);
+
+    // 원격 스트림의 라이브 토큰 속도 계산용 (능동 흐름과 동일: content 누적 길이 / 경과초).
+    let rStartedAt = 0;
+    let rAccumLen = 0;
+    let rLastUpdate = 0;
+
+    // delta rAF 배칭 — 토큰마다 setConversations(전체 메시지 map) 하지 않고 프레임당 1회로 묶음.
+    // 글 많은 thread 에서 실시간 스트림 성능 저하 방지. 누적 결과(content/thinking)는 동일.
+    const pendingDelta = new Map<string, { content: string; thinking: string }>();
+    let deltaFlushHandle: number | null = null;
+    const flushDelta = () => {
+      if (deltaFlushHandle !== null) {
+        cancelAnimationFrame(deltaFlushHandle);
+        deltaFlushHandle = null;
+      }
+      if (pendingDelta.size === 0) return;
+      const applied = new Map(pendingDelta);
+      pendingDelta.clear();
+      setConversations((prev) =>
+        prev.map((c) => {
+          if (c.id !== convId || !c.messagesLoaded) return c;
+          let changed = false;
+          const messages = c.messages.map((m) => {
+            const d = applied.get(m.id);
+            if (!d) return m;
+            changed = true;
+            return {
+              ...m,
+              content: d.content ? (m.content ?? '') + d.content : m.content,
+              thinking: d.thinking
+                ? (m.thinking ?? '') + d.thinking
+                : m.thinking,
+            };
+          });
+          return changed ? { ...c, messages } : c;
+        }),
+      );
+    };
+    const scheduleDeltaFlush = () => {
+      if (deltaFlushHandle === null) {
+        deltaFlushHandle = requestAnimationFrame(flushDelta);
+      }
+    };
+
+    const mapDto = (r: ServerMessage): Message => {
+      const meta = { ...(r.metadata ?? {}) } as Record<string, unknown>;
+      delete meta.followup;
+      delete meta.followupGenerating;
+      return {
+        id: r.id,
+        role: r.role,
+        content: r.content,
+        thinking: r.thinking ?? undefined,
+        ...meta,
+        time: formatTime(r.createdAt),
+        hashtagsGenerating: false,
+        followupGenerating: false,
+      } as Message;
+    };
+
+    es.onmessage = (ev) => {
+      let parsed: {
+        type?: string;
+        conversationId?: string;
+        payload?: unknown;
+      };
+      try {
+        parsed = JSON.parse(ev.data);
+      } catch {
+        return; // heartbeat 등 비-JSON 은 무시
+      }
+      if (parsed.conversationId !== convId) return;
+
+      // 발신자(이 탭) 본인이 만든 스트림은 로컬 SSE 가 이미 렌더 → 미러 이벤트 무시.
+      const ownStream = (id: unknown) =>
+        typeof id === 'string' && id === localStreamingIdRef.current;
+
+      if (parsed.type === 'messages.appended') {
+        const dtos = (parsed.payload as ServerMessage[]) ?? [];
+        setConversations((prev) =>
+          prev.map((c) => {
+            // 아직 메시지를 로드 안 한 대화는 열 때 새로 fetch 되므로 병합 생략.
+            if (c.id !== convId || !c.messagesLoaded) return c;
+            const have = new Set(c.messages.map((m) => m.id));
+            const add = dtos.filter((d) => !have.has(d.id)).map(mapDto);
+            if (add.length === 0) return c; // 본인 echo → dedup
+            return { ...c, messages: [...c.messages, ...add] };
+          }),
+        );
+      } else if (parsed.type === 'message.updated') {
+        const dto = parsed.payload as ServerMessage;
+        if (!dto?.id || ownStream(dto.id)) return;
+        // 최종 전체 content 가 도착 → 미적용 delta 는 폐기(중복 append 방지).
+        pendingDelta.delete(dto.id);
+        setConversations((prev) =>
+          prev.map((c) => {
+            if (c.id !== convId || !c.messagesLoaded) return c;
+            let changed = false;
+            const messages = c.messages.map((m) => {
+              if (m.id !== dto.id) return m;
+              changed = true;
+              return { ...m, ...mapDto(dto) };
+            });
+            return changed ? { ...c, messages } : c;
+          }),
+        );
+      } else if (parsed.type === 'message.deleted') {
+        // 목차/제목 기준 삭제 — 다른 기기/탭에서 해당 메시지(질문+답변) 제거.
+        const { ids } = (parsed.payload ?? {}) as { ids?: string[] };
+        if (!ids?.length) return;
+        const rm = new Set(ids);
+        setConversations((prev) =>
+          prev.map((c) => {
+            if (c.id !== convId || !c.messagesLoaded) return c;
+            const messages = c.messages.filter((m) => !rm.has(m.id));
+            return messages.length === c.messages.length
+              ? c
+              : { ...c, messages };
+          }),
+        );
+      } else if (parsed.type === 'messages.reordered') {
+        // 목차(TOC) 드래그 등으로 바뀐 순서 반영.
+        const { orderedIds } = (parsed.payload ?? {}) as {
+          orderedIds?: string[];
+        };
+        if (!orderedIds?.length) return;
+        const order = new Map(orderedIds.map((id, i) => [id, i]));
+        setConversations((prev) =>
+          prev.map((c) => {
+            if (c.id !== convId || !c.messagesLoaded) return c;
+            const sorted = [...c.messages].sort((a, b) => {
+              const ai = order.has(a.id)
+                ? (order.get(a.id) as number)
+                : Number.MAX_SAFE_INTEGER;
+              const bi = order.has(b.id)
+                ? (order.get(b.id) as number)
+                : Number.MAX_SAFE_INTEGER;
+              return ai - bi;
+            });
+            return { ...c, messages: sorted };
+          }),
+        );
+      } else if (parsed.type === 'message.stream.start') {
+        const { messageId } = (parsed.payload ?? {}) as { messageId?: string };
+        if (!messageId || ownStream(messageId)) return;
+        // 다른 기기/탭이 응답 생성 시작 — 입력창 streaming 상태 + 대상 메시지 표시 미러링.
+        setPending(true);
+        setLiveMessageId(messageId);
+        remotePendingRef.current = true;
+        rStartedAt = 0;
+        rAccumLen = 0;
+        rLastUpdate = 0;
+        setLiveTokRate(null);
+      } else if (parsed.type === 'message.delta') {
+        const { messageId, kind, text } = (parsed.payload ?? {}) as {
+          messageId?: string;
+          kind?: 'content' | 'thinking';
+          text?: string;
+        };
+        if (!messageId || !text || ownStream(messageId)) return;
+        // 라이브 토큰 속도 — content 누적 길이 / 경과초 (능동 흐름과 동일, 180ms throttle).
+        if (kind !== 'thinking') {
+          rAccumLen += text.length;
+          const now = Date.now();
+          if (rStartedAt === 0) rStartedAt = now;
+          if (now - rLastUpdate > 180) {
+            const elapsed = (now - rStartedAt) / 1000;
+            if (elapsed > 0.05) setLiveTokRate(rAccumLen / elapsed);
+            rLastUpdate = now;
+          }
+        }
+        // 토큰을 배치에 누적 → 프레임당 1회 flush (능동 브라우저처럼 점진 렌더, 동작 동일).
+        const cur = pendingDelta.get(messageId) ?? { content: '', thinking: '' };
+        if (kind === 'thinking') cur.thinking += text;
+        else cur.content += text;
+        pendingDelta.set(messageId, cur);
+        scheduleDeltaFlush();
+      } else if (parsed.type === 'message.part') {
+        // 검색 결과/Reference documents/이미지 등 raw 파트 → 능동과 동일한 공용 핸들러로 반영.
+        const { messageId, part } = (parsed.payload ?? {}) as {
+          messageId?: string;
+          part?: Record<string, unknown>;
+        };
+        if (!messageId || !part || ownStream(messageId)) return;
+        applyServerStreamPart(part, messageId, (updater) =>
+          setConversations((prev) =>
+            prev.map((c) =>
+              c.id === convId && c.messagesLoaded ? updater(c) : c,
+            ),
+          ),
+        );
+      } else if (parsed.type === 'message.metric') {
+        const { messageId, tokens, durationMs, tokensPerSec, promptTokens } =
+          (parsed.payload ?? {}) as {
+            messageId?: string;
+            tokens?: number;
+            durationMs?: number;
+            tokensPerSec?: number;
+            promptTokens?: number;
+          };
+        if (!messageId || ownStream(messageId)) return;
+        // 토큰 사용량 동기화 — 대상 메시지의 metric 필드 갱신.
+        setConversations((prev) =>
+          prev.map((c) => {
+            if (c.id !== convId || !c.messagesLoaded) return c;
+            let changed = false;
+            const messages = c.messages.map((m) => {
+              if (m.id !== messageId) return m;
+              changed = true;
+              return {
+                ...m,
+                metric: {
+                  tokens: tokens ?? 0,
+                  durationMs: durationMs ?? 0,
+                  tokensPerSec: tokensPerSec ?? 0,
+                  promptTokens,
+                },
+              };
+            });
+            return changed ? { ...c, messages } : c;
+          }),
+        );
+      } else if (parsed.type === 'message.stream.end') {
+        const { messageId } = (parsed.payload ?? {}) as { messageId?: string };
+        if (messageId && ownStream(messageId)) return;
+        flushDelta(); // 남은 토큰 즉시 반영
+        // 응답 생성 종료 — 입력창 재개.
+        setPending(false);
+        setLiveMessageId(null);
+        remotePendingRef.current = false;
+        setLiveTokRate(null);
+      }
+    };
+
+    // EventSource 는 끊겨도 자동 재연결 — 별도 처리 불필요.
+    return () => {
+      es.close();
+      flushDelta(); // 남은 배치 토큰 반영 후 정리
+      // 원격 스트림 도중 thread 를 떠나면 stale 한 pending/liveMessageId 해제.
+      if (remotePendingRef.current) {
+        remotePendingRef.current = false;
+        setPending(false);
+        setLiveMessageId(null);
+        setLiveTokRate(null);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId]);
+
+  // 사이드바 실시간 동기화 — 대화(thread/chat)·폴더 추가/삭제/이름변경/이동/핀을 다른 기기/탭과 동기화.
+  // serverConvsRef/serverFoldersRef 도 같은 객체 참조로 갱신 → 저장 diff 가 재전송하지 않게 함.
+  useEffect(() => {
+    const es = new EventSource(`${API_URL}/conversations/events/user`);
+    es.onmessage = (ev) => {
+      let parsed: { type?: string; payload?: unknown };
+      try {
+        parsed = JSON.parse(ev.data);
+      } catch {
+        return; // heartbeat 등
+      }
+      const p = (parsed.payload ?? {}) as Record<string, unknown>;
+
+      if (parsed.type === 'conversation.upsert') {
+        const dto = p.conversation as
+          | (Partial<Conversation> & { id: string })
+          | undefined;
+        if (!dto?.id) return;
+        setConversations((prev) => {
+          const existing = prev.find((c) => c.id === dto.id);
+          const merged: Conversation = existing
+            ? {
+                ...existing,
+                title: dto.title ?? existing.title,
+                kind: dto.kind ?? existing.kind ?? 'thread',
+                model: dto.model ?? undefined,
+                folderId: dto.folderId ?? null,
+                hashtags: dto.hashtags,
+                excludedHashtags: dto.excludedHashtags,
+                pinned: dto.pinned,
+                updatedAt: dto.updatedAt ?? existing.updatedAt,
+              }
+            : {
+                id: dto.id,
+                title: dto.title ?? '',
+                kind: dto.kind ?? 'thread',
+                messages: [],
+                messagesLoaded: false,
+                hasMoreMessages: true,
+                updatedAt: dto.updatedAt ?? Date.now(),
+                model: dto.model ?? undefined,
+                folderId: dto.folderId ?? null,
+                hashtags: dto.hashtags,
+                excludedHashtags: dto.excludedHashtags,
+                pinned: dto.pinned,
+              };
+          serverConvsRef.current.set(dto.id, merged); // 같은 참조 → 재저장 방지
+          return existing
+            ? prev.map((c) => (c.id === dto.id ? merged : c))
+            : [merged, ...prev];
+        });
+      } else if (parsed.type === 'conversation.deleted') {
+        const id = p.id as string | undefined;
+        if (!id) return;
+        serverConvsRef.current.delete(id);
+        setConversations((prev) => prev.filter((c) => c.id !== id));
+        setActiveId((cur) => (cur === id ? null : cur));
+      } else if (parsed.type === 'folder.upsert') {
+        const f = p.folder as (Partial<Folder> & { id: string }) | undefined;
+        if (!f?.id) return;
+        setFolders((prev) => {
+          const existing = prev.find((x) => x.id === f.id);
+          const merged: Folder = {
+            id: f.id,
+            name: f.name ?? existing?.name ?? '',
+            kind: f.kind ?? existing?.kind ?? 'thread',
+            // 펼침 상태는 각 브라우저 로컬 뷰 선호 → 기존 값 유지(이름변경 등에서 안 흔들리게).
+            expanded: existing?.expanded ?? f.expanded ?? true,
+            createdAt: f.createdAt ?? existing?.createdAt ?? Date.now(),
+          };
+          serverFoldersRef.current.set(f.id, merged);
+          return existing
+            ? prev.map((x) => (x.id === f.id ? merged : x))
+            : [...prev, merged];
+        });
+      } else if (parsed.type === 'folder.deleted') {
+        const id = p.id as string | undefined;
+        if (!id) return;
+        serverFoldersRef.current.delete(id);
+        setFolders((prev) => prev.filter((x) => x.id !== id));
+      } else if (parsed.type === 'stream.active') {
+        // 어느 thread 든 응답 생성 시작 → 전역 스트리밍 집합에 추가.
+        const cid = p.conversationId as string | undefined;
+        if (!cid) return;
+        setStreamingConvIds((prev) => {
+          if (prev.has(cid)) return prev;
+          const next = new Set(prev);
+          next.add(cid);
+          return next;
+        });
+      } else if (parsed.type === 'stream.inactive') {
+        const cid = p.conversationId as string | undefined;
+        if (!cid) return;
+        setStreamingConvIds((prev) => {
+          if (!prev.has(cid)) return prev;
+          const next = new Set(prev);
+          next.delete(cid);
+          return next;
+        });
+      }
+    };
+    return () => es.close();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // 활성 conversation 이 바뀌고 아직 메시지를 한 번도 fetch 하지 않았으면 첫 페이지를 가져온다.
   // Thread: 가장 오래된 메시지(문서 처음)부터 순방향으로 시작. Chat: 최신 메시지부터 역방향.
   useEffect(() => {
@@ -1214,10 +1796,43 @@ export default function ChatRoom() {
               : c,
           ),
         );
-        // Thread: 다음 순방향 페이지 미리 받아둠. Chat: 역방향 페이지 미리 받아둠.
-        if (hasMore && msgs.length > 0) {
-          if (isThreadKind) void prefetchNewerMessages(activeId, msgs[msgs.length - 1].id);
-          else void prefetchOlderMessages(activeId, msgs[0].id);
+        // Chat: 역방향 페이지 미리 받아둠.
+        if (!isThreadKind && hasMore && msgs.length > 0) {
+          void prefetchOlderMessages(activeId, msgs[0].id);
+        }
+        // Thread: 문서는 처음부터 표시하되, 최신 발화가 누락되지 않도록 끝까지 순방향 자동 로드.
+        // (긴 thread 도 새로고침 후 마지막 메시지가 보이게 — 저장은 정상, 로드만 보강.)
+        if (isThreadKind && hasMore && msgs.length > 0) {
+          let cursorId: string | null = msgs[msgs.length - 1].id;
+          let more = hasMore;
+          while (more && cursorId && !cancelled) {
+            const next = await fetchMessagesPage(activeId, null, cursorId);
+            if (cancelled) return;
+            if (next.msgs.length === 0) {
+              setConversations((prev) =>
+                prev.map((c) =>
+                  c.id === activeId
+                    ? { ...c, hasMoreNewerMessages: false }
+                    : c,
+                ),
+              );
+              break;
+            }
+            setConversations((prev) =>
+              prev.map((c) => {
+                if (c.id !== activeId) return c;
+                const have = new Set(c.messages.map((m) => m.id));
+                const add = next.msgs.filter((m) => !have.has(m.id));
+                return {
+                  ...c,
+                  messages: [...c.messages, ...add],
+                  hasMoreNewerMessages: next.hasMore,
+                };
+              }),
+            );
+            cursorId = next.msgs[next.msgs.length - 1].id;
+            more = next.hasMore;
+          }
         }
       } catch {
         if (cancelled) return;
@@ -1235,6 +1850,51 @@ export default function ChatRoom() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId]);
+
+  // 점진적 렌더 — 활성 thread 가 로드되면 처음엔 일부만 렌더하고 idle 로 점차 확장.
+  // (페이지 전환은 즉시, 무거운 본문은 백그라운드로 채움. messagesLoaded 가 true 가 될 때 시작.)
+  // (active 는 이 시점에 아직 미정의 — conversations 에서 직접 조회.)
+  const activeLoadedForRender =
+    conversations.find((c) => c.id === activeId)?.messagesLoaded ?? false;
+  // 위 렌더-단계 cap 이 긴 thread 를 RENDER_INITIAL 로 줄여둔 상태 → 여기선 idle 로 점차 확장만.
+  useEffect(() => {
+    const RENDER_CHUNK = 12;
+    if (!activeId || !activeLoadedForRender) return;
+    const conv0 = conversationsRef.current.find((c) => c.id === activeId);
+    const isThread = (conv0?.kind ?? 'thread') === 'thread';
+    const total0 = conv0?.messages.length ?? 0;
+    if (!isThread || total0 <= RENDER_INITIAL) return; // 짧으면 이미 전체 렌더
+    let limit = RENDER_INITIAL;
+    let cancelled = false;
+    let handle: number | null = null;
+    const schedule = (fn: () => void): number =>
+      typeof window.requestIdleCallback === 'function'
+        ? (window.requestIdleCallback(fn, { timeout: 250 }) as unknown as number)
+        : (window.setTimeout(fn, 16) as unknown as number);
+    const grow = () => {
+      if (cancelled) return;
+      const conv = conversationsRef.current.find((c) => c.id === activeId);
+      const total = conv?.messages.length ?? 0;
+      const stillLoading = conv?.hasMoreNewerMessages ?? false;
+      if (limit >= total && !stillLoading) {
+        // 모두 따라잡음 → 제한 해제(이후 스트리밍 추가분도 즉시 렌더).
+        setRenderLimit(Number.POSITIVE_INFINITY);
+        return;
+      }
+      limit += RENDER_CHUNK;
+      setRenderLimit(limit);
+      handle = schedule(grow);
+    };
+    handle = schedule(grow);
+    return () => {
+      cancelled = true;
+      if (handle === null) return;
+      if (typeof window.cancelIdleCallback === 'function')
+        window.cancelIdleCallback(handle);
+      else window.clearTimeout(handle);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, activeLoadedForRender]);
 
   // 폴링이 필요한 메시지 id — 활성 thread 의 마지막 메시지가 빈 assistant 인 경우만.
   // 안정적 id 라서 useEffect 가 무한 재실행되지 않음 (다른 conversations 변경엔 반응 X).
@@ -2717,7 +3377,8 @@ export default function ChatRoom() {
     imageNames: string[] = [],
     useVision = false,
   ) {
-    if (pending || !active) return;
+    // AI 응답 중(로컬 또는 다른 thread 의 원격 스트림)이면 전송 차단 — 전역 중지 상태.
+    if (pending || streamingConvIds.size > 0 || !active) return;
     if (!text.trim() && images.length === 0) return;
 
     // 스트림 시작 시점의 conversation id 를 고정 — 사용자가 도중에 다른 thread/Dashboard
@@ -2824,6 +3485,7 @@ export default function ChatRoom() {
 
     setPending(true);
     setLiveMessageId(botId);
+    localStreamingIdRef.current = botId; // 이 탭이 발신자 — 자기 미러 이벤트 무시용
     setLiveTokRate(null);
     let accumulatedContent = '';
     let streamStartedAt = 0;
@@ -3213,6 +3875,7 @@ export default function ChatRoom() {
       flushStream();
       streamAbortRef.current = null;
       streamMsgIdsRef.current = null;
+      localStreamingIdRef.current = null;
       setPending(false);
       setLiveMessageId(null);
       setLiveTokRate(null);
@@ -3753,8 +4416,17 @@ export default function ChatRoom() {
                 </div>
               )}
               {(() => {
-                const msgs = active?.messages ?? [];
-                if (msgs.length === 0) return null;
+                const allMsgs = active?.messages ?? [];
+                if (allMsgs.length === 0) return null;
+                // 점진적 렌더 — renderLimit 까지만 렌더(나머지는 스켈레톤). 스트리밍 중엔 전체 렌더.
+                const effLimit = pending
+                  ? Number.POSITIVE_INFINITY
+                  : renderLimit;
+                const msgs =
+                  effLimit >= allMsgs.length
+                    ? allMsgs
+                    : allMsgs.slice(0, effLimit);
+                const moreToRender = msgs.length < allMsgs.length;
                 // 메시지를 turn 단위(user heading + 그 이후 assistant 들) 로 묶어 각 turn 을 <section> 으로 감쌈.
                 // 효과: sticky user 헤딩의 containing block 이 turn 으로 한정 → 다음 user heading 이 viewport top
                 // 으로 들어오기 시작하면 이전 sticky 가 자연스럽게 위로 밀려 사라짐 (겹침 방지).
@@ -3847,6 +4519,29 @@ export default function ChatRoom() {
                     </section>,
                   );
                 }
+                // 아직 렌더 안 한 뒤쪽 메시지가 있으면 스켈레톤으로 표시 (점진적으로 채워짐).
+                if (moreToRender) {
+                  elements.push(
+                    <div
+                      key="render-skeleton"
+                      aria-hidden
+                      className="flex flex-col gap-8 animate-pulse pt-4 opacity-70"
+                    >
+                      <div className="flex flex-col gap-2 pl-2">
+                        <div className="h-4 w-3/4 rounded bg-muted" />
+                        <div className="h-4 w-1/2 rounded bg-muted" />
+                        <div className="h-4 w-2/3 rounded bg-muted" />
+                      </div>
+                      <div className="flex justify-end pr-2">
+                        <div className="h-9 w-1/3 rounded-2xl bg-muted" />
+                      </div>
+                      <div className="flex flex-col gap-2 pl-2">
+                        <div className="h-4 w-4/5 rounded bg-muted" />
+                        <div className="h-4 w-3/5 rounded bg-muted" />
+                      </div>
+                    </div>,
+                  );
+                }
                 return elements;
               })()}
             </div>
@@ -3876,8 +4571,9 @@ export default function ChatRoom() {
               <InputBar
                 ref={inputBarRef}
                 onSend={send}
-                disabled={pending}
-                isStreaming={pending}
+                // AI 응답 중(로컬 또는 다른 thread/기기의 원격 스트림)이면 어느 메뉴에 있어도 중지 상태.
+                disabled={pending || streamingConvIds.size > 0}
+                isStreaming={pending || streamingConvIds.size > 0}
                 onStop={stopStreaming}
                 liveTokRate={liveTokRate}
                 onAttachedChange={handleAttachedChange}

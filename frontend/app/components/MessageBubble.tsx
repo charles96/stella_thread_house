@@ -503,6 +503,46 @@ function ReadPageRow({ page: p, index }: { page: RefItem; index: number }) {
   );
 }
 
+// 화면에 가까워질 때만 children 을 렌더 — 긴 thread 에서 화면 밖 이미지 스캐터의
+// 렌더/이미지 로드를 지연(레이지). reservedHeight 로 자리 미리 확보 → 스크롤 점프 없음.
+// 한 번 보이면 계속 렌더 유지(스크롤 왕복 시 재마운트/깜빡임 방지).
+function LazyVisible({
+  reservedHeight,
+  children,
+}: {
+  reservedHeight: number;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    if (shown) return;
+    const el = ref.current;
+    if (!el) return;
+    // IntersectionObserver 미지원 환경 안전망 — 바로 렌더.
+    if (typeof IntersectionObserver === 'undefined') {
+      setShown(true);
+      return;
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setShown(true);
+          io.disconnect();
+        }
+      },
+      { rootMargin: '800px 0px' }, // 뷰포트 800px 전부터 미리 렌더
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [shown]);
+  return (
+    <div ref={ref} style={shown ? undefined : { minHeight: reservedHeight }}>
+      {shown ? children : null}
+    </div>
+  );
+}
+
 function ImageScatter({
   images,
   cardOverlap,
@@ -2001,6 +2041,26 @@ function MessageBubble({
             const isYouTube = !!youtubeId;
 
             const stuck = isYouTube && isYoutubePinned;
+
+            // 좌측 스택(첨부/저장/삭제) — 없는 버튼은 건너뛰고 다음 버튼이 위로 당겨지도록 packed slot 계산.
+            const _u = expanded.url ?? '';
+            const _isImgKind =
+              expanded.kind !== 'youtube' && expanded.kind !== 'x';
+            const showAttachBtn = !!onAttachImage && _isImgKind;
+            const _isSavedImg =
+              _u.includes('/attachments/') ||
+              savedSourceUrls.has(_u) ||
+              (message.savedSourceUrls?.includes(_u) ?? false);
+            const showSaveBtn =
+              _isImgKind && !!_u && (_isSavedImg || !!onUploadEditImage);
+            const showDeleteBtn =
+              !!onRemoveImage && expanded.removable !== false;
+            const _leftStack: string[] = [];
+            if (showAttachBtn) _leftStack.push('attach');
+            if (showSaveBtn) _leftStack.push('save');
+            if (showDeleteBtn) _leftStack.push('delete');
+            const leftTop = (k: 'attach' | 'save' | 'delete') =>
+              `${0.75 + Math.max(0, _leftStack.indexOf(k)) * 2.25}rem`;
             return (
               // pin 상태(stuck) 에서는 animate-in 의 transform 이 fixed 자손의 containing block 을
               // wrapper 로 바꿔서 스크롤 시 fixed iframe 이 살짝 따라 움직이는 깜빡임 발생 → 끔.
@@ -2038,7 +2098,7 @@ function MessageBubble({
                     isYouTube
                       ? stuck
                         ? ''
-                        : 'w-full max-w-[800px]'
+                        : 'w-full max-w-[800px] pl-20' // 좌측 Delete 버튼이 영상 위로 겹치지 않게 거터 확보
                       : 'inline-block max-w-[90%] pl-20',
                   )}
                   style={
@@ -2132,8 +2192,9 @@ function MessageBubble({
                               ? '이미 첨부됨'
                               : t('image.postit.attach')
                           }
+                          style={{ top: leftTop('attach') }}
                           className={cn(
-                            'absolute left-1 top-3 z-20 inline-flex rotate-3 items-center gap-1 rounded-md border border-primary/40 bg-card px-2 py-0.5 text-[11px] font-medium text-primary shadow-md transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+                            'absolute left-1 z-20 inline-flex rotate-3 items-center gap-1 rounded-md border border-primary/40 bg-card px-2 py-0.5 text-[11px] font-medium text-primary shadow-md transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
                             isAttached
                               ? 'cursor-not-allowed opacity-40'
                               : 'hover:rotate-0 hover:bg-primary hover:text-primary-foreground',
@@ -2164,8 +2225,9 @@ function MessageBubble({
                               ? 'PIN 해제 후 삭제 가능'
                               : t('image.postit.delete')
                           }
+                          style={{ top: leftTop('delete') }}
                           className={cn(
-                            'absolute left-1 top-[5.25rem] z-20 inline-flex rotate-3 items-center gap-1 rounded-md border border-destructive/50 bg-card px-2 py-0.5 text-[11px] font-medium text-destructive shadow-md transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive',
+                            'absolute left-1 z-20 inline-flex rotate-3 items-center gap-1 rounded-md border border-destructive/50 bg-card px-2 py-0.5 text-[11px] font-medium text-destructive shadow-md transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive',
                             deleteDisabled
                               ? 'cursor-not-allowed opacity-40'
                               : 'hover:rotate-0 hover:bg-destructive hover:text-destructive-foreground',
@@ -2244,7 +2306,8 @@ function MessageBubble({
                           <span
                             aria-label={t('image.postit.archived')}
                             title={t('image.postit.archived')}
-                            className="pointer-events-none absolute left-1 top-12 z-20 inline-flex rotate-2 items-center gap-1 rounded-md border border-primary/40 bg-card px-2 py-0.5 text-[11px] font-medium text-primary opacity-40 shadow-md"
+                            style={{ top: leftTop('save') }}
+                            className="pointer-events-none absolute left-1 z-20 inline-flex rotate-2 items-center gap-1 rounded-md border border-primary/40 bg-card px-2 py-0.5 text-[11px] font-medium text-primary opacity-40 shadow-md"
                           >
                             <Archive className="h-3 w-3" />
                             {t('image.postit.archived')}
@@ -2262,8 +2325,9 @@ function MessageBubble({
                           onMouseDown={(e) => e.preventDefault()}
                           onClick={() => handleSaveWebImage(expanded.url)}
                           title={t('image.postit.save')}
+                          style={{ top: leftTop('save') }}
                           className={cn(
-                            'absolute left-1 top-12 z-20 inline-flex rotate-2 items-center gap-1 rounded-md border border-primary/40 bg-card px-2 py-0.5 text-[11px] font-medium text-primary shadow-md transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+                            'absolute left-1 z-20 inline-flex rotate-2 items-center gap-1 rounded-md border border-primary/40 bg-card px-2 py-0.5 text-[11px] font-medium text-primary shadow-md transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
                             isSaving
                               ? 'cursor-wait opacity-60'
                               : 'hover:rotate-0 hover:bg-primary hover:text-primary-foreground',
@@ -2426,20 +2490,22 @@ function MessageBubble({
               </div>
             );
           }
-          // 기본 — 포커 카드 스캐터.
+          // 기본 — 포커 카드 스캐터. 화면 밖이면 렌더 지연(레이지) — 자리(min-h 170)는 미리 확보.
           return (
-            <ImageScatter
-              images={combinedImages}
-              cardOverlap={CARD_OVERLAP}
-              // 첨부/웹 이미지 모두 동일하게 인라인 확대 — 별도 라이트박스 없음.
-              onCardClick={(i) => setExpandedImageIndex(i)}
-              onInvalid={markInvalid}
-              forcePoker={usePoker}
-              page={scatterPage}
-              onPageChange={setScatterPage}
-              onTotalPagesChange={setScatterTotalPages}
-              hideInlinePagination
-            />
+            <LazyVisible reservedHeight={170}>
+              <ImageScatter
+                images={combinedImages}
+                cardOverlap={CARD_OVERLAP}
+                // 첨부/웹 이미지 모두 동일하게 인라인 확대 — 별도 라이트박스 없음.
+                onCardClick={(i) => setExpandedImageIndex(i)}
+                onInvalid={markInvalid}
+                forcePoker={usePoker}
+                page={scatterPage}
+                onPageChange={setScatterPage}
+                onTotalPagesChange={setScatterTotalPages}
+                hideInlinePagination
+              />
+            </LazyVisible>
           );
         })()}
 

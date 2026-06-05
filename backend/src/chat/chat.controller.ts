@@ -278,6 +278,12 @@ export class ChatController {
           content: '',
           thinking: '',
         };
+        // 실시간 미러링 — 다른 기기/탭에 "응답 생성 시작" 알림 (입력창 streaming 상태 동기화).
+        this.conversationsService.emitStreamStart(
+          userId,
+          conversationId,
+          assistantMessageId,
+        );
       } catch (e) {
         // 저장 실패해도 스트리밍 자체는 계속 (사용자 경험 우선).
         this.logger.error(
@@ -322,8 +328,51 @@ export class ChatController {
         if (persistCtx) {
           if (part.type === 'content' && part.text) {
             persistCtx.content += part.text;
+            // 실시간 미러링 — 토큰을 이벤트 버스로도 중계 (다른 기기/탭이 따라 그림).
+            this.conversationsService.emitStreamDelta(
+              persistCtx.userId,
+              persistCtx.convId,
+              persistCtx.assistantId,
+              'content',
+              part.text,
+            );
           } else if (part.type === 'thinking' && part.text) {
             persistCtx.thinking += part.text;
+            this.conversationsService.emitStreamDelta(
+              persistCtx.userId,
+              persistCtx.convId,
+              persistCtx.assistantId,
+              'thinking',
+              part.text,
+            );
+          } else if (part.type === 'metric') {
+            // 토큰 사용량 — 다른 기기/탭에도 동기화.
+            this.conversationsService.emitStreamMetric(
+              persistCtx.userId,
+              persistCtx.convId,
+              persistCtx.assistantId,
+              {
+                tokens: part.tokens,
+                durationMs: part.durationMs,
+                tokensPerSec: part.tokensPerSec,
+                promptTokens: part.promptTokens,
+              },
+            );
+          } else if (
+            part.type === 'search' ||
+            part.type === 'pages' ||
+            part.type === 'page_timeout' ||
+            part.type === 'image_analyzing_start' ||
+            part.type === 'image_analysis' ||
+            part.type === 'status'
+          ) {
+            // 검색 결과/Reference documents/이미지 분석/상태 파트를 그대로 중계.
+            this.conversationsService.emitStreamPart(
+              persistCtx.userId,
+              persistCtx.convId,
+              persistCtx.assistantId,
+              part,
+            );
           }
         }
       }
@@ -356,6 +405,12 @@ export class ChatController {
             `[chat/stream] final persist failed: ${e instanceof Error ? e.message : String(e)}`,
           );
         }
+        // 실시간 미러링 — "응답 생성 종료" 알림 (다른 기기/탭 입력창 재개).
+        this.conversationsService.emitStreamEnd(
+          ctx.userId,
+          ctx.convId,
+          ctx.assistantId,
+        );
         // 2) 해시태그 생성 — 연결 유지 중 await, 완료 후 SSE 로 push.
         if (ctx.content.trim().length > 0) {
           try {

@@ -5,15 +5,18 @@ import {
   Delete,
   Get,
   HttpCode,
+  type MessageEvent,
   Param,
   Patch,
   Post,
   Query,
   Req,
+  Sse,
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Request } from 'express';
+import { Observable, from, interval, map, merge, mergeMap } from 'rxjs';
 import {
   ConversationCreate,
   ConversationsService,
@@ -21,6 +24,7 @@ import {
   MessageInput,
   ConversationPageDto,
 } from './conversations.service';
+import { ConversationEventsService } from './conversation-events.service';
 
 interface AppendMessagesBody {
   messages: MessageInput[];
@@ -43,10 +47,54 @@ interface UpdateMessageBody {
 @Controller('conversations')
 @UseGuards(AuthGuard('jwt'))
 export class ConversationsController {
-  constructor(private readonly service: ConversationsService) {}
+  constructor(
+    private readonly service: ConversationsService,
+    private readonly events: ConversationEventsService,
+  ) {}
 
   private uid(req: Request): string {
     return (req.user as { sub: string }).sub;
+  }
+
+  // 사이드바(user 단위) 실시간 동기화 — 대화/폴더 추가·삭제·이름변경·이동·핀.
+  // 경로 'events/user' 는 2-segment 라 @Get(':id') / ':id/...' 와 충돌 없음.
+  @Sse('events/user')
+  userEvents(@Req() req: Request): Observable<MessageEvent> {
+    const userId = this.uid(req);
+    const ping = interval(25000).pipe(
+      map(() => ({ type: 'ping', data: '' }) as MessageEvent),
+    );
+    return merge(
+      ping,
+      this.events
+        .userStream(userId)
+        .pipe(map((e) => ({ data: e }) as MessageEvent)),
+    );
+  }
+
+  // 실시간 동기화 — 같은 thread 를 다른 기기/탭에서 열어둔 클라이언트가 EventSource 로 구독.
+  // 메시지 추가/수정이 발생하면 push (messages.appended / message.updated).
+  // 25초 heartbeat 로 idle proxy timeout 방지.
+  @Sse(':id/events')
+  streamEvents(
+    @Req() req: Request,
+    @Param('id') id: string,
+  ): Observable<MessageEvent> {
+    const userId = this.uid(req);
+    const ping = interval(25000).pipe(
+      map(() => ({ type: 'ping', data: '' }) as MessageEvent),
+    );
+    // getOwned 로 소유권 검증 후 구독 — 실패하면 stream 이 에러로 종료됨.
+    return from(this.service.getOwned(userId, id)).pipe(
+      mergeMap(() =>
+        merge(
+          ping,
+          this.events
+            .stream(id, userId)
+            .pipe(map((e) => ({ data: e }) as MessageEvent)),
+        ),
+      ),
+    );
   }
 
   @Get()

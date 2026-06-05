@@ -5,6 +5,7 @@ import { Folder } from '../db/entities/folder.entity';
 import { Message } from '../db/entities/message.entity';
 import { ConversationsController } from './conversations.controller';
 import { ConversationsService } from './conversations.service';
+import { ConversationEventsService } from './conversation-events.service';
 import { FoldersController } from './folders.controller';
 import { FoldersService } from './folders.service';
 import { AttachmentsModule } from '../attachments/attachments.module';
@@ -15,7 +16,7 @@ import { AttachmentsModule } from '../attachments/attachments.module';
     AttachmentsModule,
   ],
   controllers: [ConversationsController, FoldersController],
-  providers: [ConversationsService, FoldersService],
+  providers: [ConversationsService, FoldersService, ConversationEventsService],
   exports: [ConversationsService],
 })
 export class ConversationsModule {}

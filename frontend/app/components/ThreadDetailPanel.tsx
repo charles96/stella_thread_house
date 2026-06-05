@@ -765,6 +765,22 @@ function RelatedDocumentsSection({
 }) {
   const { t } = useI18n();
   const [tab, setTab] = useState<'graph' | 'list'>('graph');
+  // 그래프 force 시뮬레이션을 thread 메시지 렌더가 끝난 뒤(브라우저 idle)에 마운트 →
+  // 동시 렌더 버벅임 방지. 현재 thread(active 노드)가 바뀌면 다시 defer.
+  const currentThreadId =
+    graphNodes.find((n) => n.type === 'thread' && n.isActive)?.id ?? null;
+  const [graphReady, setGraphReady] = useState(false);
+  useEffect(() => {
+    setGraphReady(false);
+    if (typeof window.requestIdleCallback !== 'function') {
+      const to = window.setTimeout(() => setGraphReady(true), 350);
+      return () => window.clearTimeout(to);
+    }
+    const h = window.requestIdleCallback(() => setGraphReady(true), {
+      timeout: 1000,
+    });
+    return () => window.cancelIdleCallback(h);
+  }, [currentThreadId]);
   return (
     <div className="flex min-h-0 basis-0 flex-1 flex-col overflow-hidden border-b border-border">
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/60 h-10 bg-secondary/50 px-4 text-[11px] font-medium tracking-wider text-muted-foreground">
@@ -840,11 +856,18 @@ function RelatedDocumentsSection({
         </div>
       ) : tab === 'graph' ? (
         <div className="min-h-0 flex-1 overflow-auto px-2 py-2">
-          <RelatedThreadsGraph
-            nodes={graphNodes}
-            edges={graphEdges}
-            onSelect={(id) => onSelectThread?.(id)}
-          />
+          {graphReady ? (
+            <RelatedThreadsGraph
+              nodes={graphNodes}
+              edges={graphEdges}
+              onSelect={(id) => onSelectThread?.(id)}
+            />
+          ) : (
+            // thread 렌더가 끝나기 전엔 그래프 마운트 보류 — 가벼운 placeholder.
+            <div className="flex h-full min-h-[120px] items-center justify-center">
+              <div className="h-16 w-16 rounded-full bg-muted/50 animate-pulse" />
+            </div>
+          )}
         </div>
       ) : (
         <ScrollArea className="min-h-0 flex-1">

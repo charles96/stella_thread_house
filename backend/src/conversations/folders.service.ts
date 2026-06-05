@@ -6,6 +6,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Folder } from '../db/entities/folder.entity';
+import { ConversationEventsService } from './conversation-events.service';
 
 export type FolderKind = 'thread' | 'chat';
 
@@ -23,6 +24,7 @@ export class FoldersService {
   constructor(
     @InjectRepository(Folder)
     private readonly folders: Repository<Folder>,
+    private readonly events: ConversationEventsService,
   ) {}
 
   private toDto(f: Folder): FolderDto {
@@ -55,7 +57,13 @@ export class FoldersService {
       kind: input.kind ?? 'thread',
       expanded: input.expanded ?? true,
     });
-    return this.toDto(await this.folders.save(f));
+    const dto = this.toDto(await this.folders.save(f));
+    this.events.emitUser({
+      userId,
+      type: 'folder.upsert',
+      payload: { folder: dto },
+    });
+    return dto;
   }
 
   async update(
@@ -68,7 +76,13 @@ export class FoldersService {
     if (existing.userId !== userId) throw new ForbiddenException();
     if (patch.name !== undefined) existing.name = patch.name;
     if (patch.expanded !== undefined) existing.expanded = patch.expanded;
-    return this.toDto(await this.folders.save(existing));
+    const dto = this.toDto(await this.folders.save(existing));
+    this.events.emitUser({
+      userId,
+      type: 'folder.upsert',
+      payload: { folder: dto },
+    });
+    return dto;
   }
 
   async delete(userId: string, id: string): Promise<void> {
@@ -76,5 +90,10 @@ export class FoldersService {
     if (!existing) return;
     if (existing.userId !== userId) throw new ForbiddenException();
     await this.folders.remove(existing);
+    this.events.emitUser({
+      userId,
+      type: 'folder.deleted',
+      payload: { id },
+    });
   }
 }

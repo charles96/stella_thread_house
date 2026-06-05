@@ -75,7 +75,7 @@ export default function RelatedThreadsGraph({ nodes, edges, onSelect }: Props) {
         return { ...nd, x: cx, y: cy, vx: 0, vy: 0 };
       }
       const angle = (i / Math.max(1, n)) * Math.PI * 2;
-      const r = 50 + (i % 4) * 15;
+      const r = 34 + (i % 4) * 10;
       return {
         ...nd,
         x: cx + Math.cos(angle) * r,
@@ -134,12 +134,13 @@ export default function RelatedThreadsGraph({ nodes, edges, onSelect }: Props) {
     if (simNodes.length <= 1) return;
     let raf = 0;
     let alpha = 1;
-    const REPULSION = 3500;
-    const SPRING_K = 0.010;
-    const SPRING_LEN = 130;
-    const CENTER_K = 0.0015;
+    // 노드를 더 가깝게 — 반발력↓, 스프링 길이↓(엣지 짧게), 중심력↑, 충돌 패딩↓.
+    const REPULSION = 2000;
+    const SPRING_K = 0.012;
+    const SPRING_LEN = 80;
+    const CENTER_K = 0.003;
     const DAMPING = 0.82;
-    const COLLISION_PAD = 14; // minimum gap between node surfaces
+    const COLLISION_PAD = 8; // minimum gap between node surfaces
 
     // precompute node radii once per tick setup
     const nodeRadii = simNodes.map((n, i) => {

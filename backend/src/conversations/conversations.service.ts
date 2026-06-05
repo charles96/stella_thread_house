@@ -11,6 +11,7 @@ import { In, Repository } from 'typeorm';
 import { Conversation } from '../db/entities/conversation.entity';
 import { Message } from '../db/entities/message.entity';
 import { AttachmentsService } from '../attachments/attachments.service';
+import { ConversationEventsService } from './conversation-events.service';
 
 export type ConversationPageDto = {
   data: ConversationDto[];
@@ -91,6 +92,7 @@ export class ConversationsService implements OnModuleInit {
     @InjectRepository(Message)
     private readonly messages: Repository<Message>,
     private readonly attachments: AttachmentsService,
+    private readonly events: ConversationEventsService,
   ) {}
 
   // 기존 DB 에 position 컬럼이 없으면 추가하고 conversation 별 id 순서로 backfill.
@@ -356,7 +358,14 @@ export class ConversationsService implements OnModuleInit {
       model: input.model ?? null,
     });
     const saved = await this.conversations.save(c);
-    return this.toDto(saved);
+    const dto = this.toDto(saved);
+    // 사이드바 동기화 — 다른 기기/탭에 새 thread/chat 추가.
+    this.events.emitUser({
+      userId,
+      type: 'conversation.upsert',
+      payload: { conversation: dto },
+    });
+    return dto;
   }
 
   async update(
@@ -386,7 +395,14 @@ export class ConversationsService implements OnModuleInit {
     if (patch.pinned !== undefined) existing.pinned = patch.pinned;
 
     const saved = await this.conversations.save(existing);
-    return this.toDto(saved);
+    const dto = this.toDto(saved);
+    // 사이드바 동기화 — 제목 변경/폴더 이동/핀 등을 다른 기기/탭에 반영.
+    this.events.emitUser({
+      userId,
+      type: 'conversation.upsert',
+      payload: { conversation: dto },
+    });
+    return dto;
   }
 
   async delete(userId: string, id: string): Promise<void> {
@@ -415,6 +431,12 @@ export class ConversationsService implements OnModuleInit {
     }
     // 2) DB 행 삭제 — messages 는 ON DELETE CASCADE 로 동반 삭제.
     await this.conversations.remove(existing);
+    // 사이드바 동기화 — 다른 기기/탭에서 thread/chat 제거.
+    this.events.emitUser({
+      userId,
+      type: 'conversation.deleted',
+      payload: { id },
+    });
   }
 
   // ----- 메시지 -----
@@ -525,10 +547,18 @@ export class ConversationsService implements OnModuleInit {
       where: { id: In(ids), conversationId: convId },
     });
     const byId = new Map(refreshed.map((m) => [m.id, m]));
-    return ids
+    const dtos = ids
       .map((id) => byId.get(id))
       .filter((m): m is Message => !!m)
       .map((m) => this.msgToDto(m));
+    // 실시간 동기화 — 같은 thread 를 연 다른 기기/탭에 새 메시지 push.
+    this.events.emit({
+      conversationId: convId,
+      userId,
+      type: 'messages.appended',
+      payload: dtos,
+    });
+    return dtos;
   }
 
   // 클라이언트가 보낸 id 배열 순서대로 position 을 0, 1, 2... 로 재할당.
@@ -573,6 +603,13 @@ export class ConversationsService implements OnModuleInit {
          WHERE messages.id = v.id AND messages.conversation_id = $${params.length + 1}`,
         [...params, convId],
       );
+    });
+    // 실시간 동기화 — 목차(TOC) 드래그 등으로 바뀐 순서를 다른 기기/탭에 반영.
+    this.events.emit({
+      conversationId: convId,
+      userId,
+      type: 'messages.reordered',
+      payload: { orderedIds },
     });
   }
 
@@ -718,6 +755,13 @@ export class ConversationsService implements OnModuleInit {
         );
       }
     }
+    // 실시간 동기화 — 다른 기기/탭에서 해당 메시지(질문/답변)를 즉시 제거.
+    this.events.emit({
+      conversationId: convId,
+      userId,
+      type: 'message.deleted',
+      payload: { ids },
+    });
   }
 
   // 메시지 metadata 만 partial-merge — 기존 키는 유지하고 partial 의 키로 덮어씀.
@@ -739,6 +783,82 @@ export class ConversationsService implements OnModuleInit {
 
   // 메시지의 content / thinking / metadata 부분 업데이트.
   // metadata 는 jsonb_set 처럼 깊은 머지 대신 통째로 교체 (호출자가 머지 책임).
+  // ----- 실시간 스트리밍 미러링 emit 헬퍼 (chat.controller 가 호출) -----
+  emitStreamStart(userId: string, convId: string, messageId: string): void {
+    this.events.emit({
+      conversationId: convId,
+      userId,
+      type: 'message.stream.start',
+      payload: { messageId },
+    });
+    // user 단위로도 알림 → 다른 thread/메뉴에 있어도 "응답 중"을 추적해 입력창 전역 중지.
+    this.events.emitUser({
+      userId,
+      type: 'stream.active',
+      payload: { conversationId: convId, messageId },
+    });
+  }
+  emitStreamDelta(
+    userId: string,
+    convId: string,
+    messageId: string,
+    kind: 'content' | 'thinking',
+    text: string,
+  ): void {
+    this.events.emit({
+      conversationId: convId,
+      userId,
+      type: 'message.delta',
+      payload: { messageId, kind, text },
+    });
+  }
+  // search/pages/page_timeout/image_*/status 등 raw 스트림 파트를 그대로 중계 →
+  // 다른 기기/탭이 Reference documents·팝콘 이미지 UI 를 동일하게 점진 렌더.
+  emitStreamPart(
+    userId: string,
+    convId: string,
+    messageId: string,
+    part: unknown,
+  ): void {
+    this.events.emit({
+      conversationId: convId,
+      userId,
+      type: 'message.part',
+      payload: { messageId, part },
+    });
+  }
+  emitStreamMetric(
+    userId: string,
+    convId: string,
+    messageId: string,
+    metric: {
+      tokens: number;
+      durationMs: number;
+      tokensPerSec: number;
+      promptTokens?: number;
+    },
+  ): void {
+    this.events.emit({
+      conversationId: convId,
+      userId,
+      type: 'message.metric',
+      payload: { messageId, ...metric },
+    });
+  }
+  emitStreamEnd(userId: string, convId: string, messageId: string): void {
+    this.events.emit({
+      conversationId: convId,
+      userId,
+      type: 'message.stream.end',
+      payload: { messageId },
+    });
+    this.events.emitUser({
+      userId,
+      type: 'stream.inactive',
+      payload: { conversationId: convId, messageId },
+    });
+  }
+
   async updateMessage(
     userId: string,
     convId: string,
@@ -758,6 +878,14 @@ export class ConversationsService implements OnModuleInit {
     if (patch.thinking !== undefined) m.thinking = patch.thinking;
     if (patch.metadata !== undefined) m.metadata = patch.metadata;
     const saved = await this.messages.save(m);
-    return this.msgToDto(saved);
+    const dto = this.msgToDto(saved);
+    // 실시간 동기화 — 어시스턴트 최종 답변/편집을 다른 기기/탭에 push.
+    this.events.emit({
+      conversationId: convId,
+      userId,
+      type: 'message.updated',
+      payload: dto,
+    });
+    return dto;
   }
 }
