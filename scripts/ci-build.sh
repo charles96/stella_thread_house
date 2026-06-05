@@ -34,6 +34,17 @@ echo "▶ Git tag: $GIT_TAG"
 # Docker 이미지 태그에서 v 접두사 제거 (v1.7.15 → 1.7.15)
 IMAGE_TAG="${GIT_TAG#v}"
 
+# ── 1-1. 태그 커밋으로 작업트리 정렬 ─────────────────────────────────────────
+# GoCD 가 체크아웃해 둔 커밋은 트리거 시점의 커밋(예: 태그 이동 전)일 수 있다.
+# docker build 는 '현재 작업트리'를 컨텍스트로 쓰므로, 빌드 소스가 이미지 태그와
+# 어긋나지 않도록 항상 해당 태그 커밋을 명시적으로 체크아웃한다.
+echo "▶ 태그 커밋 체크아웃: $GIT_TAG ($(git rev-list -n1 "refs/tags/${GIT_TAG}" 2>/dev/null || echo '해석 실패'))"
+if ! git checkout --force --detach "refs/tags/${GIT_TAG}"; then
+  echo "ERROR: 태그 '${GIT_TAG}' 체크아웃 실패 — 태그가 원격에 푸시됐는지 확인하세요."
+  exit 1
+fi
+echo "▶ 빌드 대상 커밋: $(git rev-parse HEAD)"
+
 # ── 2. 환경변수 검증 ─────────────────────────────────────────────────────────
 : "${REGISTRY_URL:?REGISTRY_URL 환경변수가 필요합니다 (예: registry.example.com)}"
 : "${IMAGE_NAME:?IMAGE_NAME 환경변수가 필요합니다 (예: stella-chatbot)}"
