@@ -1804,7 +1804,7 @@ export default function ChatRoom() {
         // (긴 thread 도 새로고침 후 마지막 메시지가 보이게 — 저장은 정상, 로드만 보강.)
         if (isThreadKind && hasMore && msgs.length > 0) {
           let cursorId: string | null = msgs[msgs.length - 1].id;
-          let more = hasMore;
+          let more: boolean = hasMore;
           while (more && cursorId && !cancelled) {
             const next = await fetchMessagesPage(activeId, null, cursorId);
             if (cancelled) return;
