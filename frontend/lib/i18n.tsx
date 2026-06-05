@@ -135,6 +135,8 @@ const dict = {
     'image.postit.pin': 'PIP',
     'image.postit.unpin': 'PIP 해제',
     'image.postit.attach': '첨부',
+    'image.postit.save': '저장',
+    'image.postit.archived': '저장됨',
 
     'toast.replyDone': '답변이 완료되었습니다',
 
@@ -428,6 +430,8 @@ const dict = {
     'image.postit.pin': 'PIP',
     'image.postit.unpin': 'Exit PIP',
     'image.postit.attach': 'Attach',
+    'image.postit.save': 'Save',
+    'image.postit.archived': 'Saved',
 
     'toast.replyDone': 'Reply ready',
 
@@ -723,6 +727,8 @@ const dict = {
     'image.postit.pin': 'PIP',
     'image.postit.unpin': 'PIP 解除',
     'image.postit.attach': '添付',
+    'image.postit.save': '保存',
+    'image.postit.archived': '保存済み',
 
     'toast.replyDone': '回答が完了しました',
 
@@ -1018,6 +1024,8 @@ const dict = {
     'image.postit.pin': 'PIP',
     'image.postit.unpin': '退出 PIP',
     'image.postit.attach': '附加',
+    'image.postit.save': '保存',
+    'image.postit.archived': '已保存',
 
     'toast.replyDone': '回复已完成',
 
@@ -1313,6 +1321,8 @@ const dict = {
     'image.postit.pin': 'PIP',
     'image.postit.unpin': 'Tutup PIP',
     'image.postit.attach': 'Lampirkan',
+    'image.postit.save': 'Simpan',
+    'image.postit.archived': 'Tersimpan',
 
     'toast.replyDone': 'Balasan siap',
 

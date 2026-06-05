@@ -126,6 +126,9 @@ export interface Message {
   // Image Edit 모달에서 사용자가 직접 업로드한 이미지 URL 배열.
   // /api/attachments/<botMsgId>/<fileName> 형태. metadata.editImages 로 DB 영속.
   editImages?: string[];
+  // 웹(외부) 이미지를 "저장"해 서버에 업로드한 원본 source URL 목록.
+  // 새로고침 후에도 해당 웹 이미지에 "저장됨" 을 표시하기 위해 metadata 로 영속.
+  savedSourceUrls?: string[];
 }
 
 export interface Conversation {
@@ -286,7 +289,7 @@ interface MessageItemProps {
   onFollowup: (text: string) => void;
   onRemoveImageById: (id: string, url: string) => void;
   onReorderImagesById: (id: string, urls: string[]) => void;
-  onUploadEditImageById: (id: string, dataUrl: string, fileName: string) => Promise<string | null>;
+  onUploadEditImageById: (id: string, dataUrl: string, fileName: string, sourceUrl?: string) => Promise<string | null>;
   onDeleteTurnById: (id: string) => void;
   onToggleTurnCollapse: (id: string) => void;
   setMsgRef: (id: string, el: HTMLDivElement | null) => void;
@@ -322,7 +325,7 @@ const MessageItem = memo(function MessageItem({
 }: MessageItemProps) {
   const handleRemoveImage = useCallback((url: string) => onRemoveImageById(m.id, url), [m.id, onRemoveImageById]);
   const handleReorderImages = useCallback((urls: string[]) => onReorderImagesById(m.id, urls), [m.id, onReorderImagesById]);
-  const handleUploadEditImage = useCallback((dataUrl: string, fileName: string) => onUploadEditImageById(m.id, dataUrl, fileName), [m.id, onUploadEditImageById]);
+  const handleUploadEditImage = useCallback((dataUrl: string, fileName: string, sourceUrl?: string) => onUploadEditImageById(m.id, dataUrl, fileName, sourceUrl), [m.id, onUploadEditImageById]);
   const handleDeleteTurn = useCallback(() => { if (deleteTurnId) onDeleteTurnById(deleteTurnId); }, [deleteTurnId, onDeleteTurnById]);
   const handleToggle = useCallback(() => onToggleTurnCollapse(m.id), [m.id, onToggleTurnCollapse]);
   const handleRef = useCallback((el: HTMLDivElement | null) => setMsgRef(m.id, el), [m.id, setMsgRef]);
@@ -676,26 +679,57 @@ export default function ChatRoom() {
   );
   async function attachImageFromUrl(url: string) {
     try {
-      const res = await fetch(
-        `${API_URL}/chat/image-proxy?url=${encodeURIComponent(url)}`,
-      );
-      if (!res.ok) {
-        const j = await res.json().catch(() => null);
-        throw new Error(j?.message || `HTTP ${res.status}`);
+      // 상대경로( /api/attachments/... 등 우리 서버에 이미 올라온 이미지)는 same-origin 이므로
+      // 백엔드 image-proxy(절대 http/https URL 만 허용) 를 거치지 않고 브라우저에서 직접 fetch.
+      // 외부 http(s) 이미지만 CORS 회피용으로 image-proxy 를 경유.
+      const isSameOrigin = (() => {
+        try {
+          return (
+            new URL(url, window.location.origin).origin ===
+            window.location.origin
+          );
+        } catch {
+          return false;
+        }
+      })();
+
+      let dataUrl: string;
+      if (isSameOrigin) {
+        const res = await fetch(url, { credentials: 'include' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        if (!/^image\//i.test(blob.type)) {
+          throw new Error(`이미지가 아닙니다 (${blob.type || '알 수 없음'})`);
+        }
+        dataUrl = await new Promise<string>((resolve, reject) => {
+          const fr = new FileReader();
+          fr.onload = () => resolve(fr.result as string);
+          fr.onerror = () => reject(new Error('파일 읽기 실패'));
+          fr.readAsDataURL(blob);
+        });
+      } else {
+        const res = await fetch(
+          `${API_URL}/chat/image-proxy?url=${encodeURIComponent(url)}`,
+        );
+        if (!res.ok) {
+          const j = await res.json().catch(() => null);
+          throw new Error(j?.message || `HTTP ${res.status}`);
+        }
+        dataUrl = ((await res.json()) as { dataUrl: string }).dataUrl;
       }
-      const json = (await res.json()) as { dataUrl: string };
+
       // URL pathname 의 마지막 segment 를 파일명으로 사용 (없으면 빈 문자열).
       const name = (() => {
         try {
-          const u = new URL(url);
+          const u = new URL(url, window.location.origin);
           const last = u.pathname.split('/').filter(Boolean).pop() ?? '';
           return decodeURIComponent(last);
         } catch {
           return '';
         }
       })();
-      dataUrlToSourceRef.current.set(json.dataUrl, url);
-      inputBarRef.current?.attachImageDataUrls([json.dataUrl], [name]);
+      dataUrlToSourceRef.current.set(dataUrl, url);
+      inputBarRef.current?.attachImageDataUrls([dataUrl], [name]);
     } catch (e) {
       const msg = e instanceof Error ? e.message : '오류';
       alert(`이미지 첨부 실패: ${msg}`);
@@ -2004,20 +2038,32 @@ export default function ChatRoom() {
     return () => clearTimeout(t);
   }, [activeArtifact]);
 
-  // References 패널의 이미지 카드에서 사용자 제거. 메시지 metadata 의
-  // searchImages / readPages[].images / editImages 에서 해당 URL 을 필터링하고 backend 에 PATCH.
-  // editImages URL 은 파일도 서버에서 삭제.
-  function removeMessageImage(messageId: string, url: string) {
+  // 이미지 카드에서 사용자 제거. 해당 URL 을 대화 내 모든 메시지에서 탐색해 제거:
+  //   · assistant: searchImages / readPages[].images / editImages
+  //   · user: images (+ 평행 imageNames) — 사용자 업로드(첨부) 이미지
+  // messageId 는 호출 측 편의값일 뿐, 실제 위치는 URL 로 찾는다(직전 user 메시지 등 다른 메시지일 수 있음).
+  // /attachments/ URL(editImages·사용자 업로드)은 서버 파일도 DELETE. 변경된 메시지마다 PATCH.
+  function removeMessageImage(_messageId: string, url: string) {
     if (!activeId) return;
-    let nextMessage: Message | null = null;
-    let deletedEditImage = false;
+    const convId = activeId;
+    // StrictMode 이중 호출에도 안전하도록 id 키 Map 으로 수집(마지막 값이 덮어씀 → 멱등).
+    const updatedById = new Map<string, Message>();
+    const isAttachmentFile = url.includes('/attachments/');
     setConversations((prev) =>
       prev.map((c) => {
-        if (c.id !== activeId) return c;
+        if (c.id !== convId) return c;
         return {
           ...c,
           messages: c.messages.map((m) => {
-            if (m.id !== messageId) return m;
+            const inSearch = (m.searchImages ?? []).some((i) => i.url === url);
+            const inEdit = (m.editImages ?? []).some((u) => u === url);
+            const inReadPage = (m.readPages ?? []).some((p) =>
+              (p.images ?? []).some((i) => i.src === url),
+            );
+            const userIdx = (m.images ?? []).findIndex((u) => u === url);
+            const inUser = userIdx >= 0;
+            if (!inSearch && !inEdit && !inReadPage && !inUser) return m;
+
             const nextSearch = (m.searchImages ?? []).filter(
               (img) => img.url !== url,
             );
@@ -2026,50 +2072,63 @@ export default function ChatRoom() {
               images: (p.images ?? []).filter((i) => i.src !== url),
             }));
             const nextEditImages = (m.editImages ?? []).filter((u) => u !== url);
-            if (nextEditImages.length < (m.editImages?.length ?? 0)) {
-              deletedEditImage = true;
+            // 사용자 업로드 images + 평행 imageNames 를 같은 인덱스에서 동시 제거.
+            let nextImages = m.images;
+            let nextImageNames = m.imageNames;
+            if (inUser && m.images) {
+              nextImages = m.images.filter((_, i) => i !== userIdx);
+              if (m.imageNames) {
+                nextImageNames = m.imageNames.filter((_, i) => i !== userIdx);
+              }
             }
             const updated: Message = {
               ...m,
               searchImages: nextSearch.length > 0 ? nextSearch : undefined,
               readPages: nextReadPages,
               editImages: nextEditImages.length > 0 ? nextEditImages : undefined,
+              images:
+                nextImages && nextImages.length > 0 ? nextImages : undefined,
+              imageNames:
+                nextImageNames && nextImageNames.length > 0
+                  ? nextImageNames
+                  : undefined,
             };
-            nextMessage = updated;
+            updatedById.set(m.id, updated);
             return updated;
           }),
         };
       }),
     );
-    if (deletedEditImage) {
-      void fetch(url, { method: 'DELETE', credentials: 'include' }).catch(() => {});
+    if (isAttachmentFile) {
+      void fetch(url, { method: 'DELETE', credentials: 'include' }).catch(
+        () => {},
+      );
     }
-    if (!nextMessage) return;
-    const m = nextMessage as Message;
-    // backend 에 PATCH — content/thinking 은 변경 없음, metadata 만 동기화.
-    // followup/followupGenerating/hashtagsGenerating 은 ephemeral.
-    const {
-      id: _id,
-      role: _role,
-      content,
-      thinking,
-      followup: _fp,
-      followupGenerating: _fg,
-      hashtagsGenerating: _hg,
-      ...rest
-    } = m;
-    void _id;
-    void _role;
-    void _fp;
-    void _fg;
-    void _hg;
-    void patchMessageRaw(
-      activeId,
-      messageId,
-      content,
-      thinking ?? null,
-      rest as Record<string, unknown>,
-    );
+    // 변경된 메시지마다 backend PATCH — content/thinking 은 그대로, metadata 만 동기화.
+    for (const m of updatedById.values()) {
+      const {
+        id: _id,
+        role: _role,
+        content,
+        thinking,
+        followup: _fp,
+        followupGenerating: _fg,
+        hashtagsGenerating: _hg,
+        ...rest
+      } = m;
+      void _id;
+      void _role;
+      void _fp;
+      void _fg;
+      void _hg;
+      void patchMessageRaw(
+        convId,
+        m.id,
+        content,
+        thinking ?? null,
+        rest as Record<string, unknown>,
+      );
+    }
   }
 
   // Image Edit 모달에서 사용자가 reorder + delete 를 한번에 적용.
@@ -2148,6 +2207,9 @@ export default function ChatRoom() {
     messageId: string,
     dataUrl: string,
     fileName: string,
+    // 웹 이미지 "저장"에서 호출된 경우, 원본 source URL — savedSourceUrls 에 영속해
+    // 새로고침 후에도 해당 웹 이미지에 "저장됨" 표시 유지.
+    sourceUrl?: string,
   ): Promise<string | null> {
     if (!activeId) return null;
     try {
@@ -2171,7 +2233,15 @@ export default function ChatRoom() {
             messages: c.messages.map((m) => {
               if (m.id !== messageId) return m;
               const nextEditImages = [...(m.editImages ?? []), url];
-              const updated: Message = { ...m, editImages: nextEditImages };
+              const nextSaved =
+                sourceUrl && !(m.savedSourceUrls ?? []).includes(sourceUrl)
+                  ? [...(m.savedSourceUrls ?? []), sourceUrl]
+                  : m.savedSourceUrls;
+              const updated: Message = {
+                ...m,
+                editImages: nextEditImages,
+                savedSourceUrls: nextSaved,
+              };
               nextMessage = updated;
               return updated;
             }),
@@ -3362,7 +3432,7 @@ export default function ChatRoom() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const stableRoImg = useCallback((id: string, urls: string[]) => _stableRoImg.current(id, urls), []);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const stableUpImg = useCallback((id: string, dataUrl: string, fileName: string) => _stableUpImg.current(id, dataUrl, fileName), []);
+  const stableUpImg = useCallback((id: string, dataUrl: string, fileName: string, sourceUrl?: string) => _stableUpImg.current(id, dataUrl, fileName, sourceUrl), []);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const stableDelTurn = useCallback((id: string) => _stableDelTurn.current(id), []);
   // eslint-disable-next-line react-hooks/exhaustive-deps

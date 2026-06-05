@@ -18,6 +18,7 @@ import rehypeKatex from 'rehype-katex';
 import rehypeRaw from 'rehype-raw';
 import {
   AlertTriangle,
+  Archive,
   Ban,
   BookOpen,
   Check,
@@ -28,7 +29,6 @@ import {
   ExternalLink,
   Globe,
   GripVertical,
-  HardDrive,
   ImageIcon,
   ImagePlus,
   Images,
@@ -1181,7 +1181,7 @@ function MessageBubble({
   // 현재 combinedImages 에 있던 URL 중 빠진 것은 삭제 대상으로 간주.
   onReorderImages?: (orderedUrls: string[]) => void;
   // Image Edit 모달에서 사용자가 이미지를 직접 업로드. 성공 시 저장된 URL 반환.
-  onUploadEditImage?: (dataUrl: string, fileName: string) => Promise<string | null>;
+  onUploadEditImage?: (dataUrl: string, fileName: string, sourceUrl?: string) => Promise<string | null>;
   // assistant 메시지의 경우, 직전 user 메시지에 첨부된 이미지 — References 위에 노출.
   precedingUserImages?: string[];
   // 위 이미지의 원본 파일명 (있는 경우) — References 라벨에서 사용.
@@ -1664,6 +1664,50 @@ function MessageBubble({
   useEffect(() => { setExpandedImageLoaded(false); }, [expandedImageIndex]);
   // 카드의 × 클릭 시 — 라이트박스 열지 않고, 채팅창 안에서 직접 삭제 확인 다이얼로그를 띄움.
   const [pendingDeleteUrl, setPendingDeleteUrl] = useState<string | null>(null);
+  // 웹(외부) 이미지를 서버에 저장(=editImages 첨부)한 source URL 집합 — 저장 후 "저장됨" 표시.
+  const [savedSourceUrls, setSavedSourceUrls] = useState<Set<string>>(new Set());
+  // 현재 저장 진행 중인 source URL (버튼 로딩/중복 클릭 방지).
+  const [savingUrl, setSavingUrl] = useState<string | null>(null);
+  // 웹 이미지 저장 — image-proxy 로 dataUrl 확보 후, 업로드 첨부와 동일하게 서버에 업로드.
+  async function handleSaveWebImage(url: string) {
+    if (!onUploadEditImage || savingUrl) return;
+    setSavingUrl(url);
+    try {
+      // 외부 이미지를 CORS 회피해 dataUrl 로 변환 (업로드용).
+      const res = await fetch(
+        `/api/chat/image-proxy?url=${encodeURIComponent(url)}`,
+      );
+      if (!res.ok) {
+        const j = (await res.json().catch(() => null)) as {
+          message?: string;
+        } | null;
+        throw new Error(j?.message || `HTTP ${res.status}`);
+      }
+      const { dataUrl } = (await res.json()) as { dataUrl: string };
+      const fileName = (() => {
+        try {
+          const u = new URL(url, window.location.origin);
+          const last = u.pathname.split('/').filter(Boolean).pop() ?? '';
+          return decodeURIComponent(last) || 'image.jpg';
+        } catch {
+          return 'image.jpg';
+        }
+      })();
+      // sourceUrl(url) 도 함께 전달 → 메시지 metadata.savedSourceUrls 에 영속(새로고침 후 유지).
+      const saved = await onUploadEditImage(dataUrl, fileName, url);
+      if (saved) {
+        setSavedSourceUrls((prev) => new Set(prev).add(url));
+      } else {
+        throw new Error('업로드 실패');
+      }
+    } catch (e) {
+      alert(
+        `이미지 저장 실패: ${e instanceof Error ? e.message : '오류'}`,
+      );
+    } finally {
+      setSavingUrl(null);
+    }
+  }
   // ImageScatter 의 현재 페이지를 부모에서 보존 — 확대 보기/삭제 후 ImageScatter 가
   // unmount→remount 되어도 페이지가 0 으로 리셋되지 않게.
   const [scatterPage, setScatterPage] = useState(0);
@@ -1906,8 +1950,10 @@ function MessageBubble({
             카드 클릭 시 라이트박스 대신 인라인으로 큰 이미지 한 장만 노출 (나머지 숨김).
             큰 이미지 클릭 시 다시 스캐터로 복귀. */}
         {!isUser && (() => {
+          // 사용자 업로드(첨부) 이미지도 확대 뷰에서 삭제 가능 — removable: true.
+          // 삭제 시 removeMessageImage 가 직전 user 메시지의 images/imageNames 에서 제거.
           const attachedSlice: SearchImage[] = (precedingUserImages ?? []).map(
-            (src) => ({ url: src, removable: false }),
+            (src) => ({ url: src, removable: true }),
           );
           // 자연 순서(첨부 → readPages → editImages) 를 imageOrder 가 있으면 그 순서대로 재배열.
           const editImgSlice: SearchImage[] = (message.editImages ?? []).map(
@@ -1985,6 +2031,7 @@ function MessageBubble({
                 >
                 <div
                   className={cn(
+                    // 우측 거터(pr-20)=닫기/핀, 좌측 거터(pl-20)=첨부/저장/삭제 포스트잇 버튼 자리.
                     'relative pr-20',
                     // YouTube 는 컨테이너 폭에 맞춰 줄어들도록 block + w-full 사용 (max 800px).
                     // 단, stuck 시엔 fixed 부모가 viewport 폭이 되므로 캡처된 width 를 inline style 로 강제.
@@ -1992,7 +2039,7 @@ function MessageBubble({
                       ? stuck
                         ? ''
                         : 'w-full max-w-[800px]'
-                      : 'inline-block max-w-[90%]',
+                      : 'inline-block max-w-[90%] pl-20',
                   )}
                   style={
                     isYouTube && stuck && pinnedWidth !== null
@@ -2086,7 +2133,7 @@ function MessageBubble({
                               : t('image.postit.attach')
                           }
                           className={cn(
-                            'absolute right-1 top-[5.25rem] z-20 inline-flex -rotate-3 items-center gap-1 rounded-md border border-primary/40 bg-card px-2 py-0.5 text-[11px] font-medium text-primary shadow-md transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+                            'absolute left-1 top-3 z-20 inline-flex rotate-3 items-center gap-1 rounded-md border border-primary/40 bg-card px-2 py-0.5 text-[11px] font-medium text-primary shadow-md transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
                             isAttached
                               ? 'cursor-not-allowed opacity-40'
                               : 'hover:rotate-0 hover:bg-primary hover:text-primary-foreground',
@@ -2118,7 +2165,7 @@ function MessageBubble({
                               : t('image.postit.delete')
                           }
                           className={cn(
-                            'absolute right-1 top-[7.5rem] z-20 inline-flex rotate-3 items-center gap-1 rounded-md border border-destructive/50 bg-card px-2 py-0.5 text-[11px] font-medium text-destructive shadow-md transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive',
+                            'absolute left-1 top-[5.25rem] z-20 inline-flex rotate-3 items-center gap-1 rounded-md border border-destructive/50 bg-card px-2 py-0.5 text-[11px] font-medium text-destructive shadow-md transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive',
                             deleteDisabled
                               ? 'cursor-not-allowed opacity-40'
                               : 'hover:rotate-0 hover:bg-destructive hover:text-destructive-foreground',
@@ -2173,6 +2220,57 @@ function MessageBubble({
                             <Pin className="h-3 w-3" />
                           )}
                           {isPinned ? 'UNPIN' : 'PIN'}
+                        </button>
+                      );
+                    })()}
+                  {/* 저장 상태 칩/버튼 — 좌측 스택의 가운데(첨부 아래, 삭제 위).
+                      · 첨부(/attachments/) 또는 이미 저장한 웹 이미지 → "저장됨" dim 칩(비활성)
+                      · 미저장 웹(외부) 이미지 → "저장" 활성 버튼 → 누르면 서버 업로드(첨부와 동일) */}
+                  {expanded.kind !== 'youtube' &&
+                    expanded.kind !== 'x' &&
+                    !!expanded.url &&
+                    (() => {
+                      const isAttachment =
+                        expanded.url.includes('/attachments/');
+                      const isSaved =
+                        isAttachment ||
+                        savedSourceUrls.has(expanded.url) ||
+                        (message.savedSourceUrls?.includes(expanded.url) ??
+                          false);
+
+                      // 저장됨 — dim 칩(비활성).
+                      if (isSaved) {
+                        return (
+                          <span
+                            aria-label={t('image.postit.archived')}
+                            title={t('image.postit.archived')}
+                            className="pointer-events-none absolute left-1 top-12 z-20 inline-flex rotate-2 items-center gap-1 rounded-md border border-primary/40 bg-card px-2 py-0.5 text-[11px] font-medium text-primary opacity-40 shadow-md"
+                          >
+                            <Archive className="h-3 w-3" />
+                            {t('image.postit.archived')}
+                          </span>
+                        );
+                      }
+
+                      // 미저장 웹 이미지 — 저장 버튼(업로드 핸들러 있을 때만).
+                      if (!onUploadEditImage) return null;
+                      const isSaving = savingUrl === expanded.url;
+                      return (
+                        <button
+                          type="button"
+                          disabled={isSaving}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => handleSaveWebImage(expanded.url)}
+                          title={t('image.postit.save')}
+                          className={cn(
+                            'absolute left-1 top-12 z-20 inline-flex rotate-2 items-center gap-1 rounded-md border border-primary/40 bg-card px-2 py-0.5 text-[11px] font-medium text-primary shadow-md transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+                            isSaving
+                              ? 'cursor-wait opacity-60'
+                              : 'hover:rotate-0 hover:bg-primary hover:text-primary-foreground',
+                          )}
+                        >
+                          <Archive className="h-3 w-3" />
+                          {t('image.postit.save')}
                         </button>
                       );
                     })()}
@@ -3299,10 +3397,10 @@ function MessageBubble({
                       {/* 업로드 배지 — 사용자가 직접 업로드한 이미지(/attachments/ URL) 우상단에 표시. */}
                       {removable && img.url.includes('/attachments/') && (
                         <span
-                          className="pointer-events-none absolute right-1 top-1 inline-flex items-center justify-center rounded bg-black/60 p-0.5 shadow-sm"
+                          className="pointer-events-none absolute right-1 top-1 inline-flex items-center justify-center rounded-sm border border-primary/40 p-0.5 text-primary"
                           aria-label="uploaded"
                         >
-                          <HardDrive className="h-3 w-3 text-white/90" />
+                          <Archive className="h-3 w-3 drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]" />
                         </span>
                       )}
                       {/* PIN 배지 — 메시지 metadata 의 pinnedImageUrl 과 일치하는 카드 위에 표시.
