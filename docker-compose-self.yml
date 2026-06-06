@@ -24,12 +24,13 @@ services:
     restart: unless-stopped
     ports:
       - "4100:4100"
+      # 웹(프론트) 공개 포트 — 리버스 프록시가 가리키는 포트. 충돌 시 .env 의 TH_PORT 변경.
+      # (좌측=호스트 공개 포트만 바뀜, 우측=컨테이너 내부는 3100 고정)
       - "${TH_PORT:-3100}:3100"
     env_file:
       - path: ./.env
         required: false
     environment:
-      TH_PORT: ${TH_PORT:-3100}
       TH_HOST: ${TH_HOST}
       TH_ADMIN_EMAIL_ID: ${TH_ADMIN_EMAIL_ID}
       TH_ADMIN_PASSWORD: ${TH_ADMIN_PASSWORD:-changeme1234}

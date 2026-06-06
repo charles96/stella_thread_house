@@ -53,6 +53,54 @@ Ollama/LMStudio를 기반으로 gemma4, oss-20b 모델을 중점적으로 테스
 
 # Deploy
 
+## ⚡ 빠른 시작 (최소 설정)
+
+— **관리자 계정 + AI 엔드포인트 + Tavily 키**만 있으면 됩니다.
+
+**`.env`**
+```env
+TH_ADMIN_EMAIL_ID=admin@example.com         # 관리자 로그인 이메일 아이디
+TH_ADMIN_PASSWORD=changeme1234              # 관리자 로그인 비밀번호
+OPENAI_BASE_URL=https://api.openai.com/v1   # AI Endpoint Url
+OPENAI_API_KEY=sk-xxxxxxxx                  # OpenAI Key (인증 불필요한 Local LLM 서버면 필요 없음)
+TAVILY_API_KEY=tvly-xxxxxxxx                # 웹 검색 (없으면 검색 비활성)
+```
+
+**`docker-compose.yml`**
+```yaml
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: stella
+      POSTGRES_USER: stella
+      POSTGRES_PASSWORD: stella
+    volumes:
+      - pgdata:/var/lib/postgresql/18/docker
+
+  app:
+    image: charles1031/stella-th:latest
+    restart: unless-stopped          # Postgres 준비될 때까지 재시도
+    ports:
+      - "3100:3100"                  # 웹 (프론트)
+      - "4100:4100"                  # API (백엔드)
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://stella:stella@postgres:5432/stella
+    depends_on:
+      - postgres
+
+volumes:
+  pgdata:
+```
+
+```bash
+docker compose up -d
+```
+**http://localhost:3100** 접속 → 위 관리자 계정으로 로그인. AI 모델은 **Settings → AI** 에서 지정/조정.
+
+> 커스텀 포트·호스트 볼륨·헬스체크·리버스 프록시가 필요하면 아래 전체 설정을 참고하세요.
+
 ## 1. `.env` 파일 작성
 
 ```env
@@ -60,6 +108,9 @@ Ollama/LMStudio를 기반으로 gemma4, oss-20b 모델을 중점적으로 테스
 # 최초 부팅 시 생성되는 관리자 계정
 TH_ADMIN_EMAIL_ID=admin@example.com
 TH_ADMIN_PASSWORD=changeme1234
+
+# 리버스 프록시가 가리키는 웹(프론트) 공개 포트. 포트 충돌 시 변경.
+TH_PORT=3100
 
 # AI 공급자 — OpenAI 호환 base URL(/v1 포함) + API 키
 #   OpenAI 클라우드: https://api.openai.com/v1
@@ -106,7 +157,7 @@ services:
     restart: unless-stopped
     ports:
       - "4100:4100"   # backend (NestJS)
-      - "3100:3100"   # frontend (Next.js)
+      - "${TH_PORT:-3100}:3100"   # 웹(프론트) — 포트 충돌 시 .env 의 TH_PORT 변경
     env_file:
       - .env
     environment:
@@ -138,11 +189,5 @@ volumes:
 docker compose up -d
 ```
 
-| 서비스 | URL |
-|--------|-----|
-| Frontend | http://localhost:3100 |
-| Backend API | http://localhost:4100 |
-
-> **참고**  
-> - `OPENAI_BASE_URL` / `OPENAI_API_KEY` / `TAVILY_API_KEY`는 최초 부팅 시 DB에 시드됩니다. 이후 Settings → AI 에서 변경하면 DB 값이 우선 적용됩니다. AI 공급자는 OpenAI 호환이며, `OPENAI_BASE_URL`을 OpenAI 클라우드 또는 로컬 런타임의 `/v1` 엔드포인트(vLLM/LM Studio 등)로 지정하면 됩니다.  
-> - 모델 서버가 **Docker와 같은 호스트**에 있고 LAN IP 대신 `host.docker.internal`로 접근할 때만, Linux에서는 `app` 서비스에 `extra_hosts: ["host.docker.internal:host-gateway"]`를 추가하세요. LAN IP(예: `http://192.168.1.222:11434/v1`)를 쓰면 불필요합니다.
+## 4. 접속
+- http://localhost:3100

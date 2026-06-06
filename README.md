@@ -44,12 +44,64 @@ Here are some ways I personally use this service:
 3. Provide a web link on a specific topic and have the content organized.
 
 ## Requirements
+Tested primarily with the gemma4 and oss-20b models served via Ollama / LM Studio.
+**The API Endpoint must end with `/v1`!**
+- ex) http://ollama:11434 → http://100.78.190.8:11434/v1
+
 | Type | Purpose |
 |--|--|
-| Local LLM | Gemma4 26b (OpenAI-compatible endpoint) |
+| Local LLM | OpenAI-compatible endpoint URL |
 | Tavily API Key | For web search |
 
 # Deploy
+
+## ⚡ Quick Start (minimal)
+
+— You only need an **admin account + AI endpoint + Tavily key**.
+
+**`.env`**
+```env
+TH_ADMIN_EMAIL_ID=admin@example.com         # admin login email
+TH_ADMIN_PASSWORD=changeme1234              # admin login password
+OPENAI_BASE_URL=https://api.openai.com/v1   # AI Endpoint URL
+OPENAI_API_KEY=sk-xxxxxxxx                  # OpenAI key (not needed for local LLM servers without auth)
+TAVILY_API_KEY=tvly-xxxxxxxx                # web search (omit to disable)
+```
+
+**`docker-compose.yml`**
+```yaml
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: stella
+      POSTGRES_USER: stella
+      POSTGRES_PASSWORD: stella
+    volumes:
+      - pgdata:/var/lib/postgresql/18/docker
+
+  app:
+    image: charles1031/stella-th:latest
+    restart: unless-stopped          # retries until Postgres is ready
+    ports:
+      - "3100:3100"                  # web (frontend)
+      - "4100:4100"                  # API (backend)
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://stella:stella@postgres:5432/stella
+    depends_on:
+      - postgres
+
+volumes:
+  pgdata:
+```
+
+```bash
+docker compose up -d
+```
+Open **http://localhost:3100** and log in with the admin account above. Set/adjust the AI model under **Settings → AI**.
+
+> Need custom ports, host volumes, healthchecks, or a reverse proxy? See the full setup below.
 
 ## 1. Create `.env` file
 
@@ -58,6 +110,9 @@ Here are some ways I personally use this service:
 # Admin account created on first boot
 TH_ADMIN_EMAIL_ID=admin@example.com
 TH_ADMIN_PASSWORD=changeme1234
+
+# Web (frontend) host port behind your reverse proxy. Change on port conflict.
+TH_PORT=3100
 
 # AI provider — OpenAI-compatible base URL (include /v1) + API key.
 #   OpenAI cloud:  https://api.openai.com/v1
@@ -104,7 +159,7 @@ services:
     restart: unless-stopped
     ports:
       - "4100:4100"   # backend (NestJS)
-      - "3100:3100"   # frontend (Next.js)
+      - "${TH_PORT:-3100}:3100"   # web (frontend) — change TH_PORT in .env on conflict
     env_file:
       - .env
     environment:
@@ -136,11 +191,5 @@ volumes:
 docker compose up -d
 ```
 
-| Service | URL |
-|--------|-----|
-| Frontend | http://localhost:3100 |
-| Backend API | http://localhost:4100 |
-
-> **Notes**
-> - `OPENAI_BASE_URL` / `OPENAI_API_KEY` / `TAVILY_API_KEY` are seeded into the DB on first boot. You can update them later under Settings → AI, where DB values take priority. The AI provider is OpenAI-compatible — point `OPENAI_BASE_URL` at OpenAI cloud or any local runtime's `/v1` endpoint (vLLM/LM Studio …).
-> - If your model server runs on the **same host** as Docker and you reference it via `host.docker.internal` (instead of a LAN IP), add `extra_hosts: ["host.docker.internal:host-gateway"]` to the `app` service on Linux. With a LAN IP (e.g. `http://192.168.1.222:11434/v1`) it is not needed.
+## 4. Access
+- http://localhost:3100
