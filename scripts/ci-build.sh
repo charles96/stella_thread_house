@@ -46,8 +46,10 @@ fi
 echo "▶ 빌드 대상 커밋: $(git rev-parse HEAD)"
 
 # ── 2. 환경변수 검증 ─────────────────────────────────────────────────────────
-: "${REGISTRY_URL:?REGISTRY_URL 환경변수가 필요합니다 (예: registry.example.com)}"
-: "${IMAGE_NAME:?IMAGE_NAME 환경변수가 필요합니다 (예: stella-chatbot)}"
+# Docker Hub      : REGISTRY_URL=docker.io,  IMAGE_NAME=<네임스페이스>/stella-th (예: charles1031/stella-th)
+# 사설 레지스트리 : REGISTRY_URL=registry.example.com, IMAGE_NAME=stella-th
+: "${REGISTRY_URL:?REGISTRY_URL 환경변수가 필요합니다 (Docker Hub 는 docker.io)}"
+: "${IMAGE_NAME:?IMAGE_NAME 환경변수가 필요합니다 (예: charles1031/stella-th)}"
 
 FULL_IMAGE="${REGISTRY_URL}/${IMAGE_NAME}"
 echo "▶ 이미지: ${FULL_IMAGE}:${IMAGE_TAG}"

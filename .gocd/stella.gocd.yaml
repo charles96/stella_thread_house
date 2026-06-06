@@ -33,14 +33,21 @@ pipelines:
     lock_behavior: none
 
     environment_variables:
-      REGISTRY_URL: registry.webnori.com
-      IMAGE_NAME: stella-th
+      # Docker Hub — 이미지: docker.io/charles1031/stella-th
+      REGISTRY_URL: docker.io
+      IMAGE_NAME: charles1031/stella-th
       # 빈 기본값 — GitHub Actions trigger 시 schedule API 가 이 값을 override.
       # 사전 선언이 없으면 GoCD 가 422 로 거부함.
       DEPLOY_VERSION: ""
-      REGISTRY_USER: psguest
+      REGISTRY_USER: charles1031
     secure_variables:
-      REGISTRY_PASS: "AES:eiVzUbYMOgexMTrYnWv0iQ==:18RNz5muhqttNeG2inlWTQ=="
+      # ⚠️ Docker Hub Access Token 으로 재암호화 필요.
+      #   GoCD UI(우상단) > Admin > 또는 API 로 평문 토큰을 암호화:
+      #     curl -u <user>:<pw> <GoCD>/go/api/admin/encrypt \
+      #       -H 'Accept: application/vnd.go.cd.v1+json' \
+      #       -H 'Content-Type: application/json' -d '{"value":"<DOCKERHUB_TOKEN>"}'
+      #   반환된 "AES:..." 값을 아래에 붙여넣기.
+      REGISTRY_PASS: "AES:KQ+o4ae+VneHD8F6YpbNKQ==:AlBovwcSkrU0EpcJhrlLt3wCPuoMYfCloXSHLLfBIF8WDElov3PMNLR9WmXU6cl2"
 
     materials:
       git_repo:
