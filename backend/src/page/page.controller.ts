@@ -99,9 +99,9 @@ export class PageController {
 
   @Get('extract-title')
   @ApiOperation({
-    summary: '페이지 본문에서 제목 관련 텍스트만 추출 (Ollama)',
+    summary: '페이지 본문에서 제목 관련 텍스트만 추출',
     description:
-      '/page/extract로 본문을 먼저 가져온 뒤, Ollama (기본 gemma4:26b)로 페이지 제목과 직접 관련된 본문 부분만 골라 반환합니다.',
+      '/page/extract로 본문을 먼저 가져온 뒤, AI 모델로 페이지 제목과 직접 관련된 본문 부분만 골라 반환합니다.',
   })
   @ApiQuery({
     name: 'url',
@@ -123,7 +123,7 @@ export class PageController {
 
   @Post('extract-title')
   @ApiOperation({
-    summary: '페이지 본문에서 제목 관련 텍스트만 추출 (Ollama, POST)',
+    summary: '페이지 본문에서 제목 관련 텍스트만 추출 (POST)',
   })
   @ApiBody({ type: PageExtractByTitleRequestDto })
   @ApiResponse({ status: 200, type: PageExtractByTitleResponseDto })

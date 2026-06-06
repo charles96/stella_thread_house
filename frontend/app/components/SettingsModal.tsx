@@ -14,12 +14,12 @@ import {
   Hash,
   KeyRound,
   Languages,
+  Link2,
   Lock,
   Mail,
   MessageSquareText,
   MoreHorizontal,
   Palette,
-  Server,
   Settings as SettingsIcon,
   Shield,
   SlidersHorizontal,
@@ -67,9 +67,9 @@ interface Props {
   // 모델 fetch 결과 — 에러가 있으면 입력 박스 빨강 + 에러 메시지 표기.
   aiEndpointError?: string | null;
   aiEndpointLoading?: boolean;
-  // LLM 공급자 ('ollama' | 'openai-compatible') 및 OpenAI 호환 API 키.
-  provider?: string;
-  onChangeProvider?: (v: string) => void;
+  // AI 탭이 열릴 때 엔드포인트 유효성 재검증 (모델 목록 재조회).
+  onCheckEndpoint?: () => void;
+  // OpenAI 호환 API 키 (로컬 서버는 비워둬도 됨).
   apiKey?: string;
   onChangeApiKey?: (v: string) => void;
 }
@@ -96,8 +96,7 @@ export default function SettingsModal({
   onChangeAiEndpoint,
   aiEndpointError,
   aiEndpointLoading,
-  provider,
-  onChangeProvider,
+  onCheckEndpoint,
   apiKey,
   onChangeApiKey,
 }: Props) {
@@ -137,7 +136,7 @@ export default function SettingsModal({
       }}
       className="fixed inset-0 z-[110] flex items-center justify-center bg-background/70 backdrop-blur-sm p-2 animate-in fade-in-0 duration-150 md:p-4"
     >
-      <div className="flex h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-border bg-background shadow-2xl animate-in zoom-in-95 duration-150 md:h-[85vh]">
+      <div className="flex h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-border bg-background shadow-2xl animate-in zoom-in-95 duration-150 md:h-[90vh]">
         {/* 상단 헤더 — 좌측에 타이틀, 우측에 닫기 버튼. */}
         <header className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-card/40 px-4 md:h-14 md:px-6">
           <h1 className="flex items-center gap-2 text-lg font-semibold tracking-tight">
@@ -226,8 +225,7 @@ export default function SettingsModal({
                 onChangeAiEndpoint={onChangeAiEndpoint}
                 aiEndpointError={aiEndpointError}
                 aiEndpointLoading={aiEndpointLoading}
-                provider={provider}
-                onChangeProvider={onChangeProvider}
+                onCheckEndpoint={onCheckEndpoint}
                 apiKey={apiKey}
                 onChangeApiKey={onChangeApiKey}
               />
@@ -862,8 +860,7 @@ function AiSection({
   onChangeAiEndpoint,
   aiEndpointError,
   aiEndpointLoading,
-  provider,
-  onChangeProvider,
+  onCheckEndpoint,
   apiKey,
   onChangeApiKey,
 }: {
@@ -876,13 +873,39 @@ function AiSection({
   onChangeAiEndpoint?: (v: string) => void;
   aiEndpointError?: string | null;
   aiEndpointLoading?: boolean;
-  provider?: string;
-  onChangeProvider?: (v: string) => void;
+  onCheckEndpoint?: () => void;
   apiKey?: string;
   onChangeApiKey?: (v: string) => void;
 }) {
   const { t } = useI18n();
-  const activeProvider = provider || 'ollama';
+  // AI 탭이 열릴 때(이 컴포넌트 mount) 엔드포인트 유효성 재검증 — Tavily 와 동일.
+  useEffect(() => {
+    onCheckEndpoint?.();
+    // mount 시 1회만.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // 엔드포인트는 입력 중에는 검증하지 않고, 포커스가 벗어날 때(blur) 또는 Enter 시에만
+  // 부모로 커밋 → 모델 조회(유효성 검사) 발동. (타이핑 중 부분 URL 검증으로 에러 깜빡임 방지)
+  const [endpointDraft, setEndpointDraft] = useState(aiEndpoint ?? '');
+  useEffect(() => {
+    setEndpointDraft(aiEndpoint ?? '');
+  }, [aiEndpoint]);
+  const commitEndpoint = () => {
+    const v = endpointDraft.trim();
+    if (v !== (aiEndpoint ?? '').trim()) onChangeAiEndpoint?.(v);
+  };
+  // 엔드포인트 검증 상태 — Tavily 의 Active 배지와 동일한 UX.
+  //   checking: 모델 조회 중 / active: 조회 성공(모델 있음) / inactive: 오류.
+  const endpointStatus: 'checking' | 'active' | 'inactive' | 'none' =
+    !aiEndpoint
+      ? 'none'
+      : aiEndpointLoading
+        ? 'checking'
+        : aiEndpointError
+          ? 'inactive'
+          : models.length > 0
+            ? 'active'
+            : 'inactive';
   return (
     <SettingSection
       icon={<Bot className="h-5 w-5 text-primary" />}
@@ -894,46 +917,49 @@ function AiSection({
           <div>
             <div className="mb-1.5 flex items-center gap-1.5">
               <span className="text-primary">
-                <Server className="h-4 w-4" />
-              </span>
-              <span className="text-[13px] font-medium text-foreground">
-                AI Provider
-              </span>
-            </div>
-            <select
-              value={activeProvider}
-              onChange={(e) => onChangeProvider?.(e.target.value)}
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-[13px] outline-none transition-colors focus:ring-2 focus:ring-ring"
-            >
-              <option value="ollama">Ollama</option>
-              <option value="openai-compatible">
-                OpenAI-compatible (OpenAI / vLLM / LM Studio …)
-              </option>
-            </select>
-          </div>
-          <div>
-            <div className="mb-1.5 flex items-center gap-1.5">
-              <span className="text-primary">
-                <Server className="h-4 w-4" />
+                <Link2 className="h-4 w-4" />
               </span>
               <span className="text-[13px] font-medium text-foreground">
                 AI Endpoint
               </span>
-              <span className="text-[11px] text-muted-foreground">
-                {activeProvider === 'openai-compatible'
-                  ? '· OpenAI-compatible base URL (e.g. https://api.openai.com/v1)'
-                  : '· Ollama base URL'}
-              </span>
+              {endpointStatus !== 'none' && (
+                <span
+                  className={cn(
+                    'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium',
+                    endpointStatus === 'active'
+                      ? 'bg-emerald-500/15 text-emerald-400'
+                      : endpointStatus === 'inactive'
+                        ? 'bg-destructive/15 text-destructive'
+                        : 'bg-muted text-muted-foreground',
+                  )}
+                >
+                  {endpointStatus === 'active' && (
+                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                  )}
+                  {endpointStatus === 'inactive' && (
+                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-destructive" />
+                  )}
+                  {endpointStatus === 'checking'
+                    ? t('settings.ai.tools.checking')
+                    : endpointStatus === 'active'
+                      ? t('settings.ai.tools.active')
+                      : t('settings.ai.tools.inactive')}
+                </span>
+              )}
+            </div>
+            <div className="mb-1.5 text-[11px] text-muted-foreground">
+              OpenAI-compatible base URL (e.g. https://api.openai.com/v1,
+              http://host:11434/v1)
             </div>
             <input
               type="url"
-              value={aiEndpoint ?? ''}
-              onChange={(e) => onChangeAiEndpoint?.(e.target.value)}
-              placeholder={
-                activeProvider === 'openai-compatible'
-                  ? 'https://api.openai.com/v1'
-                  : 'http://ai.example.com'
-              }
+              value={endpointDraft}
+              onChange={(e) => setEndpointDraft(e.target.value)}
+              onBlur={commitEndpoint}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') e.currentTarget.blur();
+              }}
+              placeholder="https://api.openai.com/v1"
               className={cn(
                 'w-full rounded-md border bg-background px-3 py-2 text-[13px] outline-none transition-colors focus:ring-2',
                 aiEndpointError
@@ -955,30 +981,28 @@ function AiSection({
               </div>
             )}
           </div>
-          {activeProvider === 'openai-compatible' && (
-            <div>
-              <div className="mb-1.5 flex items-center gap-1.5">
-                <span className="text-primary">
-                  <Server className="h-4 w-4" />
-                </span>
-                <span className="text-[13px] font-medium text-foreground">
-                  API Key
-                </span>
-                <span className="text-[11px] text-muted-foreground">
-                  · OpenAI-compatible auth (leave empty for local servers)
-                </span>
-              </div>
-              <input
-                type="password"
-                value={apiKey ?? ''}
-                onChange={(e) => onChangeApiKey?.(e.target.value)}
-                placeholder="sk-..."
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-[13px] outline-none transition-colors focus:ring-2 focus:ring-ring"
-                spellCheck={false}
-                autoComplete="off"
-              />
+          <div>
+            <div className="mb-1.5 flex items-center gap-1.5">
+              <span className="text-primary">
+                <KeyRound className="h-4 w-4" />
+              </span>
+              <span className="text-[13px] font-medium text-foreground">
+                API Key
+              </span>
             </div>
-          )}
+            <div className="mb-1.5 text-[11px] text-muted-foreground">
+              OpenAI-compatible auth (leave empty for local servers)
+            </div>
+            <input
+              type="password"
+              value={apiKey ?? ''}
+              onChange={(e) => onChangeApiKey?.(e.target.value)}
+              placeholder="sk-..."
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-[13px] outline-none transition-colors focus:ring-2 focus:ring-ring"
+              spellCheck={false}
+              autoComplete="off"
+            />
+          </div>
           <ModelPickerRow
             icon={<Brain className="h-4 w-4" />}
             label={t('settings.ai.reasoning')}
@@ -1090,6 +1114,7 @@ function ToolsSubSection() {
       </h3>
       <div className="flex flex-col gap-2 rounded-lg border border-border bg-secondary/30 p-4">
         <div className="flex items-center gap-1.5">
+          <Globe className="h-4 w-4 text-primary" />
           <span className="text-[13px] font-medium text-foreground">
             {t('settings.ai.tools.tavily')}
           </span>
@@ -1123,6 +1148,9 @@ function ToolsSubSection() {
             </span>
           )}
         </div>
+        <div className="text-[11px] text-muted-foreground">
+          {t('settings.ai.tools.tavilyDesc')}
+        </div>
         <div className="flex items-center gap-2">
           <input
             type="password"
@@ -1141,9 +1169,6 @@ function ToolsSubSection() {
           </Button>
           {savedAt && <Check className="h-4 w-4 text-emerald-500" />}
         </div>
-        <p className="text-[11px] text-muted-foreground">
-          {t('settings.ai.tools.tavilyDesc')}
-        </p>
       </div>
     </div>
   );
@@ -2108,7 +2133,7 @@ function SystemTab() {
   }, [entries, autoScroll]);
 
   return (
-    <div className="flex h-full max-h-[calc(85vh-7rem)] flex-col gap-3">
+    <div className="flex h-full max-h-[calc(85vh-7rem)] flex-col gap-3 md:max-h-[calc(90vh-7rem)]">
       <div className="flex items-center gap-3">
         <h2 className="flex items-center gap-2 text-[15px] font-semibold tracking-tight text-foreground">
           <Terminal className="h-5 w-5 text-primary" />
@@ -2287,8 +2312,8 @@ function ModelPickerRow({
         <span className="text-[13px] font-medium text-foreground">
           {label}
         </span>
-        <span className="text-[11px] text-muted-foreground">· {desc}</span>
       </div>
+      <div className="mb-1.5 text-[11px] text-muted-foreground">{desc}</div>
       {disabled ? (
         <div className="flex h-8 w-full items-center rounded-md border border-input bg-background px-3 text-[12px] text-muted-foreground">
           {t('settings.ai.noModels')}

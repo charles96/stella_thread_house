@@ -84,7 +84,7 @@ export type StreamPart =
       promptTokens?: number;
     };
 
-// 공급자(OpenAI 호환/Ollama 등)가 컨텍스트 한도 초과를 알리는 다양한 문구를 포괄 감지.
+// 공급자(OpenAI 호환 런타임)가 컨텍스트 한도 초과를 알리는 다양한 문구를 포괄 감지.
 // LM Studio: "tokens to keep from the initial prompt is greater than the context length"
 // OpenAI/vLLM: "maximum context length", "context_length_exceeded" 등.
 const CONTEXT_OVERFLOW_RE =
@@ -96,6 +96,16 @@ const CONTEXT_OVERFLOW_RE =
 // 사용자에게 원문 대신 "Settings 에서 AI 설정을 고치라"는 다국어 안내로 치환한다.
 const AI_CONFIG_ERROR_RE =
   /\b(?:401|403|404)\b|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|getaddrinfo|fetch failed|ETIMEDOUT|ECONNRESET|unauthorized|forbidden|invalid api key|incorrect api key|invalid_api_key|page not found/i;
+
+// 비전 미지원 모델에 이미지를 보냈을 때의 공급자 오류 — Settings 에서 비전 모델로
+// 바꾸라는 다국어 안내로 치환한다. (예: "does not support image inputs")
+const VISION_UNSUPPORTED_RE =
+  /not support image|does not support (?:image|vision|multimodal)|image input[s]?\b.{0,24}(?:not support|unsupported)|no vision support|not a vision model|does not support image inputs/i;
+
+// 선택한 모델이 서버에 없을 때의 공급자 오류 — Settings 에서 유효한 모델로 바꾸라는 안내.
+// (예: "Invalid model identifier ...", code "model_not_found")
+const MODEL_NOT_FOUND_RE =
+  /model_not_found|invalid model|model not found|unknown model|no such model|specify a valid.{0,20}model|model.{0,20}does not exist|model.{0,20}is not (?:available|found)/i;
 
 // Instagram CDN URL은 `.heic` 확장자에 ?stp=dst-jpg 변환 매개변수가 붙어
 // 실제 응답은 JPEG로 내려오지만 URL 만 보면 HEIC. 따라서 heic/heif도 허용.
@@ -251,7 +261,7 @@ export class ChatService {
   ) {}
 
   private readonly logger = new Logger(ChatService.name);
-  private readonly defaultModel = process.env.OLLAMA_MODEL ?? 'gemma4:26b';
+  private readonly defaultModel = process.env.AI_DEFAULT_MODEL ?? 'gemma4:26b';
 
   // AI Endpoint — system_config 'ai' row 의 endpoint 가 단일 진실 출처.
   // env 폴백 없음. 미설정 시 throw — 호출 측이 사용자에게 Settings 안내.
@@ -269,7 +279,7 @@ export class ChatService {
   }
 
   // Reasoning 모델 — system_config 'ai' row 의 reasoningModel 이 전역 기본값.
-  // 요청에 model 이 지정되면 그게 우선, 없으면 admin 설정 → env(OLLAMA_MODEL) 순.
+  // 요청에 model 이 지정되면 그게 우선, 없으면 admin 설정 → env(AI_DEFAULT_MODEL) 순.
   private async getReasoningModel(): Promise<string> {
     try {
       const row = await this.systemConfigs.findOne({ where: { key: 'ai' } });
@@ -282,20 +292,28 @@ export class ChatService {
     return this.defaultModel;
   }
 
-  // 공급자 선택용 설정 — system_config 'ai' row 의 provider/apiKey.
-  // provider 미설정이면 LlmService 가 ollama 로 폴백.
-  private async loadProviderConfig(): Promise<{
-    provider?: string;
-    apiKey?: string;
-  }> {
+  // Vision 모델 — system_config 'ai' row 의 visionModel 이 전역 기본값.
+  // 첨부 이미지가 있는 답변 생성 시 사용. 미설정이면 빈 문자열(호출 측이 폴백 결정).
+  private async getVisionModel(): Promise<string> {
     try {
       const row = await this.systemConfigs.findOne({ where: { key: 'ai' } });
-      const v = row?.value as
-        | { provider?: string; apiKey?: string }
-        | undefined;
-      return { provider: v?.provider, apiKey: v?.apiKey?.trim() || undefined };
+      const v = (row?.value as { visionModel?: string } | undefined)
+        ?.visionModel;
+      if (v && v.trim()) return v.trim();
     } catch {
-      return {};
+      // ignore
+    }
+    return '';
+  }
+
+  // OpenAI 호환 API 키 — system_config 'ai' row. 로컬 서버는 비어있을 수 있음.
+  private async getApiKey(): Promise<string | undefined> {
+    try {
+      const row = await this.systemConfigs.findOne({ where: { key: 'ai' } });
+      const v = (row?.value as { apiKey?: string } | undefined)?.apiKey;
+      return v?.trim() || undefined;
+    } catch {
+      return undefined;
     }
   }
 
@@ -380,7 +398,7 @@ export class ChatService {
   }
 
   // 호출별로 endpoint 가 명시되면 그 값을 우선 사용. 아니면 DB 의 'ai' row.
-  private async resolveOllamaUrl(endpoint?: string): Promise<string> {
+  private async resolveEndpoint(endpoint?: string): Promise<string> {
     const e = (endpoint ?? '').trim();
     if (e && /^https?:\/\//i.test(e)) return e.replace(/\/$/, '');
     return this.getAiEndpoint();
@@ -390,12 +408,72 @@ export class ChatService {
     // endpoint 미지정 + DB 에도 없으면 빈 배열 반환 (healthcheck/초기화 호환).
     let url: string;
     try {
-      url = await this.resolveOllamaUrl(endpoint);
+      url = await this.resolveEndpoint(endpoint);
     } catch {
       return [];
     }
-    const { provider, apiKey } = await this.loadProviderConfig();
-    return this.llm.resolve(provider).listModels({ endpoint: url, apiKey });
+    const apiKey = await this.getApiKey();
+    return this.llm.provider.listModels({ endpoint: url, apiKey });
+  }
+
+  // 보조 LLM 호출(검색쿼리 재작성·명확성 판단·요약·해시태그·후속질문 등) 공용 경로.
+  // 공급자 추상화를 통해 OpenAI 호환 런타임에서 동작한다.
+  // content 만 누적하고 thinking/metric 은 버린다 → <think> 출력이 JSON/본문을 오염시키지 않음.
+  private async llmComplete(
+    messages: ChatMessage[],
+    opts?: {
+      model?: string;
+      maxTokens?: number;
+      temperature?: number;
+      think?: boolean;
+      signal?: AbortSignal;
+    },
+  ): Promise<string> {
+    const endpoint = await this.resolveEndpoint();
+    const model = opts?.model || (await this.getReasoningModel());
+    const apiKey = await this.getApiKey();
+    let content = '';
+    for await (const part of this.llm.provider.streamChat({
+      endpoint,
+      model,
+      messages,
+      apiKey,
+      maxTokens: opts?.maxTokens ?? 2048,
+      temperature: opts?.temperature,
+      think: opts?.think ?? false,
+      signal: opts?.signal,
+    })) {
+      if (part.type === 'content') content += part.text;
+    }
+    return content.trim();
+  }
+
+  // 보조 스트리밍 호출(예: 증분 요약) 공용 경로 — content 청크만 흘린다(thinking 제외).
+  private async *llmStreamContent(
+    messages: ChatMessage[],
+    opts?: {
+      model?: string;
+      maxTokens?: number;
+      temperature?: number;
+      think?: boolean;
+      signal?: AbortSignal;
+    },
+  ): AsyncGenerator<string> {
+    const endpoint = await this.resolveEndpoint();
+    const model = opts?.model || (await this.getReasoningModel());
+    const apiKey = await this.getApiKey();
+    for await (const part of this.llm.provider.streamChat({
+      endpoint,
+      model,
+      messages,
+      apiKey,
+      maxTokens: opts?.maxTokens ?? 4096,
+      temperature: opts?.temperature,
+      think: opts?.think ?? false,
+      signal: opts?.signal,
+    })) {
+      if (part.type === 'content' && part.text) yield part.text;
+    }
   }
 
   // ====== Tavily 키워드 웹 검색 ======
@@ -566,23 +644,10 @@ export class ChatService {
       lines.push('');
       lines.push('JSON만 출력:');
 
-      const res = await fetch(`${(await this.getAiEndpoint())}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: model || (await this.getReasoningModel()),
-          messages: [sys, { role: 'user', content: lines.join('\n') }],
-          stream: false,
-          think: false,
-          options: { temperature: 0.2 },
-        }),
-      });
-      if (!res.ok) {
-        this.logger.warn(`[reformulate] LLM HTTP ${res.status}`);
-        return { queries: [] };
-      }
-      const json = (await res.json()) as { message?: { content?: string } };
-      const text = json.message?.content?.trim() ?? '';
+      const text = await this.llmComplete(
+        [sys, { role: 'user', content: lines.join('\n') }],
+        { model, temperature: 0.2, maxTokens: 512 },
+      );
       this.logger.log(
         `[reformulate] LLM raw output (first 500): ${text.slice(0, 500)}`,
       );
@@ -693,19 +758,10 @@ export class ChatService {
       lines.push('');
       lines.push('JSON만 출력:');
 
-      const res = await fetch(`${(await this.getAiEndpoint())}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: model || (await this.getReasoningModel()),
-          messages: [sys, { role: 'user', content: lines.join('\n') }],
-          stream: false,
-          think: false,
-        }),
-      });
-      if (!res.ok) return empty;
-      const json = (await res.json()) as { message?: { content?: string } };
-      const text = json.message?.content?.trim() ?? '';
+      const text = await this.llmComplete(
+        [sys, { role: 'user', content: lines.join('\n') }],
+        { model, temperature: 0.2 },
+      );
       const m = text.match(/\{[\s\S]*\}/);
       if (!m) return empty;
       const parsed: unknown = JSON.parse(m[0]);
@@ -794,20 +850,11 @@ export class ChatService {
       lines.push('JSON만 출력:');
 
       const user: ChatMessage = { role: 'user', content: lines.join('\n') };
-      const res = await fetch(`${(await this.getAiEndpoint())}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: model || (await this.getReasoningModel()),
-          messages: [sys, user],
-          stream: false,
-          think: false,
-          options: { temperature: 0.3, top_p: 0.9, num_predict: 512 },
-        }),
+      const text = await this.llmComplete([sys, user], {
+        model,
+        temperature: 0.3,
+        maxTokens: 512,
       });
-      if (!res.ok) return empty;
-      const json = (await res.json()) as { message?: { content?: string } };
-      const text = json.message?.content?.trim() ?? '';
       const m = text.match(/\{[\s\S]*\}/);
       if (!m) return empty;
       const parsed: unknown = JSON.parse(m[0]);
@@ -868,19 +915,10 @@ export class ChatService {
           '- 예: {"summary":"정조의 수원 화성 축조 배경과 의의","hashtags":["#정조","#수원화성","#조선시대"]}',
         ].join('\n'),
       };
-      const res = await fetch(`${(await this.getAiEndpoint())}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: model || (await this.getReasoningModel()),
-          messages: [sys, { role: 'user', content: trimmed }],
-          stream: false,
-          think: false,
-        }),
-      });
-      if (!res.ok) return empty;
-      const json = (await res.json()) as { message?: { content?: string } };
-      const content = json.message?.content?.trim() ?? '';
+      const content = await this.llmComplete(
+        [sys, { role: 'user', content: trimmed }],
+        { model },
+      );
       const m = content.match(/\{[\s\S]*\}/);
       if (!m) return empty;
       const parsed: unknown = JSON.parse(m[0]);
@@ -967,24 +1005,10 @@ export class ChatService {
         role: m.role,
         content: m.content?.slice(0, 4000) ?? '',
       }));
-    const res = await fetch(`${(await this.getAiEndpoint())}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: model || this.defaultModel,
-        messages: [sys, ...trimmed],
-        stream: false,
-        think: false,
-      }),
+    return this.llmComplete([sys, ...trimmed], {
+      model: model || this.defaultModel,
+      maxTokens: 4096,
     });
-    if (!res.ok) {
-      const t = await res.text().catch(() => '');
-      throw new Error(`Ollama ${res.status}: ${t || res.statusText}`);
-    }
-    const json = (await res.json()) as {
-      message?: { content?: string };
-    };
-    return json.message?.content?.trim() ?? '';
   }
 
   // 직전 요약과 새 답변 한 건을 합쳐 누적 요약을 스트리밍한다.
@@ -1030,60 +1054,14 @@ export class ChatService {
       ].join('\n'),
     };
 
-    const res = await fetch(`${(await this.getAiEndpoint())}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      signal,
-      body: JSON.stringify({
-        model: model || this.defaultModel,
-        messages: [sys, user],
-        stream: true,
-        think: false,
-      }),
-    });
-    if (!res.ok || !res.body) {
-      const t = await res.text().catch(() => '');
-      throw new Error(`Ollama ${res.status}: ${t || res.statusText}`);
-    }
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = '';
     let acc = '';
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        let nl: number;
-        while ((nl = buf.indexOf('\n')) !== -1) {
-          const line = buf.slice(0, nl).trim();
-          buf = buf.slice(nl + 1);
-          if (!line) continue;
-          try {
-            const j = JSON.parse(line) as {
-              message?: { content?: string };
-              done?: boolean;
-              error?: string;
-            };
-            if (j.error) throw new Error(`Ollama 오류: ${j.error}`);
-            const c = j.message?.content;
-            if (c) {
-              acc += c;
-              yield { type: 'chunk', text: c };
-            }
-          } catch (e) {
-            if (e instanceof Error && e.message.startsWith('Ollama 오류')) throw e;
-            // partial JSON chunk — ignore
-          }
-        }
-      }
-    } finally {
-      try {
-        reader.releaseLock();
-      } catch {
-        // ignore
-      }
+    for await (const chunk of this.llmStreamContent([sys, user], {
+      model: model || this.defaultModel,
+      maxTokens: 2048,
+      signal,
+    })) {
+      acc += chunk;
+      yield { type: 'chunk', text: chunk };
     }
     yield { type: 'done', summary: acc.trim() };
   }
@@ -1214,7 +1192,7 @@ export class ChatService {
   };
 
   // 메시지의 images 가 URL/path 형식이면 디스크에서 읽어 base64 로 환원.
-  // base64 (data URL prefix 유무 무관) 는 그대로 둔다 (Ollama 가 받는 표준).
+  // base64 (data URL prefix 유무 무관) 는 그대로 둔다 (OpenAI 호환 표준).
   private resolveMessageImages(messages: ChatMessage[]): ChatMessage[] {
     return messages.map((m) => {
       if (!m.images || m.images.length === 0) return m;
@@ -1254,7 +1232,7 @@ export class ChatService {
       model?: string;
       visionModel?: string;
       useVision?: boolean;
-      // 사용자 설정 Ollama base URL (없으면 env 기본값).
+      // 사용자 설정 AI base URL (없으면 env 기본값).
       endpoint?: string;
       // 클라이언트가 연결을 끊거나 Stop 버튼을 누르면 abort.
       signal?: AbortSignal;
@@ -1271,7 +1249,7 @@ export class ChatService {
   ): AsyncGenerator<StreamPart> {
     const m = statusMsg(options.locale);
 
-    // URL/path 형식의 images 는 base64 로 환원해 Ollama 에 전달.
+    // URL/path 형식의 images 는 base64 로 환원해 모델에 전달.
     // resolvedMessages 에 저장해 두고 URL/검색 augment 경로에서도 재사용 — 이미지 미변환 버그 방지.
     const resolvedMessages = this.resolveMessageImages(messages);
     let augmented = resolvedMessages;
@@ -1282,6 +1260,12 @@ export class ChatService {
     const lastUserAuto = [...messages].reverse().find((u) => u.role === 'user');
     const lastUserHasImages = (lastUserAuto?.images?.length ?? 0) > 0;
     const lastUserImageCount = lastUserAuto?.images?.length ?? 0;
+    // 대화 history(최근 윈도우)에 과거 첨부 이미지가 남아 함께 전송될 수 있으므로,
+    // 모델 선택은 "마지막 메시지"가 아니라 "payload 내 어느 메시지든 이미지 존재"로 판단.
+    // (텍스트 follow-up 인데 직전 이미지가 history 에 남아 비전 미지원 모델로 가던 버그 방지.)
+    const anyMessageHasImages = messages.some(
+      (mm) => (mm.images?.length ?? 0) > 0,
+    );
     // 첨부 이미지가 있어도 URL/Search 모드는 함께 발동 가능 — 인용 번호는 통합 정렬.
     const autoDirectUrls = lastUserAuto?.content
       ? extractUrlsFromText(lastUserAuto.content)
@@ -1791,12 +1775,28 @@ export class ChatService {
 
     // 모델 전송은 공급자(LlmProvider)에 위임 — ChatService 는 메시지 구성/인용/저장만 담당.
     // 검색/URL 모드에서는 컨텍스트가 커서 thinking 에 토큰을 많이 소비하므로 상한을 높임.
-    const endpoint = await this.resolveOllamaUrl(options.endpoint);
-    const chatModel = options.model || (await this.getReasoningModel());
+    const endpoint = await this.resolveEndpoint(options.endpoint);
+    // 첨부 이미지가 있으면(현재 또는 history 에 남은 과거 이미지 포함) 비전 가능한
+    // Vision 모델로 답변 생성을 전환한다. (옵션 visionModel 우선 → 'ai' 설정 visionModel →
+    //  그래도 없으면 기존 reasoning/대화 모델로 폴백.)
+    let chatModel: string;
+    if (anyMessageHasImages) {
+      const vision =
+        options.visionModel?.trim() || (await this.getVisionModel());
+      chatModel =
+        vision || options.model || (await this.getReasoningModel());
+      if (vision) {
+        this.logger.log(
+          `[stream] 첨부 이미지 감지 → Vision 모델로 전환: ${vision}`,
+        );
+      }
+    } else {
+      chatModel = options.model || (await this.getReasoningModel());
+    }
     const maxTokens = augmentedBySearch || augmentedByUrl ? 32768 : 8192;
-    const { provider, apiKey } = await this.loadProviderConfig();
+    const apiKey = await this.getApiKey();
     try {
-      yield* this.llm.resolve(provider).streamChat({
+      yield* this.llm.provider.streamChat({
         endpoint,
         model: chatModel,
         messages: finalMessages,
@@ -1808,6 +1808,18 @@ export class ChatService {
       // 컨텍스트 초과는 원문(영문) 대신 다국어 안내 메시지로 치환해 노출.
       // code 를 함께 실어 컨트롤러가 errorCode 로 중계 → 프론트가 UI 언어로 재번역(언어 전환 반응).
       const raw = e instanceof Error ? e.message : String(e);
+      // 비전 미지원 모델에 이미지 전송 — "Settings 에서 비전 지원 모델로 변경" 안내.
+      if (VISION_UNSUPPORTED_RE.test(raw)) {
+        const err = new Error(m.visionUnsupported);
+        (err as Error & { code?: string }).code = 'vision_unsupported';
+        throw err;
+      }
+      // 선택한 모델이 서버에 없음 — "Settings 에서 유효한 모델로 변경" 안내.
+      if (MODEL_NOT_FOUND_RE.test(raw)) {
+        const err = new Error(m.modelNotFound);
+        (err as Error & { code?: string }).code = 'model_not_found';
+        throw err;
+      }
       if (CONTEXT_OVERFLOW_RE.test(raw)) {
         const err = new Error(m.contextOverflow);
         (err as Error & { code?: string }).code = 'context_overflow';

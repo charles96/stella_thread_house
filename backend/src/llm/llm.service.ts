@@ -1,24 +1,15 @@
 import { Injectable } from '@nestjs/common';
 import { LlmProvider } from './llm-provider.interface';
-import { OllamaProvider } from './providers/ollama.provider';
 import { OpenAICompatibleProvider } from './providers/openai-compatible.provider';
 
-// 공급자 레지스트리 — system_config.ai.provider 값으로 구현체를 선택한다.
-// 미설정/미지원 값은 기존 동작 유지를 위해 ollama 로 폴백.
+// 단일 공급자(OpenAI 호환) 레지스트리.
+// vLLM·LM Studio·llama.cpp 등 로컬 OpenAI 호환 런타임도 /v1 엔드포인트로 접속한다.
 @Injectable()
 export class LlmService {
-  constructor(
-    private readonly ollama: OllamaProvider,
-    private readonly openai: OpenAICompatibleProvider,
-  ) {}
+  constructor(private readonly openai: OpenAICompatibleProvider) {}
 
-  resolve(provider?: string): LlmProvider {
-    switch (provider) {
-      case 'openai-compatible':
-        return this.openai;
-      case 'ollama':
-      default:
-        return this.ollama;
-    }
+  // 현재는 OpenAI 호환 단일 구현.
+  get provider(): LlmProvider {
+    return this.openai;
   }
 }

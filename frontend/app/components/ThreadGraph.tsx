@@ -103,10 +103,11 @@ export default function ThreadGraph({ nodes, edges, onSelectNode }: Props) {
   useEffect(() => {
     let raf = 0;
     let alpha = 1;
-    const REPULSION = 4000;
-    const SPRING_K = 0.010;
-    const SPRING_LEN = 210;
-    const CENTER_K = 0.0012;
+    // 노드가 너무 퍼지지 않도록 응집: 반발력↓, 링크 길이↓, 중심 인력↑.
+    const REPULSION = 2400;
+    const SPRING_K = 0.012;
+    const SPRING_LEN = 135;
+    const CENTER_K = 0.0026;
     const DAMPING = 0.80;
 
     const tick = () => {

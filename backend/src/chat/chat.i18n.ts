@@ -18,6 +18,10 @@ const MSGS = {
       '모델의 컨텍스트 한도를 초과했습니다. 컨텍스트가 더 큰 모델로 변경하거나, 설정에서 **웹검색 문서 수** 옵션을 줄여 주세요.',
     aiConfigError:
       'AI 설정에 오류가 있습니다. **설정**에서 AI 공급자·엔드포인트·API 키를 확인해 주세요.',
+    visionUnsupported:
+      'Vision(이미지)을 지원하지 않는 모델입니다. **설정**에서 이미지를 지원하는 모델로 변경하세요.',
+    modelNotFound:
+      '선택한 AI 모델을 찾을 수 없습니다. **설정**에서 유효한 모델로 변경하세요.',
   },
   en: {
     tavilyUnavailable: 'Tavily unavailable — responding without search',
@@ -36,6 +40,10 @@ const MSGS = {
       'The model\'s context limit was exceeded. Switch to a model with a larger context, or lower the **Web search document count** option in Settings.',
     aiConfigError:
       'There is a problem with the AI configuration. Please check the AI provider, endpoint, and API key in **Settings**.',
+    visionUnsupported:
+      'This model does not support image (vision) inputs. Switch to a vision-capable model in **Settings**.',
+    modelNotFound:
+      'The selected AI model was not found. Choose a valid model in **Settings**.',
   },
   ja: {
     tavilyUnavailable: 'Tavily 利用不可 — 検索なしで回答します',
@@ -54,6 +62,10 @@ const MSGS = {
       'モデルのコンテキスト上限を超えました。より大きなコンテキストのモデルに変更するか、設定の **ウェブ検索文書数** オプションを減らしてください。',
     aiConfigError:
       'AI 設定にエラーがあります。**設定（Settings）** で AI プロバイダー・エンドポイント・API キーを確認してください。',
+    visionUnsupported:
+      'このモデルは画像（Vision）入力に対応していません。**設定** で画像対応モデルに変更してください。',
+    modelNotFound:
+      '選択した AI モデルが見つかりません。**設定** で有効なモデルに変更してください。',
   },
   zh: {
     tavilyUnavailable: 'Tavily 不可用 — 将在不搜索的情况下回答',
@@ -71,6 +83,10 @@ const MSGS = {
       '超出模型的上下文长度限制。请改用上下文更大的模型，或在设置中调低 **网络搜索文档数** 选项。',
     aiConfigError:
       'AI 配置存在错误。请在 **设置（Settings）** 中检查 AI 提供商、端点和 API 密钥。',
+    visionUnsupported:
+      '该模型不支持图像（Vision）输入。请在 **设置** 中切换为支持图像的模型。',
+    modelNotFound:
+      '找不到所选的 AI 模型。请在 **设置** 中选择有效的模型。',
   },
   id: {
     tavilyUnavailable: 'Tavily tidak tersedia — menjawab tanpa pencarian',
@@ -89,6 +105,10 @@ const MSGS = {
       'Batas konteks model terlampaui. Gunakan model dengan konteks lebih besar, atau kurangi opsi **Jumlah dokumen pencarian web** di Pengaturan.',
     aiConfigError:
       'Ada masalah pada konfigurasi AI. Periksa penyedia AI, endpoint, dan kunci API di **Pengaturan**.',
+    visionUnsupported:
+      'Model ini tidak mendukung input gambar (Vision). Ganti ke model yang mendukung gambar di **Pengaturan**.',
+    modelNotFound:
+      'Model AI yang dipilih tidak ditemukan. Pilih model yang valid di **Pengaturan**.',
   },
   fr: {
     tavilyUnavailable: 'Tavily indisponible — réponse sans recherche',
@@ -108,6 +128,10 @@ const MSGS = {
       'La limite de contexte du modèle a été dépassée. Passez à un modèle avec un contexte plus grand, ou réduisez l\'option **Nombre de documents de recherche web** dans les Paramètres.',
     aiConfigError:
       'Un problème est survenu avec la configuration de l\'IA. Veuillez vérifier le fournisseur d\'IA, le point de terminaison et la clé API dans les **Paramètres**.',
+    visionUnsupported:
+      'Ce modèle ne prend pas en charge les images (vision). Passez à un modèle compatible vision dans les **Paramètres**.',
+    modelNotFound:
+      'Le modèle d\'IA sélectionné est introuvable. Choisissez un modèle valide dans les **Paramètres**.',
   },
   de: {
     tavilyUnavailable: 'Tavily nicht verfügbar — Antwort ohne Suche',
@@ -127,6 +151,10 @@ const MSGS = {
       'Das Kontextlimit des Modells wurde überschritten. Wechseln Sie zu einem Modell mit größerem Kontext oder verringern Sie die Option **Anzahl der Websuche-Dokumente** in den Einstellungen.',
     aiConfigError:
       'Es gibt ein Problem mit der AI-Konfiguration. Bitte überprüfen Sie den AI-Anbieter, den Endpunkt und den API-Schlüssel in den **Einstellungen**.',
+    visionUnsupported:
+      'Dieses Modell unterstützt keine Bildeingaben (Vision). Wechseln Sie in den **Einstellungen** zu einem Vision-fähigen Modell.',
+    modelNotFound:
+      'Das ausgewählte AI-Modell wurde nicht gefunden. Wählen Sie in den **Einstellungen** ein gültiges Modell.',
   },
 } as const;
 

@@ -1,6 +1,6 @@
 import type { ChatMessage, ModelInfo } from '../chat/chat.service';
 
-// 공급자(Ollama / OpenAI / Anthropic …)가 내보내는 정규화된 스트림 이벤트.
+// 공급자(OpenAI 호환)가 내보내는 정규화된 스트림 이벤트.
 // chat.service 의 StreamPart 중 '모델 추론 출력'에 해당하는 부분집합과 구조적으로 동일하다.
 // (search/pages/status 등 chat 고유 이벤트는 ChatService 가 담당하고, 공급자는 관여하지 않는다.)
 export type LlmStreamPart =
@@ -24,10 +24,15 @@ export interface LlmChatOptions {
   messages: ChatMessage[];
   // 클라이언트 abort 전파용.
   signal?: AbortSignal;
-  // 출력 토큰 상한 (Ollama num_predict / OpenAI·Anthropic max_tokens 로 매핑).
+  // 출력 토큰 상한 (OpenAI max_tokens 로 매핑).
   maxTokens?: number;
-  // OpenAI/Anthropic 등 인증이 필요한 공급자용 (Ollama 는 무시).
+  // 인증이 필요한 공급자용 API 키 (로컬 서버는 비워둠).
   apiKey?: string;
+  // 샘플링 온도. 분류/추출 등 결정적 보조 호출은 낮게(예: 0.2). 미지정 시 공급자 기본값.
+  temperature?: number;
+  // 추론(thinking) 사용 여부 힌트. OpenAI 호환은 강제 끄기가 불가하나, <think> 태그를
+  // thinking 으로 분리하므로 content 오염은 방지된다. 미지정 시 true.
+  think?: boolean;
 }
 
 // 사용 가능한 모델 목록 조회 입력.

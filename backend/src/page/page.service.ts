@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { SystemConfig } from '../db/entities/system-config.entity';
+import { LlmService } from '../llm/llm.service';
+import type { ChatMessage } from '../chat/chat.service';
 
 export interface PageImage {
   src: string;
@@ -424,13 +426,54 @@ export class PageService {
   constructor(
     @InjectRepository(SystemConfig)
     private readonly systemConfigs: Repository<SystemConfig>,
+    private readonly llm: LlmService,
   ) {}
 
   private readonly logger = new Logger(PageService.name);
-  private readonly ollamaModel =
-    process.env.OLLAMA_MODEL ?? 'gemma4:26b';
+
+  // OpenAI 호환 API 키 — system_config 'ai' row. 로컬 서버는 비어있을 수 있음.
+  private async getApiKey(): Promise<string | undefined> {
+    try {
+      const row = await this.systemConfigs.findOne({ where: { key: 'ai' } });
+      const v = (row?.value as { apiKey?: string } | undefined)?.apiKey;
+      return v?.trim() || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  // 공급자(OpenAI 호환)를 통한 1회성 완성(제목추출·비전) — content 만 누적(thinking 제외).
+  // signal 로 타임아웃/중단 전파.
+  private async llmComplete(
+    messages: ChatMessage[],
+    opts: {
+      model: string;
+      temperature?: number;
+      maxTokens?: number;
+      signal?: AbortSignal;
+    },
+  ): Promise<string> {
+    const endpoint = await this.getAiEndpoint();
+    const apiKey = await this.getApiKey();
+    let content = '';
+    for await (const part of this.llm.provider.streamChat({
+      endpoint,
+      model: opts.model,
+      messages,
+      apiKey,
+      temperature: opts.temperature,
+      maxTokens: opts.maxTokens,
+      think: false,
+      signal: opts.signal,
+    })) {
+      if (part.type === 'content') content += part.text;
+    }
+    return content.trim();
+  }
+  private readonly defaultModel =
+    process.env.AI_DEFAULT_MODEL ?? 'gemma4:26b';
   private readonly visionModel =
-    process.env.OLLAMA_VISION_MODEL ?? process.env.OLLAMA_MODEL ?? 'gemma4:26b';
+    process.env.AI_VISION_MODEL ?? process.env.AI_DEFAULT_MODEL ?? 'gemma4:26b';
 
   // AI Endpoint — system_config 'ai' row 가 단일 진실 출처. env 폴백 없음.
   private async getAiEndpoint(): Promise<string> {
@@ -923,7 +966,7 @@ export class PageService {
       page.ogTags['og:title'] ||
       page.ogTags['twitter:title'] ||
       '';
-    const model = options.model || this.ollamaModel;
+    const model = options.model || this.defaultModel;
 
     if (!title) {
       throw new Error('페이지 제목을 찾지 못했습니다');
@@ -933,7 +976,7 @@ export class PageService {
     }
 
     const truncated = page.text.slice(0, this.titleExtractInputLimit);
-    const content = await this.askOllamaForTitleContent(model, title, truncated);
+    const content = await this.askModelForTitleContent(model, title, truncated);
 
     return {
       url: page.url,
@@ -959,7 +1002,7 @@ export class PageService {
       '';
     if (!title) throw new Error('페이지 제목을 찾지 못했습니다');
 
-    const model = options.model || this.ollamaModel;
+    const model = options.model || this.defaultModel;
     const visionModel = options.visionModel || (await this.getVisionModel());
     const maxImages = options.maxImages ?? this.imageAnalyzeMaxCount;
 
@@ -971,7 +1014,7 @@ export class PageService {
       .slice(0, maxImages);
 
     const [content, imageAnalyses] = await Promise.all([
-      this.askOllamaForTitleContent(model, title, truncated),
+      this.askModelForTitleContent(model, title, truncated),
       this.analyzeImagesByTitle(title, candidateImages, visionModel),
     ]);
 
@@ -1080,43 +1123,23 @@ export class PageService {
     const user = `제목: ${title}${alt ? `\n이미지 alt: ${alt}` : ''}`;
 
     const ctrl = new AbortController();
-    const timer = setTimeout(
-      () => ctrl.abort(),
-      this.imageAnalyzeTimeoutMs,
-    );
-    let res: globalThis.Response;
+    const timer = setTimeout(() => ctrl.abort(), this.imageAnalyzeTimeoutMs);
+    let text: string;
     try {
-      res = await fetch(`${(await this.getAiEndpoint())}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: ctrl.signal,
-        body: JSON.stringify({
-          model,
-          stream: false,
-          messages: [
-            { role: 'system', content: system },
-            { role: 'user', content: user, images: [imageBase64] },
-          ],
-          options: { temperature: 0.1 },
-        }),
-      });
+      text = await this.llmComplete(
+        [
+          { role: 'system', content: system },
+          { role: 'user', content: user, images: [imageBase64] },
+        ],
+        { model, temperature: 0.1, signal: ctrl.signal },
+      );
     } finally {
       clearTimeout(timer);
     }
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      throw new Error(`Vision ${res.status}: ${body.slice(0, 160)}`);
-    }
-    const j = (await res.json()) as {
-      message?: { content?: string };
-      error?: string;
-    };
-    if (j.error) throw new Error(`Vision 오류: ${j.error}`);
-    const text = (j.message?.content ?? '').trim();
     return parseVisionVerdict(text);
   }
 
-  private async askOllamaForTitleContent(
+  private async askModelForTitleContent(
     model: string,
     title: string,
     text: string,
@@ -1138,86 +1161,29 @@ export class PageService {
       ctrl.abort();
     }, this.titleExtractTimeoutMs);
 
-    let res: globalThis.Response;
-    try {
-      res = await fetch(`${(await this.getAiEndpoint())}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: ctrl.signal,
-        body: JSON.stringify({
-          model,
-          stream: true,
-          messages: [
-            { role: 'system', content: system },
-            { role: 'user', content: user },
-          ],
-          options: { temperature: 0.1 },
-        }),
-      });
-    } catch (e) {
-      clearTimeout(timer);
-      if (e instanceof Error && e.name === 'AbortError') {
-        throw new Error(
-          `Ollama 응답 시간 초과 (${this.titleExtractTimeoutMs / 1000}s). PAGE_TITLE_EXTRACT_TIMEOUT_MS 또는 _INPUT_LIMIT 조정 필요`,
-        );
-      }
-      throw e;
-    }
-
-    if (!res.ok) {
-      clearTimeout(timer);
-      const body = await res.text().catch(() => '');
-      throw new Error(`Ollama 응답 오류 (${res.status}): ${body.slice(0, 200)}`);
-    }
-    if (!res.body) {
-      clearTimeout(timer);
-      throw new Error('Ollama 응답 본문이 비어있습니다');
-    }
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = '';
     let out = '';
     try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        let nl: number;
-        while ((nl = buf.indexOf('\n')) !== -1) {
-          const line = buf.slice(0, nl).trim();
-          buf = buf.slice(nl + 1);
-          if (!line) continue;
-          try {
-            const j = JSON.parse(line) as {
-              message?: { content?: string };
-              done?: boolean;
-              error?: string;
-            };
-            if (j.error) throw new Error(`Ollama 오류: ${j.error}`);
-            if (j.message?.content) out += j.message.content;
-          } catch (e) {
-            if (e instanceof Error && e.message.startsWith('Ollama 오류')) {
-              throw e;
-            }
-            // JSON parse 실패는 무시 (부분 청크일 수 있음)
-          }
-        }
-      }
+      out = await this.llmComplete(
+        [
+          { role: 'system', content: system },
+          { role: 'user', content: user },
+        ],
+        {
+          model,
+          temperature: 0.1,
+          maxTokens: 8192,
+          signal: ctrl.signal,
+        },
+      );
     } catch (e) {
       if (e instanceof Error && e.name === 'AbortError') {
         throw new Error(
-          `Ollama 응답 시간 초과 (${this.titleExtractTimeoutMs / 1000}s)`,
+          `응답 시간 초과 (${this.titleExtractTimeoutMs / 1000}s). PAGE_TITLE_EXTRACT_TIMEOUT_MS 또는 _INPUT_LIMIT 조정 필요`,
         );
       }
       throw e;
     } finally {
       clearTimeout(timer);
-      try {
-        reader.releaseLock();
-      } catch {
-        // ignore
-      }
     }
 
     return out.trim();

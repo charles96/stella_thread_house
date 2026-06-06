@@ -43,7 +43,7 @@ Here are some ways I personally use this service:
 ## Requirements
 | Type | Purpose |
 |--|--|
-| Local LLM | Gemma4 26b via Ollama |
+| Local LLM | Gemma4 26b (OpenAI-compatible endpoint) |
 | Tavily API Key | For web search |
 
 # Deploy
@@ -56,9 +56,11 @@ Here are some ways I personally use this service:
 TH_ADMIN_EMAIL_ID=admin@example.com
 TH_ADMIN_PASSWORD=changeme1234
 
-# Ollama API endpoint (use host.docker.internal when accessing host from container)
-# OLLAMA_GEMMA4_URL is a legacy alias for OLLAMA_BASE_URL.
-OLLAMA_BASE_URL=http://host.docker.internal:11434
+# AI provider — OpenAI-compatible base URL (include /v1) + API key.
+#   OpenAI cloud:  https://api.openai.com/v1
+#   Local runtime (vLLM/LM Studio …): http://host.docker.internal:11434/v1
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxx   # leave empty for local servers that need no auth
 
 # ── Optional ──────────────────────────────────────────
 # Web search feature (disabled if not provided)
@@ -115,7 +117,7 @@ services:
     networks:
       - stella-net
     extra_hosts:
-      - "host.docker.internal:host-gateway"   # Required on Linux to access host Ollama
+      - "host.docker.internal:host-gateway"   # Required on Linux to reach a local model server on the host
 
 networks:
   stella-net:
@@ -139,5 +141,5 @@ docker compose up -d
 | Backend API | http://localhost:4100 |
 
 > **Notes**
-> - `OLLAMA_BASE_URL` (legacy: `OLLAMA_GEMMA4_URL`) / `OPENAI_BASE_URL` / `OPENAI_API_KEY` / `TAVILY_API_KEY` are seeded into the DB on first boot. You can update them later under Settings → AI, where DB values take priority. To use an OpenAI-compatible provider, set `AI_PROVIDER=openai-compatible`.
-> - If you are running Ollama locally on a Linux host, the `extra_hosts` entry is required. On Mac/Windows with Docker Desktop, `host.docker.internal` is resolved automatically and can be omitted.
+> - `OPENAI_BASE_URL` / `OPENAI_API_KEY` / `TAVILY_API_KEY` are seeded into the DB on first boot. You can update them later under Settings → AI, where DB values take priority. The AI provider is OpenAI-compatible — point `OPENAI_BASE_URL` at OpenAI cloud or any local runtime's `/v1` endpoint (vLLM/LM Studio …).
+> - If you are running a local model server on a Linux host, the `extra_hosts` entry is required so the container can reach it via `host.docker.internal`. On Mac/Windows Docker Desktop it resolves automatically and can be omitted.

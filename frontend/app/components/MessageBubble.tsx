@@ -67,6 +67,8 @@ import type { Message, ReadPageImage, SearchImage } from './ChatRoom';
 const ERROR_CODE_I18N: Record<string, string> = {
   context_overflow: 'error.contextOverflow',
   ai_config_error: 'error.aiConfig',
+  vision_unsupported: 'error.visionUnsupported',
+  model_not_found: 'error.modelNotFound',
 };
 
 function extractCodeText(children: ReactNode): string {

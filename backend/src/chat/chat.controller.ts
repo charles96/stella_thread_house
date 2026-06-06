@@ -92,7 +92,7 @@ export class ChatController {
   }
 
   @Get('models')
-  @ApiOperation({ summary: 'Ollama에서 사용 가능한 모델 목록' })
+  @ApiOperation({ summary: '사용 가능한 모델 목록' })
   @ApiQuery({ name: 'endpoint', required: false })
   async models(@Query('endpoint') endpoint?: string) {
     try {

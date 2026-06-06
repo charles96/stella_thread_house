@@ -16,7 +16,7 @@ export const viewport: Viewport = {
 
 export const metadata: Metadata = {
   title: "Stella's Thread House",
-  description: "Stella's Thread House · Ollama 기반 챗봇",
+  description: "Stella's Thread House · AI 챗봇",
   icons: { icon: '/logo.svg' },
 };
 

@@ -695,9 +695,7 @@ export default function ChatRoom() {
   // AI Endpoint — backend system_config 'ai' row 가 단일 진실 출처.
   // localStorage / env 폴백 없음. 미설정이면 빈 문자열.
   const [aiEndpoint, setAiEndpoint] = useState<string>('');
-  // LLM 공급자 ('ollama' | 'openai-compatible') 및 OpenAI 호환 API 키.
-  // AI Endpoint 와 동일하게 system_config 'ai' row 가 단일 진실 출처.
-  const [provider, setProviderState] = useState<string>('ollama');
+  // OpenAI 호환 API 키. AI Endpoint 와 동일하게 system_config 'ai' row 가 단일 진실 출처.
   const [apiKey, setApiKeyState] = useState<string>('');
   useEffect(() => {
     let cancelled = false;
@@ -711,14 +709,12 @@ export default function ChatRoom() {
           endpoint?: string;
           reasoningModel?: string;
           visionModel?: string;
-          provider?: string;
           apiKey?: string;
         };
         if (cancelled) return;
         if (j.endpoint) setAiEndpoint(j.endpoint);
         if (j.reasoningModel) setReasoningModelState(j.reasoningModel);
         if (j.visionModel) setVisionModelState(j.visionModel);
-        if (j.provider) setProviderState(j.provider);
         if (j.apiKey) setApiKeyState(j.apiKey);
       } catch {
         // ignore
@@ -736,17 +732,6 @@ export default function ChatRoom() {
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ endpoint: v.trim() }),
-    }).catch(() => {
-      // ignore
-    });
-  }, []);
-  const updateProvider = useCallback((v: string) => {
-    setProviderState(v);
-    fetch(`${API_URL}/admin/ai`, {
-      method: 'PUT',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider: v }),
     }).catch(() => {
       // ignore
     });
@@ -1031,58 +1016,72 @@ export default function ChatRoom() {
   // AI Endpoint 가 바뀔 때 모델 목록을 재갱신. 실패 시 errorMessage 를 노출 (Settings UI 에서 사용).
   const [aiEndpointError, setAiEndpointError] = useState<string | null>(null);
   const [aiEndpointLoading, setAiEndpointLoading] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
+  // 모델 목록 = AI Endpoint 유효성 검사. endpoint 변경 시 자동 + Settings AI 탭 열릴 때 수동 재검증.
+  // reqId 로 마지막 요청만 반영해 out-of-order 결과로 인한 상태 꼬임 방지.
+  const modelsReqIdRef = useRef(0);
+  const refreshModels = useCallback(async () => {
+    const reqId = ++modelsReqIdRef.current;
     setAiEndpointLoading(true);
     setAiEndpointError(null);
-    (async () => {
-      try {
-        const url = aiEndpoint
-          ? `${API_URL}/chat/models?endpoint=${encodeURIComponent(aiEndpoint)}`
-          : `${API_URL}/chat/models`;
-        const res = await fetch(url);
-        if (!res.ok) {
-          let msg = `HTTP ${res.status}`;
-          try {
-            const j = (await res.json()) as { message?: string };
-            if (j.message) msg = j.message;
-          } catch {
-            // ignore
-          }
-          throw new Error(msg);
+    // 잘못된 엔드포인트는 서버가 대상 호스트로 fetch 하다 오래 매달릴 수 있어
+    // 클라이언트 타임아웃으로 빠르게 실패 처리 → "Checking…" 무한 대기 방지.
+    const ctrl = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      ctrl.abort();
+    }, 10000);
+    try {
+      const url = aiEndpoint
+        ? `${API_URL}/chat/models?endpoint=${encodeURIComponent(aiEndpoint)}`
+        : `${API_URL}/chat/models`;
+      const res = await fetch(url, { signal: ctrl.signal });
+      if (!res.ok) {
+        let msg = `HTTP ${res.status}`;
+        try {
+          const j = (await res.json()) as { message?: string };
+          if (j.message) msg = j.message;
+        } catch {
+          // ignore
         }
-        const json = (await res.json()) as {
-          defaultModel: string;
-          models: ModelInfo[];
-          // provider/endpoint 오류 시 백엔드가 200 + 빈 목록 + 사유로 응답.
-          error?: string;
-        };
-        if (cancelled) return;
-        if (json.error) {
-          // 설정 변경 중 흔한 상황(잘못된 endpoint/키) — 인라인 안내만, 콘솔 에러 없이.
-          setModels([]);
-          setDefaultModel(null);
-          setAiEndpointError(json.error);
-          return;
-        }
-        setModels(json.models);
-        setDefaultModel(json.defaultModel);
-        setAiEndpointError(null);
-      } catch (e) {
-        if (cancelled) return;
-        console.warn('모델 목록 로드 실패', e);
-        setModels([]);
-        setAiEndpointError(
-          e instanceof Error ? e.message : '모델 목록 로드 실패',
-        );
-      } finally {
-        if (!cancelled) setAiEndpointLoading(false);
+        throw new Error(msg);
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [aiEndpoint, provider]);
+      const json = (await res.json()) as {
+        defaultModel: string;
+        models: ModelInfo[];
+        // provider/endpoint 오류 시 백엔드가 200 + 빈 목록 + 사유로 응답.
+        error?: string;
+      };
+      if (modelsReqIdRef.current !== reqId) return; // 더 최신 요청이 있음 → 무시
+      if (json.error) {
+        // 설정 변경 중 흔한 상황(잘못된 endpoint/키) — 인라인 안내만, 콘솔 에러 없이.
+        setModels([]);
+        setDefaultModel(null);
+        setAiEndpointError(json.error);
+        return;
+      }
+      setModels(json.models);
+      setDefaultModel(json.defaultModel);
+      setAiEndpointError(null);
+    } catch (e) {
+      if (modelsReqIdRef.current !== reqId) return;
+      console.warn('모델 목록 로드 실패', e);
+      setModels([]);
+      setAiEndpointError(
+        timedOut
+          ? '엔드포인트 응답 시간 초과 (10s)'
+          : e instanceof Error
+            ? e.message
+            : '모델 목록 로드 실패',
+      );
+    } finally {
+      clearTimeout(timer);
+      if (modelsReqIdRef.current === reqId) setAiEndpointLoading(false);
+    }
+  }, [aiEndpoint]);
+  useEffect(() => {
+    void refreshModels();
+  }, [refreshModels]);
 
   // 마운트 시 데이터 로드: 서버에서 conversation 메타 + folder 목록.
   // 메시지는 active thread 가 정해지면 그때 lazy fetch.
@@ -4775,8 +4774,7 @@ export default function ChatRoom() {
         onChangeAiEndpoint={updateAiEndpoint}
         aiEndpointError={aiEndpointError}
         aiEndpointLoading={aiEndpointLoading}
-        provider={provider}
-        onChangeProvider={updateProvider}
+        onCheckEndpoint={refreshModels}
         apiKey={apiKey}
         onChangeApiKey={updateApiKey}
       />

@@ -8,7 +8,7 @@ import {
 } from '../llm-provider.interface';
 
 // OpenAI 호환(/v1/chat/completions) 공급자.
-// OpenAI 클라우드 + 로컬 런타임(vLLM, LM Studio, llama.cpp server, LocalAI, Ollama /v1)을 모두 커버.
+// OpenAI 클라우드 + 로컬 런타임(vLLM, LM Studio, llama.cpp server, LocalAI 등)을 모두 커버.
 // endpoint 는 base URL(예: https://api.openai.com/v1, http://localhost:1234/v1)을 가리킨다.
 type OpenAiMessage =
   | { role: string; content: string }
@@ -20,6 +20,72 @@ type OpenAiMessage =
       >;
     };
 
+// 많은 OpenAI 호환 런타임(llama.cpp, LM Studio, reasoning 파서 미적용 vLLM 등)은
+// 추론을 별도 reasoning_content 가 아니라 일반 content 안의 <think>...</think> 로 흘린다.
+// 이를 thinking 으로 분리해 답변 본문 오염을 막는 스트리밍 상태 머신.
+const THINK_TAGS = ['<think>', '</think>', '<thinking>', '</thinking>'];
+const THINK_OPEN_RE = /<think(?:ing)?>/i;
+const THINK_CLOSE_RE = /<\/think(?:ing)?>/i;
+
+// 청크 경계에 걸친 부분 태그 가능성 — 끝부분이 알려진 태그의 접두사인지.
+function couldBePartialTag(s: string): boolean {
+  const low = s.toLowerCase();
+  return THINK_TAGS.some((t) => t.startsWith(low) && t !== low);
+}
+
+// content 청크를 누적 상태(state)와 함께 content/thinking 파트로 분리.
+// 부분 태그 가능성이 있는 꼬리는 state.carry 에 보류했다가 다음 청크와 합쳐 처리.
+interface ThinkState {
+  inThink: boolean;
+  carry: string;
+}
+function splitThink(state: ThinkState, chunk: string): LlmStreamPart[] {
+  const out: LlmStreamPart[] = [];
+  state.carry += chunk;
+  for (;;) {
+    if (!state.inThink) {
+      const m = state.carry.match(THINK_OPEN_RE);
+      if (m && m.index !== undefined) {
+        const before = state.carry.slice(0, m.index);
+        if (before) out.push({ type: 'content', text: before });
+        state.carry = state.carry.slice(m.index + m[0].length);
+        state.inThink = true;
+        continue;
+      }
+      const lt = state.carry.lastIndexOf('<');
+      if (lt >= 0 && couldBePartialTag(state.carry.slice(lt))) {
+        const before = state.carry.slice(0, lt);
+        if (before) out.push({ type: 'content', text: before });
+        state.carry = state.carry.slice(lt);
+      } else {
+        if (state.carry) out.push({ type: 'content', text: state.carry });
+        state.carry = '';
+      }
+      break;
+    } else {
+      const m = state.carry.match(THINK_CLOSE_RE);
+      if (m && m.index !== undefined) {
+        const before = state.carry.slice(0, m.index);
+        if (before) out.push({ type: 'thinking', text: before });
+        state.carry = state.carry.slice(m.index + m[0].length);
+        state.inThink = false;
+        continue;
+      }
+      const lt = state.carry.lastIndexOf('<');
+      if (lt >= 0 && couldBePartialTag(state.carry.slice(lt))) {
+        const before = state.carry.slice(0, lt);
+        if (before) out.push({ type: 'thinking', text: before });
+        state.carry = state.carry.slice(lt);
+      } else {
+        if (state.carry) out.push({ type: 'thinking', text: state.carry });
+        state.carry = '';
+      }
+      break;
+    }
+  }
+  return out;
+}
+
 function toOpenAiMessage(m: ChatMessage): OpenAiMessage {
   if (m.images && m.images.length > 0) {
     return {
@@ -28,7 +94,7 @@ function toOpenAiMessage(m: ChatMessage): OpenAiMessage {
         ...(m.content ? [{ type: 'text' as const, text: m.content }] : []),
         ...m.images.map((b64) => ({
           type: 'image_url' as const,
-          // Ollama 메시지의 images 는 raw base64(접두사 없음)일 수 있으므로 data URL 로 감싼다.
+          // 일부 런타임의 images 는 raw base64(접두사 없음)일 수 있으므로 data URL 로 감싼다.
           image_url: {
             url: b64.startsWith('data:') ? b64 : `data:image/png;base64,${b64}`,
           },
@@ -49,9 +115,23 @@ export class OpenAICompatibleProvider implements LlmProvider {
   }
 
   async listModels(opts: LlmListModelsOptions): Promise<ModelInfo[]> {
-    const res = await fetch(`${opts.endpoint}/models`, {
-      headers: this.authHeaders(opts.apiKey),
-    });
+    // 잘못된/응답 없는 엔드포인트에서 무한 대기 방지 — 8초 타임아웃.
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    let res: Response;
+    try {
+      res = await fetch(`${opts.endpoint}/models`, {
+        headers: this.authHeaders(opts.apiKey),
+        signal: ctrl.signal,
+      });
+    } catch (e) {
+      if (e instanceof Error && e.name === 'AbortError') {
+        throw new Error('OpenAI models: 응답 시간 초과 (8s)');
+      }
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
     if (!res.ok) {
       throw new Error(`OpenAI models ${res.status}: ${res.statusText}`);
     }
@@ -75,7 +155,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
         // 마지막 청크에 usage 를 받기 위해 필요 (OpenAI 스펙).
         stream_options: { include_usage: true },
         max_tokens: opts.maxTokens ?? 8192,
-        temperature: 0.6,
+        temperature: opts.temperature ?? 0.6,
         top_p: 0.9,
       }),
     });
@@ -90,6 +170,8 @@ export class OpenAICompatibleProvider implements LlmProvider {
     let buffer = '';
     let completionTokens = 0;
     let promptTokens: number | undefined;
+    // content 내 <think> 분리용 상태 (청크 경계 보류 버퍼 포함).
+    const think: ThinkState = { inThink: false, carry: '' };
 
     const onAbort = () => {
       this.logger.log('[streamChat] abort received — cancelling OpenAI reader');
@@ -145,7 +227,10 @@ export class OpenAICompatibleProvider implements LlmProvider {
           // reasoning_content(vLLM/DeepSeek 등) / reasoning 필드를 thinking 으로 매핑.
           const reasoning = delta?.reasoning_content ?? delta?.reasoning;
           if (reasoning) yield { type: 'thinking', text: reasoning };
-          if (delta?.content) yield { type: 'content', text: delta.content };
+          // content 는 <think>...</think> 를 thinking 으로 분리해서 흘린다.
+          if (delta?.content) {
+            for (const part of splitThink(think, delta.content)) yield part;
+          }
           if (json.usage) {
             if (typeof json.usage.completion_tokens === 'number') {
               completionTokens = json.usage.completion_tokens;
@@ -163,6 +248,12 @@ export class OpenAICompatibleProvider implements LlmProvider {
       } catch {
         // already released
       }
+    }
+    // 보류 버퍼에 남은 잔여 — 미완성 태그였을 수 있으나 스트림 종료 시 그대로 흘린다.
+    if (think.carry) {
+      yield think.inThink
+        ? { type: 'thinking', text: think.carry }
+        : { type: 'content', text: think.carry };
     }
 
     // OpenAI 는 duration 을 주지 않으므로 벽시계로 토큰/초를 산출.

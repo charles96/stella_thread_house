@@ -66,7 +66,7 @@ export class PageExtractByTitleRequestDto {
   @ApiProperty({
     required: false,
     example: 'gemma4:26b',
-    description: '사용할 Ollama 모델 (미지정 시 OLLAMA_MODEL 기본값)',
+    description: '사용할 모델 (미지정 시 AI_DEFAULT_MODEL 기본값)',
   })
   model?: string;
 }
@@ -88,7 +88,7 @@ export class PageExtractByTitleResponseDto {
   ogTags!: Record<string, string>;
 
   @ApiProperty({
-    description: '제목과 직접 관련된 본문 텍스트만 추출 (Ollama 결과)',
+    description: '제목과 직접 관련된 본문 텍스트만 추출 (AI 결과)',
     example: '제목 주제에 해당하는 본문 단락들...',
   })
   content!: string;

@@ -34,12 +34,8 @@ services:
       TH_ADMIN_EMAIL_ID: ${TH_ADMIN_EMAIL_ID}
       TH_ADMIN_PASSWORD: ${TH_ADMIN_PASSWORD:-changeme1234}
       DATABASE_URL: postgres://${POSTGRES_USER:-stella}:${POSTGRES_PASSWORD:-stella_dev_pass}@postgres:5432/${POSTGRES_DB:-stella}
-      # AI provider seed (DB 가 비어있을 때만 시드, 이후 Settings 값 우선)
-      AI_PROVIDER: ${AI_PROVIDER:-ollama}
-      # Ollama base URL (예: http://host:11434). OLLAMA_GEMMA4_URL 은 레거시 별칭(폴백).
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL}
-      OLLAMA_GEMMA4_URL: ${OLLAMA_GEMMA4_URL}
-      # OpenAI 호환 base URL(/v1 포함) + API 키
+      # AI 설정 seed (DB 의 'ai' row 가 비어있을 때만 시드, 이후 Settings 값 우선)
+      # OpenAI 호환 base URL(/v1 포함) + API 키.
       OPENAI_BASE_URL: ${OPENAI_BASE_URL}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       TAVILY_API_KEY: ${TAVILY_API_KEY}
