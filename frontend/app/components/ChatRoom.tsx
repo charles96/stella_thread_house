@@ -644,23 +644,28 @@ export default function ChatRoom() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [defaultModel, setDefaultModel] = useState<string | null>(null);
+  // Reasoning / Vision 모델 — system_config 'ai' row 가 단일 진실 출처(admin 전역 설정).
+  // AI Endpoint 와 동일하게 GET/PUT /admin/ai 로 로드·저장. localStorage / 대화별 폴백 없음.
+  const [reasoningModel, setReasoningModelState] = useState<string | null>(null);
   const [visionModel, setVisionModelState] = useState<string | null>(null);
+  const setReasoningModel = (m: string) => {
+    setReasoningModelState(m);
+    void fetch(`${API_URL}/admin/ai`, {
+      method: 'PUT',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reasoningModel: m }),
+    }).catch(() => {});
+  };
   const setVisionModel = (m: string) => {
     setVisionModelState(m);
-    try {
-      localStorage.setItem('stella-vision-model', m);
-    } catch {
-      // ignore
-    }
+    void fetch(`${API_URL}/admin/ai`, {
+      method: 'PUT',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ visionModel: m }),
+    }).catch(() => {});
   };
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem('stella-vision-model');
-      if (saved) setVisionModelState(saved);
-    } catch {
-      // ignore
-    }
-  }, []);
   const router = useRouter();
   const pathname = usePathname();
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -693,8 +698,15 @@ export default function ChatRoom() {
           credentials: 'include',
         });
         if (!res.ok) return;
-        const j = (await res.json()) as { endpoint?: string };
-        if (!cancelled && j.endpoint) setAiEndpoint(j.endpoint);
+        const j = (await res.json()) as {
+          endpoint?: string;
+          reasoningModel?: string;
+          visionModel?: string;
+        };
+        if (cancelled) return;
+        if (j.endpoint) setAiEndpoint(j.endpoint);
+        if (j.reasoningModel) setReasoningModelState(j.reasoningModel);
+        if (j.visionModel) setVisionModelState(j.visionModel);
       } catch {
         // ignore
       }
@@ -3283,13 +3295,6 @@ export default function ChatRoom() {
     requestDeletePair(userMsgId);
   }
 
-  function setActiveModel(model: string) {
-    if (!activeId) return;
-    setConversations((prev) =>
-      prev.map((c) => (c.id === activeId ? { ...c, model } : c)),
-    );
-  }
-
   function createFolder(kind: 'thread' | 'chat' = 'thread') {
     const base = t('sidebar.folderDefault');
     // 기본 이름 충돌은 같은 kind 안에서만 검사 — 두 섹션 이름이 우연히 겹쳐도 무관.
@@ -3368,8 +3373,6 @@ export default function ChatRoom() {
       body: JSON.stringify({ folderId }),
     }).catch(() => {});
   }
-
-  const activeModel = active?.model ?? defaultModel ?? '';
 
   async function send(
     text: string,
@@ -3560,7 +3563,7 @@ export default function ChatRoom() {
         signal: ctrl.signal,
         body: JSON.stringify({
           messages: history,
-          model: active.model || defaultModel || undefined,
+          model: active.model || reasoningModel || defaultModel || undefined,
           visionModel: visionModel ?? undefined,
           useVision,
           endpoint: aiEndpoint || undefined,
@@ -3922,7 +3925,7 @@ export default function ChatRoom() {
           text,
           accumulatedContent,
           followupHistory,
-          active.model || defaultModel || undefined,
+          active.model || reasoningModel || defaultModel || undefined,
         );
       }
       // 완료 알림 — 사용자가 응답이 도착한 thread 를 직접 보고 있으면 noisy 하므로 생략.
@@ -4687,9 +4690,9 @@ export default function ChatRoom() {
         user={user}
         onUserUpdated={(u) => setUser(u)}
         models={models}
-        reasoningModel={activeModel || undefined}
+        reasoningModel={reasoningModel ?? defaultModel ?? undefined}
         visionModel={visionModel ?? undefined}
-        onSelectReasoningModel={setActiveModel}
+        onSelectReasoningModel={setReasoningModel}
         onSelectVisionModel={setVisionModel}
         aiEndpoint={aiEndpoint}
         onChangeAiEndpoint={updateAiEndpoint}

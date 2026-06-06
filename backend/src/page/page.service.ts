@@ -441,6 +441,20 @@ export class PageService {
     }
     return v.trim().replace(/\/$/, '');
   }
+
+  // Vision 모델 — system_config 'ai' row 의 visionModel 이 전역 기본값.
+  // 호출 측이 model 을 지정하면 그게 우선, 없으면 admin 설정 → env 순.
+  private async getVisionModel(): Promise<string> {
+    try {
+      const row = await this.systemConfigs.findOne({ where: { key: 'ai' } });
+      const v = (row?.value as { visionModel?: string } | undefined)
+        ?.visionModel;
+      if (v && v.trim()) return v.trim();
+    } catch {
+      // ignore — env 기본값으로 폴백
+    }
+    return this.visionModel;
+  }
   private readonly imageAnalyzeMaxCount = Number(
     process.env.PAGE_IMAGE_ANALYZE_COUNT ?? 4,
   );
@@ -946,7 +960,7 @@ export class PageService {
     if (!title) throw new Error('페이지 제목을 찾지 못했습니다');
 
     const model = options.model || this.ollamaModel;
-    const visionModel = options.visionModel || this.visionModel;
+    const visionModel = options.visionModel || (await this.getVisionModel());
     const maxImages = options.maxImages ?? this.imageAnalyzeMaxCount;
 
     // 본문 추출과 이미지 분석을 병렬로 실행해 응답 시간 단축.
@@ -981,7 +995,7 @@ export class PageService {
     model?: string,
   ): Promise<PageImageAnalysis[]> {
     if (images.length === 0) return [];
-    const useModel = model || this.visionModel;
+    const useModel = model || (await this.getVisionModel());
     const results = await Promise.all(
       images.map(async (img) => {
         try {

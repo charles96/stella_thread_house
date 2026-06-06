@@ -253,6 +253,20 @@ export class ChatService {
     return v.trim().replace(/\/$/, '');
   }
 
+  // Reasoning 모델 — system_config 'ai' row 의 reasoningModel 이 전역 기본값.
+  // 요청에 model 이 지정되면 그게 우선, 없으면 admin 설정 → env(OLLAMA_MODEL) 순.
+  private async getReasoningModel(): Promise<string> {
+    try {
+      const row = await this.systemConfigs.findOne({ where: { key: 'ai' } });
+      const v = (row?.value as { reasoningModel?: string } | undefined)
+        ?.reasoningModel;
+      if (v && v.trim()) return v.trim();
+    } catch {
+      // ignore — env 기본값으로 폴백
+    }
+    return this.defaultModel;
+  }
+
   // Tavily key — system_config 'tavily' row 가 단일 출처. env 폴백 없음 (부팅 seed 만).
   // 매 요청마다 최신값 로드 (Settings 에서 변경 시 즉시 반영).
   private async getTavilyKey(): Promise<string> {
@@ -541,7 +555,7 @@ export class ChatService {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: model || this.defaultModel,
+          model: model || (await this.getReasoningModel()),
           messages: [sys, { role: 'user', content: lines.join('\n') }],
           stream: false,
           think: false,
@@ -668,7 +682,7 @@ export class ChatService {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: model || this.defaultModel,
+          model: model || (await this.getReasoningModel()),
           messages: [sys, { role: 'user', content: lines.join('\n') }],
           stream: false,
           think: false,
@@ -769,7 +783,7 @@ export class ChatService {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: model || this.defaultModel,
+          model: model || (await this.getReasoningModel()),
           messages: [sys, user],
           stream: false,
           think: false,
@@ -843,7 +857,7 @@ export class ChatService {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: model || this.defaultModel,
+          model: model || (await this.getReasoningModel()),
           messages: [sys, { role: 'user', content: trimmed }],
           stream: false,
           think: false,
@@ -1761,12 +1775,13 @@ export class ChatService {
     }
 
     const ollamaUrl = await this.resolveOllamaUrl(options.endpoint);
+    const chatModel = options.model || (await this.getReasoningModel());
     const res = await fetch(`${ollamaUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       signal: options.signal,
       body: JSON.stringify({
-        model: options.model || this.defaultModel,
+        model: chatModel,
         messages: finalMessages,
         stream: true,
         think: true,
