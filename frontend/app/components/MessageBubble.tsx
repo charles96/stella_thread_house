@@ -51,6 +51,7 @@ import { fileToResizedDataUrl, maybeConvertHeic } from '@/lib/imageUtils';
 import { hydrateImageStates, setImageState } from '@/lib/imageCache';
 import { extractArtifacts, type Artifact } from '@/lib/artifacts';
 import {
+  decodeHtmlEntities,
   dedentTableRows,
   fixKoreanEmphasis,
   normalizeFlattenedTables,
@@ -60,6 +61,13 @@ import ImageLightbox from './ImageLightbox';
 import { useI18n } from '@/lib/i18n';
 import { MermaidView, SvgView } from './ArtifactPanel';
 import type { Message, ReadPageImage, SearchImage } from './ChatRoom';
+
+// 백엔드가 보내는 에러 코드 → 프론트 i18n 키. 매핑이 있으면 메시지를 현재 UI 언어로
+// 번역해 렌더하므로, 언어 전환 시 에러 메시지도 즉시 따라 바뀐다.
+const ERROR_CODE_I18N: Record<string, string> = {
+  context_overflow: 'error.contextOverflow',
+  ai_config_error: 'error.aiConfig',
+};
 
 function extractCodeText(children: ReactNode): string {
   const arr = Children.toArray(children);
@@ -424,7 +432,7 @@ function ReadPageRow({ page: p, index }: { page: RefItem; index: number }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [maxChars, setMaxChars] = useState<number | null>(null);
 
-  const fullTitle = p.title || p.url;
+  const fullTitle = decodeHtmlEntities(p.title || p.url);
   const extracted = typeof p.chars === 'number';
   const okFlag = p.ok ?? true;
 
@@ -1455,6 +1463,17 @@ function MessageBubble({
 
   const renderedContent = useMemo(() => {
     if (isUser) return message.content;
+    // 알려진 에러 코드가 있으면 저장된 본문 대신 현재 UI 언어로 번역해 렌더 —
+    // 언어를 전환하면 에러 메시지도 즉시 그 언어로 바뀐다.
+    if (message.isError && message.errorCode) {
+      const key = ERROR_CODE_I18N[message.errorCode];
+      // 한글에 인접한 **강조** 가 ReactMarkdown 에서 풀리지 않도록 보정.
+      if (key) return fixKoreanEmphasis(t(key as Parameters<typeof t>[0]));
+    }
+    // 에러 메시지는 경고 아이콘을 별도로 렌더하므로 옛 데이터에 박힌 선행 ⚠️ 는 제거.
+    if (message.isError) {
+      return message.content.replace(/^\s*⚠️️?\s*/u, '');
+    }
     // 모델이 가끔 본문에 사고 과정 헤더를 적는 경우 제거.
     const stripped = message.content.replace(
       /^[\s>]*(?:#{1,6}\s*)?(?:\*\*|__)?\s*(?:\[?\s*(?:생각\s*과정|사고\s*과정|분석|thinking)\s*\]?\s*)(?:\*\*|__)?\s*[:：]?\s*$\n?/gim,
@@ -1465,7 +1484,7 @@ function MessageBubble({
         normalizeFlattenedTables(dedentTableRows(stripped)),
       ),
     );
-  }, [isUser, message.content]);
+  }, [isUser, message.content, message.isError, message.errorCode, t]);
 
   // invalid 마크는 localStorage 에 캐시 — 재방문 시 깨진 이미지를 다시 로드 시도하지 않음.
   // 마운트 시 message 의 모든 이미지 URL 을 hydrate.
@@ -2568,7 +2587,7 @@ function MessageBubble({
                     <ChevronRight className="h-3 w-3" />
                   )}
                 </button>
-              ) : onRemoveImage ? (
+              ) : onRemoveImage && convKind === 'thread' ? (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
@@ -3062,7 +3081,15 @@ function MessageBubble({
                     />
                   </>
                 ) : (
-                  <div className={cn(markdownClass, 'min-w-0 max-w-full')}>
+                  <div
+                    className={cn(
+                      markdownClass,
+                      'min-w-0 max-w-full',
+                      // 연결/스트림 실패 응답 — 본문 전체를 빨간색으로 강조.
+                      message.isError &&
+                        'font-medium text-red-400 [&_*]:!text-red-400',
+                    )}
+                  >
                     <ReactMarkdown
                       remarkPlugins={[
                         // 한국어에서 `~` 는 범위 구분자(예: "17세기 후반~18세기", "숙종~영조") 로
@@ -3084,7 +3111,7 @@ function MessageBubble({
               {/* Edit / Save / Cancel — 답변 마크다운 직접 편집.
                   Thread 모드 전용 + greeting 메시지 제외.
                   본문 버블이 있으면 -mt-2 로 겹쳐 탭 느낌, Reference only 면 mt-1 로 분리. */}
-              {onEditContent && !isGreeting && !isLive && (convKind === 'thread' || hasProcessPanel) && (
+              {onEditContent && !isGreeting && !isLive && convKind === 'thread' && (
                 <div className={cn((message.content || answerEditing) ? '-mt-2' : 'mt-2', 'mr-3 flex items-start gap-1 self-end')}>
                   {!answerEditing ? (
                     <>

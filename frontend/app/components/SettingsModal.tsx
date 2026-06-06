@@ -67,6 +67,11 @@ interface Props {
   // 모델 fetch 결과 — 에러가 있으면 입력 박스 빨강 + 에러 메시지 표기.
   aiEndpointError?: string | null;
   aiEndpointLoading?: boolean;
+  // LLM 공급자 ('ollama' | 'openai-compatible') 및 OpenAI 호환 API 키.
+  provider?: string;
+  onChangeProvider?: (v: string) => void;
+  apiKey?: string;
+  onChangeApiKey?: (v: string) => void;
 }
 
 type Tab =
@@ -91,6 +96,10 @@ export default function SettingsModal({
   onChangeAiEndpoint,
   aiEndpointError,
   aiEndpointLoading,
+  provider,
+  onChangeProvider,
+  apiKey,
+  onChangeApiKey,
 }: Props) {
   const { t } = useI18n();
   const isAdmin = user?.role === 'admin';
@@ -217,6 +226,10 @@ export default function SettingsModal({
                 onChangeAiEndpoint={onChangeAiEndpoint}
                 aiEndpointError={aiEndpointError}
                 aiEndpointLoading={aiEndpointLoading}
+                provider={provider}
+                onChangeProvider={onChangeProvider}
+                apiKey={apiKey}
+                onChangeApiKey={onChangeApiKey}
               />
             )}
             {isAdmin && tab === 'admin-smtp' && <SmtpSection />}
@@ -423,6 +436,8 @@ function GeneralTab({
                     { key: 'ja' as Lang, label: t('settings.lang.ja') },
                     { key: 'zh' as Lang, label: t('settings.lang.zh') },
                     { key: 'id' as Lang, label: t('settings.lang.id') },
+                    { key: 'fr' as Lang, label: t('settings.lang.fr') },
+                    { key: 'de' as Lang, label: t('settings.lang.de') },
                   ] as const
                 ).map((opt) => {
                   const active = lang === opt.key;
@@ -847,6 +862,10 @@ function AiSection({
   onChangeAiEndpoint,
   aiEndpointError,
   aiEndpointLoading,
+  provider,
+  onChangeProvider,
+  apiKey,
+  onChangeApiKey,
 }: {
   models: ModelInfo[];
   reasoningModel?: string;
@@ -857,8 +876,13 @@ function AiSection({
   onChangeAiEndpoint?: (v: string) => void;
   aiEndpointError?: string | null;
   aiEndpointLoading?: boolean;
+  provider?: string;
+  onChangeProvider?: (v: string) => void;
+  apiKey?: string;
+  onChangeApiKey?: (v: string) => void;
 }) {
   const { t } = useI18n();
+  const activeProvider = provider || 'ollama';
   return (
     <SettingSection
       icon={<Bot className="h-5 w-5 text-primary" />}
@@ -873,17 +897,43 @@ function AiSection({
                 <Server className="h-4 w-4" />
               </span>
               <span className="text-[13px] font-medium text-foreground">
+                AI Provider
+              </span>
+            </div>
+            <select
+              value={activeProvider}
+              onChange={(e) => onChangeProvider?.(e.target.value)}
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-[13px] outline-none transition-colors focus:ring-2 focus:ring-ring"
+            >
+              <option value="ollama">Ollama</option>
+              <option value="openai-compatible">
+                OpenAI-compatible (OpenAI / vLLM / LM Studio …)
+              </option>
+            </select>
+          </div>
+          <div>
+            <div className="mb-1.5 flex items-center gap-1.5">
+              <span className="text-primary">
+                <Server className="h-4 w-4" />
+              </span>
+              <span className="text-[13px] font-medium text-foreground">
                 AI Endpoint
               </span>
               <span className="text-[11px] text-muted-foreground">
-                · Ollama base URL
+                {activeProvider === 'openai-compatible'
+                  ? '· OpenAI-compatible base URL (e.g. https://api.openai.com/v1)'
+                  : '· Ollama base URL'}
               </span>
             </div>
             <input
               type="url"
               value={aiEndpoint ?? ''}
               onChange={(e) => onChangeAiEndpoint?.(e.target.value)}
-              placeholder="http://ai.example.com"
+              placeholder={
+                activeProvider === 'openai-compatible'
+                  ? 'https://api.openai.com/v1'
+                  : 'http://ai.example.com'
+              }
               className={cn(
                 'w-full rounded-md border bg-background px-3 py-2 text-[13px] outline-none transition-colors focus:ring-2',
                 aiEndpointError
@@ -905,6 +955,30 @@ function AiSection({
               </div>
             )}
           </div>
+          {activeProvider === 'openai-compatible' && (
+            <div>
+              <div className="mb-1.5 flex items-center gap-1.5">
+                <span className="text-primary">
+                  <Server className="h-4 w-4" />
+                </span>
+                <span className="text-[13px] font-medium text-foreground">
+                  API Key
+                </span>
+                <span className="text-[11px] text-muted-foreground">
+                  · OpenAI-compatible auth (leave empty for local servers)
+                </span>
+              </div>
+              <input
+                type="password"
+                value={apiKey ?? ''}
+                onChange={(e) => onChangeApiKey?.(e.target.value)}
+                placeholder="sk-..."
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-[13px] outline-none transition-colors focus:ring-2 focus:ring-ring"
+                spellCheck={false}
+                autoComplete="off"
+              />
+            </div>
+          )}
           <ModelPickerRow
             icon={<Brain className="h-4 w-4" />}
             label={t('settings.ai.reasoning')}

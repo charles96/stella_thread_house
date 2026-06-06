@@ -1,4 +1,4 @@
-type Locale = 'ko' | 'en' | 'ja' | 'zh' | 'id';
+type Locale = 'ko' | 'en' | 'ja' | 'zh' | 'id' | 'fr' | 'de';
 
 const MSGS = {
   ko: {
@@ -14,6 +14,10 @@ const MSGS = {
     noResults: '검색 결과 없음',
     extractingPages: (n: number) =>
       `Tavily 결과 상위 ${n}개 페이지 본문 추출 중…`,
+    contextOverflow:
+      '모델의 컨텍스트 한도를 초과했습니다. 컨텍스트가 더 큰 모델로 변경하거나, 설정에서 **웹검색 문서 수** 옵션을 줄여 주세요.',
+    aiConfigError:
+      'AI 설정에 오류가 있습니다. **설정**에서 AI 공급자·엔드포인트·API 키를 확인해 주세요.',
   },
   en: {
     tavilyUnavailable: 'Tavily unavailable — responding without search',
@@ -28,6 +32,10 @@ const MSGS = {
     noResults: 'No search results found',
     extractingPages: (n: number) =>
       `Extracting top ${n} page${n === 1 ? '' : 's'} from Tavily results…`,
+    contextOverflow:
+      'The model\'s context limit was exceeded. Switch to a model with a larger context, or lower the **Web search document count** option in Settings.',
+    aiConfigError:
+      'There is a problem with the AI configuration. Please check the AI provider, endpoint, and API key in **Settings**.',
   },
   ja: {
     tavilyUnavailable: 'Tavily 利用不可 — 検索なしで回答します',
@@ -42,6 +50,10 @@ const MSGS = {
     noResults: '検索結果なし',
     extractingPages: (n: number) =>
       `Tavily結果上位${n}ページの本文を抽出中…`,
+    contextOverflow:
+      'モデルのコンテキスト上限を超えました。より大きなコンテキストのモデルに変更するか、設定の **ウェブ検索文書数** オプションを減らしてください。',
+    aiConfigError:
+      'AI 設定にエラーがあります。**設定（Settings）** で AI プロバイダー・エンドポイント・API キーを確認してください。',
   },
   zh: {
     tavilyUnavailable: 'Tavily 不可用 — 将在不搜索的情况下回答',
@@ -55,6 +67,10 @@ const MSGS = {
     searchingSingle: (q: string) => `正在搜索网络 — "${q}"`,
     noResults: '没有搜索结果',
     extractingPages: (n: number) => `正在提取Tavily结果前${n}个页面内容…`,
+    contextOverflow:
+      '超出模型的上下文长度限制。请改用上下文更大的模型，或在设置中调低 **网络搜索文档数** 选项。',
+    aiConfigError:
+      'AI 配置存在错误。请在 **设置（Settings）** 中检查 AI 提供商、端点和 API 密钥。',
   },
   id: {
     tavilyUnavailable: 'Tavily tidak tersedia — menjawab tanpa pencarian',
@@ -69,6 +85,48 @@ const MSGS = {
     noResults: 'Tidak ada hasil pencarian',
     extractingPages: (n: number) =>
       `Mengekstrak ${n} halaman teratas dari hasil Tavily…`,
+    contextOverflow:
+      'Batas konteks model terlampaui. Gunakan model dengan konteks lebih besar, atau kurangi opsi **Jumlah dokumen pencarian web** di Pengaturan.',
+    aiConfigError:
+      'Ada masalah pada konfigurasi AI. Periksa penyedia AI, endpoint, dan kunci API di **Pengaturan**.',
+  },
+  fr: {
+    tavilyUnavailable: 'Tavily indisponible — réponse sans recherche',
+    urlDetect: (n: number) =>
+      `URL détectée — lecture de ${n} page${n === 1 ? '' : 's'}…`,
+    botBlocked: 'Blocage de bot détecté — récupération du contenu via Tavily…',
+    urlAllFailed: 'Échec du chargement de toutes les pages URL',
+    urlError: (msg: string) => `Erreur d'URL : ${msg}`,
+    analyzing: 'Analyse de l\'intention de recherche…',
+    searchingMulti: (n: number, queries: string) =>
+      `Recherche web Tavily (${n} requête${n === 1 ? '' : 's'}) — ${queries}`,
+    searchingSingle: (q: string) => `Recherche sur le web — « ${q} »`,
+    noResults: 'Aucun résultat de recherche',
+    extractingPages: (n: number) =>
+      `Extraction des ${n} première${n === 1 ? '' : 's'} page${n === 1 ? '' : 's'} des résultats Tavily…`,
+    contextOverflow:
+      'La limite de contexte du modèle a été dépassée. Passez à un modèle avec un contexte plus grand, ou réduisez l\'option **Nombre de documents de recherche web** dans les Paramètres.',
+    aiConfigError:
+      'Un problème est survenu avec la configuration de l\'IA. Veuillez vérifier le fournisseur d\'IA, le point de terminaison et la clé API dans les **Paramètres**.',
+  },
+  de: {
+    tavilyUnavailable: 'Tavily nicht verfügbar — Antwort ohne Suche',
+    urlDetect: (n: number) =>
+      `URL erkannt — ${n} Seite${n === 1 ? '' : 'n'} werden gelesen…`,
+    botBlocked: 'Bot-Blockierung erkannt — Inhalt wird über Tavily abgerufen…',
+    urlAllFailed: 'Alle URL-Seiten konnten nicht geladen werden',
+    urlError: (msg: string) => `URL-Fehler: ${msg}`,
+    analyzing: 'Suchabsicht wird analysiert…',
+    searchingMulti: (n: number, queries: string) =>
+      `Tavily-Websuche (${n} Anfrage${n === 1 ? '' : 'n'}) — ${queries}`,
+    searchingSingle: (q: string) => `Websuche — „${q}"`,
+    noResults: 'Keine Suchergebnisse',
+    extractingPages: (n: number) =>
+      `Top-${n}-Seite${n === 1 ? '' : 'n'} aus den Tavily-Ergebnissen werden extrahiert…`,
+    contextOverflow:
+      'Das Kontextlimit des Modells wurde überschritten. Wechseln Sie zu einem Modell mit größerem Kontext oder verringern Sie die Option **Anzahl der Websuche-Dokumente** in den Einstellungen.',
+    aiConfigError:
+      'Es gibt ein Problem mit der AI-Konfiguration. Bitte überprüfen Sie den AI-Anbieter, den Endpunkt und den API-Schlüssel in den **Einstellungen**.',
   },
 } as const;
 

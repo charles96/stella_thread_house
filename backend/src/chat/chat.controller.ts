@@ -95,11 +95,24 @@ export class ChatController {
   @ApiOperation({ summary: 'Ollama에서 사용 가능한 모델 목록' })
   @ApiQuery({ name: 'endpoint', required: false })
   async models(@Query('endpoint') endpoint?: string) {
-    const models = await this.chatService.listModels(endpoint);
-    return {
-      defaultModel: this.chatService.getDefaultModel(),
-      models,
-    };
+    try {
+      const models = await this.chatService.listModels(endpoint);
+      return {
+        defaultModel: this.chatService.getDefaultModel(),
+        models,
+      };
+    } catch (e) {
+      // 잘못된 endpoint/API 키 등 provider 오류는 500 으로 터뜨리지 않고
+      // 빈 목록 + 사유를 200 으로 반환 → Settings 가 인라인 에러로 안내(설정 변경 중 흔함).
+      const message =
+        e instanceof Error ? e.message : '모델 목록을 불러오지 못했습니다';
+      this.logger.warn(`[chat/models] failed: ${message}`);
+      return {
+        defaultModel: this.chatService.getDefaultModel(),
+        models: [],
+        error: message,
+      };
+    }
   }
 
   @Get('defaults')
@@ -384,7 +397,11 @@ export class ChatController {
         (err instanceof Error && err.name === 'AbortError');
       if (!isAbort) {
         const message = err instanceof Error ? err.message : 'unknown error';
-        writeIfConnected(`data: ${JSON.stringify({ error: message })}\n\n`);
+        // 알려진 에러는 code 를 함께 전달 → 프론트가 UI 언어로 재번역(언어 전환 반응).
+        const errorCode = (err as Error & { code?: string })?.code;
+        writeIfConnected(
+          `data: ${JSON.stringify({ error: message, errorCode })}\n\n`,
+        );
         this.logger.warn(`[chat/stream] error during generation: ${message}`);
       }
     } finally {

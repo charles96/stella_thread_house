@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { AttachmentsService } from '../attachments/attachments.service';
 import { SystemConfig } from '../db/entities/system-config.entity';
 import { PageExtractResult, PageService } from '../page/page.service';
+import { LlmService } from '../llm/llm.service';
 import { statusMsg } from './chat.i18n';
 
 export interface ChatMessage {
@@ -82,6 +83,19 @@ export type StreamPart =
       tokensPerSec: number;
       promptTokens?: number;
     };
+
+// 공급자(OpenAI 호환/Ollama 등)가 컨텍스트 한도 초과를 알리는 다양한 문구를 포괄 감지.
+// LM Studio: "tokens to keep from the initial prompt is greater than the context length"
+// OpenAI/vLLM: "maximum context length", "context_length_exceeded" 등.
+const CONTEXT_OVERFLOW_RE =
+  /context[\s_-]?(?:length|window|size)|maximum context|context_length_exceeded|tokens to keep|too (?:long|many tokens)|exceeds? the (?:model'?s )?(?:maximum|context)/i;
+
+// AI 공급자 설정 오류 — 잘못된 endpoint(base URL)/API 키/호스트로 인한 실패.
+//   - HTTP 401/403/404 (인증 실패·잘못된 경로)
+//   - 연결 실패(ECONNREFUSED/ENOTFOUND/getaddrinfo/fetch failed 등 — 호스트 오타)
+// 사용자에게 원문 대신 "Settings 에서 AI 설정을 고치라"는 다국어 안내로 치환한다.
+const AI_CONFIG_ERROR_RE =
+  /\b(?:401|403|404)\b|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|getaddrinfo|fetch failed|ETIMEDOUT|ECONNRESET|unauthorized|forbidden|invalid api key|incorrect api key|invalid_api_key|page not found/i;
 
 // Instagram CDN URL은 `.heic` 확장자에 ?stp=dst-jpg 변환 매개변수가 붙어
 // 실제 응답은 JPEG로 내려오지만 URL 만 보면 HEIC. 따라서 heic/heif도 허용.
@@ -231,6 +245,7 @@ export class ChatService {
   constructor(
     private readonly pageService: PageService,
     private readonly attachments: AttachmentsService,
+    private readonly llm: LlmService,
     @InjectRepository(SystemConfig)
     private readonly systemConfigs: Repository<SystemConfig>,
   ) {}
@@ -265,6 +280,23 @@ export class ChatService {
       // ignore — env 기본값으로 폴백
     }
     return this.defaultModel;
+  }
+
+  // 공급자 선택용 설정 — system_config 'ai' row 의 provider/apiKey.
+  // provider 미설정이면 LlmService 가 ollama 로 폴백.
+  private async loadProviderConfig(): Promise<{
+    provider?: string;
+    apiKey?: string;
+  }> {
+    try {
+      const row = await this.systemConfigs.findOne({ where: { key: 'ai' } });
+      const v = row?.value as
+        | { provider?: string; apiKey?: string }
+        | undefined;
+      return { provider: v?.provider, apiKey: v?.apiKey?.trim() || undefined };
+    } catch {
+      return {};
+    }
   }
 
   // Tavily key — system_config 'tavily' row 가 단일 출처. env 폴백 없음 (부팅 seed 만).
@@ -362,25 +394,8 @@ export class ChatService {
     } catch {
       return [];
     }
-    const res = await fetch(`${url}/api/tags`);
-    if (!res.ok) {
-      throw new Error(`Ollama tags ${res.status}: ${res.statusText}`);
-    }
-    const json = (await res.json()) as {
-      models?: Array<{
-        name: string;
-        size?: number;
-        modified_at?: string;
-        details?: { family?: string; parameter_size?: string };
-      }>;
-    };
-    return (json.models ?? []).map((m) => ({
-      name: m.name,
-      size: m.size,
-      modifiedAt: m.modified_at,
-      family: m.details?.family,
-      parameterSize: m.details?.parameter_size,
-    }));
+    const { provider, apiKey } = await this.loadProviderConfig();
+    return this.llm.resolve(provider).listModels({ endpoint: url, apiKey });
   }
 
   // ====== Tavily 키워드 웹 검색 ======
@@ -1774,142 +1789,37 @@ export class ChatService {
       finalMessages = [visionCitePrompt, ...finalMessages];
     }
 
-    const ollamaUrl = await this.resolveOllamaUrl(options.endpoint);
+    // 모델 전송은 공급자(LlmProvider)에 위임 — ChatService 는 메시지 구성/인용/저장만 담당.
+    // 검색/URL 모드에서는 컨텍스트가 커서 thinking 에 토큰을 많이 소비하므로 상한을 높임.
+    const endpoint = await this.resolveOllamaUrl(options.endpoint);
     const chatModel = options.model || (await this.getReasoningModel());
-    const res = await fetch(`${ollamaUrl}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      signal: options.signal,
-      body: JSON.stringify({
+    const maxTokens = augmentedBySearch || augmentedByUrl ? 32768 : 8192;
+    const { provider, apiKey } = await this.loadProviderConfig();
+    try {
+      yield* this.llm.resolve(provider).streamChat({
+        endpoint,
         model: chatModel,
         messages: finalMessages,
-        stream: true,
-        think: true,
-        // 표 깨짐(잘못된 영문 토큰 삽입, 줄바꿈 누락 등) 빈도를 줄이기 위해
-        // 다소 보수적인 샘플링 옵션 적용. 너무 낮추면 다양성 손실.
-        // num_predict 는 thinking + content 합산 토큰 상한.
-        // 검색/URL 모드에서는 컨텍스트가 커서 thinking 에 토큰을 많이 소비하므로 상한을 높임.
-        options: {
-          temperature: 0.6,
-          top_p: 0.9,
-          num_predict: augmentedBySearch || augmentedByUrl ? 32768 : 8192,
-        },
-      }),
-    });
-
-    if (!res.ok || !res.body) {
-      const text = await res.text().catch(() => '');
-      throw new Error(
-        `Ollama error ${res.status}: ${text || res.statusText}`,
-      );
-    }
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    // signal abort 시 reader 도 즉시 cancel 하여 fetch 중단 전파.
-    const onAbort = () => {
-      this.logger.log('[streamChat] abort received — cancelling Ollama reader');
-      reader.cancel().catch(() => {});
-    };
-    options.signal?.addEventListener('abort', onAbort);
-
-    // Harmony format(<channel|>analysis<|message|>... <channel|>final<|message|>...) 을
-    // content 로 그대로 흘리는 모델 대응. 첫 청크가 누출 패턴(---/결thought/<channel|> 등)일
-    // 때만 버퍼링 모드로 진입해 마커까지 모은 뒤 thinking/content 로 분리.
-    // 정상 응답은 그대로 실시간 스트리밍.
-    const LEAK_PREFIX_RE = /^(?:---\s*\n)?(?:thought\b|analysis\b|<\|?channel\|>|결thought)/i;
-    const CHANNEL_MARKER_RE = /<\|?channel\|>[^<]*?(?:<\|message\|>|\n)/i;
-    let leakMode: 'unknown' | 'normal' | 'buffering' = 'unknown';
-    let leakBuffer = '';
-
-    let finished = false;
-    try {
-    while (!finished) {
-      if (options.signal?.aborted) break;
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        try {
-          const json = JSON.parse(trimmed);
-          const thinking: string | undefined = json?.message?.thinking;
-          if (thinking) yield { type: 'thinking', text: thinking };
-          const content: string | undefined = json?.message?.content;
-          if (content) {
-            if (leakMode === 'unknown') {
-              leakMode = LEAK_PREFIX_RE.test(content) ? 'buffering' : 'normal';
-            }
-            if (leakMode === 'buffering') {
-              leakBuffer += content;
-              const m = leakBuffer.match(CHANNEL_MARKER_RE);
-              if (m && m.index !== undefined) {
-                const before = leakBuffer.substring(0, m.index);
-                const after = leakBuffer.substring(m.index + m[0].length);
-                if (before) yield { type: 'thinking', text: before };
-                if (after) yield { type: 'content', text: after };
-                leakMode = 'normal';
-                leakBuffer = '';
-              } else if (leakBuffer.length > 16000) {
-                // 마커를 찾지 못한 채 버퍼가 너무 커지면 포기 — content 로 flush.
-                yield { type: 'content', text: leakBuffer };
-                leakMode = 'normal';
-                leakBuffer = '';
-              }
-            } else {
-              yield { type: 'content', text: content };
-            }
-          }
-          if (json.done) {
-            const evalCount =
-              typeof json.eval_count === 'number' ? json.eval_count : 0;
-            const evalDurNs =
-              typeof json.eval_duration === 'number'
-                ? json.eval_duration
-                : 0;
-            const promptCount =
-              typeof json.prompt_eval_count === 'number'
-                ? json.prompt_eval_count
-                : undefined;
-            if (evalCount > 0 && evalDurNs > 0) {
-              const durationMs = evalDurNs / 1_000_000;
-              const tokensPerSec = (evalCount * 1_000) / durationMs;
-              yield {
-                type: 'metric',
-                tokens: evalCount,
-                durationMs,
-                tokensPerSec,
-                promptTokens: promptCount,
-              };
-            }
-            finished = true;
-            break;
-          }
-        } catch (err) {
-          this.logger.warn(`Failed to parse line: ${trimmed}`);
-        }
+        signal: options.signal,
+        maxTokens,
+        apiKey,
+      });
+    } catch (e) {
+      // 컨텍스트 초과는 원문(영문) 대신 다국어 안내 메시지로 치환해 노출.
+      // code 를 함께 실어 컨트롤러가 errorCode 로 중계 → 프론트가 UI 언어로 재번역(언어 전환 반응).
+      const raw = e instanceof Error ? e.message : String(e);
+      if (CONTEXT_OVERFLOW_RE.test(raw)) {
+        const err = new Error(m.contextOverflow);
+        (err as Error & { code?: string }).code = 'context_overflow';
+        throw err;
       }
-    }
-    } finally {
-      // 버퍼링 모드에서 마커를 끝내 못 찾고 끝났다면 잔여를 thinking 으로 떨굼
-      // (분명 누출 패턴이었으므로 content 로 보내면 또 깨짐).
-      if (leakBuffer) {
-        yield { type: 'thinking', text: leakBuffer };
-        leakBuffer = '';
+      // 잘못된 endpoint/API 키/호스트 — "Settings 에서 AI 설정 수정" 다국어 안내로 치환.
+      if (AI_CONFIG_ERROR_RE.test(raw)) {
+        const err = new Error(m.aiConfigError);
+        (err as Error & { code?: string }).code = 'ai_config_error';
+        throw err;
       }
-      options.signal?.removeEventListener('abort', onAbort);
-      try {
-        reader.releaseLock();
-      } catch {
-        // already released
-      }
+      throw e;
     }
   }
 }

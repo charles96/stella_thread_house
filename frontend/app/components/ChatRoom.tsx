@@ -100,6 +100,11 @@ export interface Message {
   sources?: Source[];
   readPages?: ReadPage[];
   status?: string;
+  // 스트림/연결 실패 등 에러로 채워진 응답 — 답변 버블을 빨간색으로 표시.
+  isError?: boolean;
+  // 알려진 에러의 코드(예: 'context_overflow'). 있으면 MessageBubble 이 content 대신
+  // 현재 UI 언어로 번역해 렌더 → 언어 전환 시 에러 메시지도 즉시 따라 바뀜.
+  errorCode?: string;
   // 사용자가 이미지를 첨부했거나 vision 토글이 켜진 상태에서 발생한 봇 응답
   visionContext?: boolean;
   time: string;
@@ -690,6 +695,10 @@ export default function ChatRoom() {
   // AI Endpoint — backend system_config 'ai' row 가 단일 진실 출처.
   // localStorage / env 폴백 없음. 미설정이면 빈 문자열.
   const [aiEndpoint, setAiEndpoint] = useState<string>('');
+  // LLM 공급자 ('ollama' | 'openai-compatible') 및 OpenAI 호환 API 키.
+  // AI Endpoint 와 동일하게 system_config 'ai' row 가 단일 진실 출처.
+  const [provider, setProviderState] = useState<string>('ollama');
+  const [apiKey, setApiKeyState] = useState<string>('');
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -702,11 +711,15 @@ export default function ChatRoom() {
           endpoint?: string;
           reasoningModel?: string;
           visionModel?: string;
+          provider?: string;
+          apiKey?: string;
         };
         if (cancelled) return;
         if (j.endpoint) setAiEndpoint(j.endpoint);
         if (j.reasoningModel) setReasoningModelState(j.reasoningModel);
         if (j.visionModel) setVisionModelState(j.visionModel);
+        if (j.provider) setProviderState(j.provider);
+        if (j.apiKey) setApiKeyState(j.apiKey);
       } catch {
         // ignore
       }
@@ -723,6 +736,28 @@ export default function ChatRoom() {
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ endpoint: v.trim() }),
+    }).catch(() => {
+      // ignore
+    });
+  }, []);
+  const updateProvider = useCallback((v: string) => {
+    setProviderState(v);
+    fetch(`${API_URL}/admin/ai`, {
+      method: 'PUT',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider: v }),
+    }).catch(() => {
+      // ignore
+    });
+  }, []);
+  const updateApiKey = useCallback((v: string) => {
+    setApiKeyState(v);
+    fetch(`${API_URL}/admin/ai`, {
+      method: 'PUT',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apiKey: v.trim() }),
     }).catch(() => {
       // ignore
     });
@@ -1019,14 +1054,23 @@ export default function ChatRoom() {
         const json = (await res.json()) as {
           defaultModel: string;
           models: ModelInfo[];
+          // provider/endpoint 오류 시 백엔드가 200 + 빈 목록 + 사유로 응답.
+          error?: string;
         };
         if (cancelled) return;
+        if (json.error) {
+          // 설정 변경 중 흔한 상황(잘못된 endpoint/키) — 인라인 안내만, 콘솔 에러 없이.
+          setModels([]);
+          setDefaultModel(null);
+          setAiEndpointError(json.error);
+          return;
+        }
         setModels(json.models);
         setDefaultModel(json.defaultModel);
         setAiEndpointError(null);
       } catch (e) {
         if (cancelled) return;
-        console.error('모델 목록 로드 실패', e);
+        console.warn('모델 목록 로드 실패', e);
         setModels([]);
         setAiEndpointError(
           e instanceof Error ? e.message : '모델 목록 로드 실패',
@@ -1038,7 +1082,7 @@ export default function ChatRoom() {
     return () => {
       cancelled = true;
     };
-  }, [aiEndpoint]);
+  }, [aiEndpoint, provider]);
 
   // 마운트 시 데이터 로드: 서버에서 conversation 메타 + folder 목록.
   // 메시지는 active thread 가 정해지면 그때 lazy fetch.
@@ -1527,6 +1571,9 @@ export default function ChatRoom() {
             let changed = false;
             const messages = c.messages.map((m) => {
               if (m.id !== dto.id) return m;
+              // 로컬에서 에러로 표시한 메시지(⚠️ 연결 실패)는 백엔드 finally 가 보내는
+              // 부분/빈 content 미러 업데이트로 덮어쓰지 않음 — 에러 표시 유지.
+              if (m.isError) return m;
               changed = true;
               return { ...m, ...mapDto(dto) };
             });
@@ -3604,9 +3651,24 @@ export default function ChatRoom() {
           if (!line) continue;
           const payload = line.slice(5).trim();
           if (payload === '[DONE]') break outer;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          let json: any;
           try {
-            const json = JSON.parse(payload);
-            if (json.error) throw new Error(json.error);
+            json = JSON.parse(payload);
+          } catch (e) {
+            console.error('parse error', e, payload);
+            continue;
+          }
+          // 백엔드가 생성 중 에러를 { error } 이벤트로 보냄 — inner try 에서 throw 하면
+          // 아래 catch 가 "parse error" 로 삼켜버리므로, 바깥 catch 로 전달되도록 여기서 throw.
+          // errorCode 가 있으면 Error 에 실어 바깥 catch 가 메시지에 함께 저장(언어 전환 반응용).
+          if (json.error) {
+            const e = new Error(String(json.error));
+            if (json.errorCode)
+              (e as Error & { code?: string }).code = String(json.errorCode);
+            throw e;
+          }
+          try {
             if (json.type === 'thinking' && json.text) {
               pendingThinking += json.text;
               scheduleFlush();
@@ -3857,7 +3919,7 @@ export default function ChatRoom() {
               }));
             }
           } catch (e) {
-            console.error('parse error', e, payload);
+            console.error('stream part error', e, payload);
           }
         }
       }
@@ -3867,10 +3929,25 @@ export default function ChatRoom() {
         err instanceof DOMException && err.name === 'AbortError';
       if (!isAbort) {
         const message = err instanceof Error ? err.message : '오류 발생';
+        const errorCode = (err as Error & { code?: string })?.code;
+        // 에러 직전 버퍼에 남은 부분 콘텐츠/상태가 finally 의 flushStream() 에서
+        // 에러 메시지 뒤에 덧붙거나 status 가 되살아나지 않도록 펜딩 버퍼를 비운다.
+        pendingContent = '';
+        pendingThinking = '';
+        pendingClearStatus = false;
         patchConv((c) => ({
           ...c,
           messages: c.messages.map((m) =>
-            m.id === botId ? { ...m, content: `⚠️ 연결 실패: ${message}` } : m,
+            m.id === botId
+              ? {
+                  ...m,
+                  content: message,
+                  isError: true,
+                  errorCode,
+                  // 진행 상태(예: "Extracting top 8 pages…") 표시 제거.
+                  status: undefined,
+                }
+              : m,
           ),
         }));
       }
@@ -4698,6 +4775,10 @@ export default function ChatRoom() {
         onChangeAiEndpoint={updateAiEndpoint}
         aiEndpointError={aiEndpointError}
         aiEndpointLoading={aiEndpointLoading}
+        provider={provider}
+        onChangeProvider={updateProvider}
+        apiKey={apiKey}
+        onChangeApiKey={updateApiKey}
       />
 
       <AboutModal

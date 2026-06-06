@@ -20,6 +20,10 @@ type AiConfig = {
   endpoint?: string;
   reasoningModel?: string;
   visionModel?: string;
+  // 'ollama' | 'openai-compatible' — 미설정이면 백엔드가 ollama 로 폴백.
+  provider?: string;
+  // OpenAI 호환 공급자용 API 키 (Ollama 는 무시).
+  apiKey?: string;
 };
 
 // 관리자 전용 AI 설정 — system_config 'ai' row 에 저장.
@@ -36,19 +40,50 @@ export class AiConfigController implements OnModuleInit {
     private readonly configs: Repository<SystemConfig>,
   ) {}
 
-  // 부팅 시 한 번 — DB 의 'ai' row 가 비어있으면 env (OLLAMA_GEMMA4_URL) 로 시드.
+  // 부팅 시 한 번 — DB 의 'ai' row 의 비어있는 필드만 env 로 시드.
   // 이후 admin 이 Settings 에서 변경 시 DB 값이 우선이 되며 env 는 무시됨.
+  //   - AI_PROVIDER      : 'ollama' | 'openai-compatible'
+  //   - OPENAI_BASE_URL  : OpenAI 호환 base URL (예: https://api.openai.com/v1)
+  //   - OPENAI_API_KEY   : OpenAI 호환 API 키 (Ollama 는 불필요)
+  //   - OLLAMA_BASE_URL  : Ollama base URL (예: http://host:11434)
+  //   - OLLAMA_GEMMA4_URL: (레거시 별칭) OLLAMA_BASE_URL 미설정 시 폴백
   async onModuleInit(): Promise<void> {
     const cfg = await this.load();
-    const envEndpoint = process.env.OLLAMA_GEMMA4_URL?.trim();
-    if (!cfg.endpoint && envEndpoint) {
-      const seeded: AiConfig = { ...cfg, endpoint: envEndpoint };
+    const next: AiConfig = { ...cfg };
+    let changed = false;
+
+    const envProvider = process.env.AI_PROVIDER?.trim();
+    if (!next.provider && envProvider) {
+      next.provider = envProvider;
+      changed = true;
+    }
+
+    const envApiKey = process.env.OPENAI_API_KEY?.trim();
+    if (!next.apiKey && envApiKey) {
+      next.apiKey = envApiKey;
+      changed = true;
+    }
+
+    // endpoint(base URL) — OpenAI 호환은 OPENAI_BASE_URL, Ollama 는 OLLAMA_BASE_URL.
+    // OLLAMA_GEMMA4_URL 은 레거시 별칭으로 마지막 폴백.
+    const envEndpoint =
+      process.env.OPENAI_BASE_URL?.trim() ||
+      process.env.OLLAMA_BASE_URL?.trim() ||
+      process.env.OLLAMA_GEMMA4_URL?.trim();
+    if (!next.endpoint && envEndpoint) {
+      next.endpoint = envEndpoint;
+      changed = true;
+    }
+
+    if (changed) {
       await this.configs.upsert(
-        { key: AI_KEY, value: seeded },
+        { key: AI_KEY, value: next },
         { conflictPaths: ['key'] },
       );
+      // API 키 원문은 로그에 남기지 않음.
       this.logger.log(
-        `seeded AI Endpoint from OLLAMA_GEMMA4_URL env: ${envEndpoint}`,
+        `seeded AI config from env (provider=${next.provider ?? '-'}, ` +
+          `endpoint=${next.endpoint ?? '-'}, apiKey=${next.apiKey ? 'set' : '-'})`,
       );
     }
   }
@@ -70,6 +105,8 @@ export class AiConfigController implements OnModuleInit {
       endpoint: body.endpoint?.trim() || prev.endpoint,
       reasoningModel: body.reasoningModel?.trim() || prev.reasoningModel,
       visionModel: body.visionModel?.trim() || prev.visionModel,
+      provider: body.provider?.trim() || prev.provider,
+      apiKey: body.apiKey?.trim() || prev.apiKey,
     };
     await this.configs.upsert(
       { key: AI_KEY, value: next },

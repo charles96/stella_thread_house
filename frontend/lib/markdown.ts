@@ -59,6 +59,64 @@ function patch(segment: string): string {
   return out;
 }
 
+// 웹 페이지 제목 등에 종종 HTML 엔티티(&middot; &amp; &#39; &nbsp; …)가 디코딩되지 않은
+// 채로 들어온다. 텍스트(React children)로만 렌더하는 값에 적용해 원래 기호로 환원한다.
+// SSR 안전(순수 함수, DOM 비의존). 알 수 없는 named 엔티티는 그대로 둔다.
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  nbsp: ' ',
+  middot: '·',
+  bull: '•',
+  hellip: '…',
+  mdash: '—',
+  ndash: '–',
+  minus: '−',
+  lsquo: '‘',
+  rsquo: '’',
+  ldquo: '“',
+  rdquo: '”',
+  laquo: '«',
+  raquo: '»',
+  copy: '©',
+  reg: '®',
+  trade: '™',
+  deg: '°',
+  sect: '§',
+  para: '¶',
+  dagger: '†',
+  Dagger: '‡',
+  times: '×',
+  divide: '÷',
+  euro: '€',
+  pound: '£',
+  cent: '¢',
+  yen: '¥',
+};
+
+export function decodeHtmlEntities(input: string): string {
+  if (!input || input.indexOf('&') === -1) return input;
+  return input.replace(
+    /&(#x?[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);/g,
+    (match, body: string) => {
+      if (body[0] === '#') {
+        const hex = body[1] === 'x' || body[1] === 'X';
+        const code = parseInt(body.slice(hex ? 2 : 1), hex ? 16 : 10);
+        if (Number.isNaN(code) || code < 0 || code > 0x10ffff) return match;
+        try {
+          return String.fromCodePoint(code);
+        } catch {
+          return match;
+        }
+      }
+      return NAMED_ENTITIES[body] ?? match;
+    },
+  );
+}
+
 export function fixKoreanEmphasis(text: string): string {
   if (!text) return text;
   const parts: string[] = [];

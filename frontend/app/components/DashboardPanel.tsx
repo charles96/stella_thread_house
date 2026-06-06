@@ -67,6 +67,8 @@ function relativeTime(ts: number, lang: Lang): string {
       ja: 'ja-JP',
       zh: 'zh-CN',
       id: 'id-ID',
+      fr: 'fr-FR',
+      de: 'de-DE',
     } as const
   )[lang];
   const rtf = new Intl.RelativeTimeFormat(localeTag, { numeric: 'auto' });

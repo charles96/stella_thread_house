@@ -57,7 +57,8 @@ TH_ADMIN_EMAIL_ID=admin@example.com
 TH_ADMIN_PASSWORD=changeme1234
 
 # Ollama API endpoint (use host.docker.internal when accessing host from container)
-OLLAMA_GEMMA4_URL=http://host.docker.internal:11434
+# OLLAMA_GEMMA4_URL is a legacy alias for OLLAMA_BASE_URL.
+OLLAMA_BASE_URL=http://host.docker.internal:11434
 
 # ── Optional ──────────────────────────────────────────
 # Web search feature (disabled if not provided)
@@ -138,5 +139,5 @@ docker compose up -d
 | Backend API | http://localhost:4100 |
 
 > **Notes**
-> - `OLLAMA_GEMMA4_URL` / `TAVILY_API_KEY` are seeded into the DB on first boot. You can update them later under Settings → AI, where DB values take priority.
+> - `OLLAMA_BASE_URL` (legacy: `OLLAMA_GEMMA4_URL`) / `OPENAI_BASE_URL` / `OPENAI_API_KEY` / `TAVILY_API_KEY` are seeded into the DB on first boot. You can update them later under Settings → AI, where DB values take priority. To use an OpenAI-compatible provider, set `AI_PROVIDER=openai-compatible`.
 > - If you are running Ollama locally on a Linux host, the `extra_hosts` entry is required. On Mac/Windows with Docker Desktop, `host.docker.internal` is resolved automatically and can be omitted.
