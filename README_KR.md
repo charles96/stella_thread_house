@@ -1,3 +1,4 @@
+[![Docker Image Version](https://img.shields.io/docker/v/charles1031/stella-th?sort=semver&logo=docker&label=Docker%20Hub)](https://hub.docker.com/r/charles1031/stella-th)
 [![Next.js](https://img.shields.io/badge/Next.js-14-black?logo=next.js)](https://nextjs.org/)
 [![NestJS](https://img.shields.io/badge/NestJS-10-E0234E?logo=nestjs)](https://nestjs.com/)
 [![Tavily](https://img.shields.io/badge/Tavily-Search-FF6B35)](https://tavily.com/)
