@@ -1,4 +1,4 @@
-[![Docker Image Version](https://img.shields.io/docker/v/charles1031/stella-th?sort=semver&logo=docker&label=Docker%20Hub)](https://hub.docker.com/r/charles1031/stella-th)
+[![Docker Hub](https://img.shields.io/github/v/tag/charles96/stella_thread_house?sort=semver&logo=docker&logoColor=white&label=Docker%20Hub&color=2496ED)](https://hub.docker.com/r/charles1031/stella-th)
 [![Next.js](https://img.shields.io/badge/Next.js-14-black?logo=next.js)](https://nextjs.org/)
 [![NestJS](https://img.shields.io/badge/NestJS-10-E0234E?logo=nestjs)](https://nestjs.com/)
 [![Tavily](https://img.shields.io/badge/Tavily-Search-FF6B35)](https://tavily.com/)
@@ -119,8 +119,6 @@ services:
         condition: service_healthy
     networks:
       - stella-net
-    extra_hosts:
-      - "host.docker.internal:host-gateway"   # Required on Linux to reach a local model server on the host
 
 networks:
   stella-net:
@@ -145,4 +143,4 @@ docker compose up -d
 
 > **Notes**
 > - `OPENAI_BASE_URL` / `OPENAI_API_KEY` / `TAVILY_API_KEY` are seeded into the DB on first boot. You can update them later under Settings → AI, where DB values take priority. The AI provider is OpenAI-compatible — point `OPENAI_BASE_URL` at OpenAI cloud or any local runtime's `/v1` endpoint (vLLM/LM Studio …).
-> - If you are running a local model server on a Linux host, the `extra_hosts` entry is required so the container can reach it via `host.docker.internal`. On Mac/Windows Docker Desktop it resolves automatically and can be omitted.
+> - If your model server runs on the **same host** as Docker and you reference it via `host.docker.internal` (instead of a LAN IP), add `extra_hosts: ["host.docker.internal:host-gateway"]` to the `app` service on Linux. With a LAN IP (e.g. `http://192.168.1.222:11434/v1`) it is not needed.

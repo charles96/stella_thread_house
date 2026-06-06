@@ -1,4 +1,4 @@
-[![Docker Image Version](https://img.shields.io/docker/v/charles1031/stella-th?sort=semver&logo=docker&label=Docker%20Hub)](https://hub.docker.com/r/charles1031/stella-th)
+[![Docker Hub](https://img.shields.io/github/v/tag/charles96/stella_thread_house?sort=semver&logo=docker&logoColor=white&label=Docker%20Hub&color=2496ED)](https://hub.docker.com/r/charles1031/stella-th)
 [![Next.js](https://img.shields.io/badge/Next.js-14-black?logo=next.js)](https://nextjs.org/)
 [![NestJS](https://img.shields.io/badge/NestJS-10-E0234E?logo=nestjs)](https://nestjs.com/)
 [![Tavily](https://img.shields.io/badge/Tavily-Search-FF6B35)](https://tavily.com/)
@@ -121,8 +121,6 @@ services:
         condition: service_healthy
     networks:
       - stella-net
-    extra_hosts:
-      - "host.docker.internal:host-gateway"   # Linux에서 호스트의 로컬 모델 서버 접근 시 필요
 
 networks:
   stella-net:
@@ -147,4 +145,4 @@ docker compose up -d
 
 > **참고**  
 > - `OPENAI_BASE_URL` / `OPENAI_API_KEY` / `TAVILY_API_KEY`는 최초 부팅 시 DB에 시드됩니다. 이후 Settings → AI 에서 변경하면 DB 값이 우선 적용됩니다. AI 공급자는 OpenAI 호환이며, `OPENAI_BASE_URL`을 OpenAI 클라우드 또는 로컬 런타임의 `/v1` 엔드포인트(vLLM/LM Studio 등)로 지정하면 됩니다.  
-> - Linux 호스트에서 로컬 모델 서버를 실행 중이라면 `extra_hosts` 항목이 필요합니다. Mac/Windows Docker Desktop은 `host.docker.internal`이 자동 해석되므로 생략 가능합니다.
+> - 모델 서버가 **Docker와 같은 호스트**에 있고 LAN IP 대신 `host.docker.internal`로 접근할 때만, Linux에서는 `app` 서비스에 `extra_hosts: ["host.docker.internal:host-gateway"]`를 추가하세요. LAN IP(예: `http://192.168.1.222:11434/v1`)를 쓰면 불필요합니다.
