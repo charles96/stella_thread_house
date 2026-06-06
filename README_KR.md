@@ -3,7 +3,7 @@
 [![Tavily](https://img.shields.io/badge/Tavily-Search-FF6B35)](https://tavily.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-[English](./README.md)
+- [English](./README.md)
 
 # Stella's Thread House
 ![intro](./assets/imgs/content_screen.png)
