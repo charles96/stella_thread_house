@@ -3,6 +3,8 @@
 [![Tavily](https://img.shields.io/badge/Tavily-Search-FF6B35)](https://tavily.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
+[세종대왕](./README_KR.md)
+
 # Stella's Thread House
 ![intro](./assets/imgs/content_screen.png)
 * I'm a big fan of Jennie. If there are any copyright issues, I will remove the content.

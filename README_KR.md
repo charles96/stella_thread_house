@@ -3,6 +3,8 @@
 [![Tavily](https://img.shields.io/badge/Tavily-Search-FF6B35)](https://tavily.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
+[English](./README.md)
+
 # Stella's Thread House
 ![intro](./assets/imgs/content_screen.png)
 * 제니의 빅팬입니다. 저작권에 문제가 있다면 삭제하도록 하겠습니다.
