@@ -564,6 +564,7 @@ function ImageScatter({
   onPageChange,
   onTotalPagesChange,
   hideInlinePagination = false,
+  hidden = false,
 }: {
   images: SearchImage[];
   cardOverlap: number;
@@ -580,6 +581,9 @@ function ImageScatter({
   onTotalPagesChange?: (n: number) => void;
   // true 면 스캐터 상단의 inline < > 버튼 숨김 (부모가 다른 위치에 렌더하는 경우).
   hideInlinePagination?: boolean;
+  // 부모가 확대뷰 표시 중 스캐터를 display:none 으로 숨길 때 true. 숨김→표시(닫기) 시
+  // 페이지 이동처럼 카드를 슬라이드-인 재생한다.
+  hidden?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [perPage, setPerPage] = useState(7);
@@ -592,6 +596,9 @@ function ImageScatter({
     const CARD_W = 112;
     const SAFE_MARGIN = 40; // 회전(최대 13°, 카드 상단 ~25px 수평 이동) + GPU overflow 여유
     const update = () => {
+      // 확대 중 부모가 display:none 으로 숨기면 clientWidth=0 → perPage 가 1 로 튀었다가
+      // 닫을 때 원복되며 슬라이드 애니메이션이 재발동한다. 폭 0(숨김)일 땐 갱신 스킵.
+      if (el.clientWidth <= 0) return;
       const w = el.clientWidth - SAFE_MARGIN;
       // n=1: CARD_W. n>=2: CARD_W + (n-1)*(CARD_W - cardOverlap)
       const step = Math.max(1, CARD_W - cardOverlap);
@@ -723,6 +730,22 @@ function ImageScatter({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [safePage, PER_PAGE]);
+
+  // 확대뷰 닫기(숨김→표시) 시 현재 페이지 카드를 페이지 이동처럼 슬라이드-인 재생.
+  // (GPU transform/opacity, 보이는 카드만 → 부하 미미)
+  const prevHiddenRef = useRef(hidden);
+  useLayoutEffect(() => {
+    const wasHidden = prevHiddenRef.current;
+    prevHiddenRef.current = hidden;
+    if (!wasHidden || hidden) return; // 표시→표시/숨김 전환은 무시, 숨김→표시만
+    const visibleIdxs: number[] = [];
+    cardWrapperRefs.current.forEach((_, idx) => {
+      if (Math.floor(idx / PER_PAGE) === safePage) visibleIdxs.push(idx);
+    });
+    visibleIdxs.sort((a, b) => a - b);
+    visibleIdxs.forEach((idx) => animateCardSlide(idx, Math.random() * 200));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hidden]);
 
   // 이전에 한 번이라도 렌더된 이미지 URL — 등장 애니메이션은 처음 등장에만 적용.
   // 페이지 이동(<, >)으로 다시 보일 때는 애니메이션 없이 즉시 노출.
@@ -887,7 +910,7 @@ function ImageScatter({
   }
 
   return (
-    <div ref={containerRef} className="mb-2 pl-4">
+    <div ref={containerRef} className="-mt-3 mb-2 pl-4">
       {totalPages > 1 && (
         <div className={cn(
           'mb-1 flex items-center justify-end gap-1 text-muted-foreground',
@@ -1168,9 +1191,9 @@ const markdownClass = cn(
   'prose-sm max-w-none break-words text-bubble-bot-foreground',
   // 헤딩 레벨별 색 — h4(=기본 폰트색) 에서 시작해 큰 제목일수록 흰색으로 수렴.
   // 크기도 위계가 한눈에 보이도록 22 / 18 / 16 / 본문(14.5) px 로 차이 확대.
-  '[&_h1]:mt-3 [&_h1]:mb-1.5 [&_h1]:text-[22px] [&_h1]:font-bold [&_h1]:leading-tight [&_h1]:text-white',
-  '[&_h2]:mt-2.5 [&_h2]:mb-1 [&_h2]:text-[18px] [&_h2]:font-bold [&_h2]:leading-snug [&_h2]:text-zinc-50',
-  '[&_h3]:mt-2 [&_h3]:mb-1 [&_h3]:text-[16px] [&_h3]:font-bold [&_h3]:leading-snug [&_h3]:text-zinc-100',
+  '[&_h1]:mt-3 [&_h1]:mb-1.5 [&_h1]:text-[22px] [&_h1]:font-bold [&_h1]:leading-tight [&_h1]:text-foreground',
+  '[&_h2]:mt-2.5 [&_h2]:mb-1 [&_h2]:text-[18px] [&_h2]:font-bold [&_h2]:leading-snug [&_h2]:text-foreground',
+  '[&_h3]:mt-2 [&_h3]:mb-1 [&_h3]:text-[16px] [&_h3]:font-bold [&_h3]:leading-snug [&_h3]:text-foreground',
   '[&_h4]:mt-1.5 [&_h4]:font-bold [&_h4]:text-foreground [&_h5]:font-bold [&_h5]:text-foreground [&_h6]:font-bold [&_h6]:text-foreground',
   '[&_p]:my-1.5',
   '[&_ul]:my-1.5 [&_ul]:list-disc [&_ul]:pl-5',
@@ -2047,7 +2070,10 @@ function MessageBubble({
             ? message.pinnedImageUrl === expanded.url
             : false;
           const isPinnedEffective = isExplicitlyPinned;
-          // 확대 모드 — 스캐터 자리에 큰 이미지 한 장. 클릭하면 다시 스캐터로 복귀.
+          // 확대 모드 — 스캐터는 항상 마운트 유지(아래에서 hidden 처리)하고, 큰 이미지를
+          // 그 자리에 오버레이로 띄운다. (조건부 return 으로 스캐터를 unmount/remount 하면
+          // 닫을 때 LazyVisible 재게이트·perPage 리셋·카드 재애니메이션으로 버벅임 발생)
+          let expandedView: ReactNode = null;
           if (expanded) {
             const youtubeId = (() => {
               if (expanded.kind !== 'youtube') return null;
@@ -2082,7 +2108,7 @@ function MessageBubble({
             if (showDeleteBtn) _leftStack.push('delete');
             const leftTop = (k: 'attach' | 'save' | 'delete') =>
               `${0.75 + Math.max(0, _leftStack.indexOf(k)) * 2.25}rem`;
-            return (
+            expandedView = (
               // pin 상태(stuck) 에서는 animate-in 의 transform 이 fixed 자손의 containing block 을
               // wrapper 로 바꿔서 스크롤 시 fixed iframe 이 살짝 따라 움직이는 깜빡임 발생 → 끔.
               <div
@@ -2511,22 +2537,29 @@ function MessageBubble({
               </div>
             );
           }
-          // 기본 — 포커 카드 스캐터. 화면 밖이면 렌더 지연(레이지) — 자리(min-h 170)는 미리 확보.
+          // 스캐터는 항상 마운트(remount 방지). 확대 중엔 hidden 으로 숨기고 expandedView 를 오버레이.
+          // 화면 밖이면 렌더 지연(레이지) — 자리(min-h 170)는 미리 확보.
           return (
-            <LazyVisible reservedHeight={170}>
-              <ImageScatter
-                images={combinedImages}
-                cardOverlap={CARD_OVERLAP}
-                // 첨부/웹 이미지 모두 동일하게 인라인 확대 — 별도 라이트박스 없음.
-                onCardClick={(i) => setExpandedImageIndex(i)}
-                onInvalid={markInvalid}
-                forcePoker={usePoker}
-                page={scatterPage}
-                onPageChange={setScatterPage}
-                onTotalPagesChange={setScatterTotalPages}
-                hideInlinePagination
-              />
-            </LazyVisible>
+            <>
+              {expandedView}
+              <div className={cn(expanded && 'hidden')}>
+                <LazyVisible reservedHeight={170}>
+                  <ImageScatter
+                    images={combinedImages}
+                    cardOverlap={CARD_OVERLAP}
+                    // 첨부/웹 이미지 모두 동일하게 인라인 확대 — 별도 라이트박스 없음.
+                    onCardClick={(i) => setExpandedImageIndex(i)}
+                    onInvalid={markInvalid}
+                    forcePoker={usePoker}
+                    page={scatterPage}
+                    onPageChange={setScatterPage}
+                    onTotalPagesChange={setScatterTotalPages}
+                    hideInlinePagination
+                    hidden={!!expanded}
+                  />
+                </LazyVisible>
+              </div>
+            </>
           );
         })()}
 

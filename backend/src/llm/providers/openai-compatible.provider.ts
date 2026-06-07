@@ -23,6 +23,14 @@ type OpenAiMessage =
 // 많은 OpenAI 호환 런타임(llama.cpp, LM Studio, reasoning 파서 미적용 vLLM 등)은
 // 추론을 별도 reasoning_content 가 아니라 일반 content 안의 <think>...</think> 로 흘린다.
 // 이를 thinking 으로 분리해 답변 본문 오염을 막는 스트리밍 상태 머신.
+// think:false 보조 호출에 주입하는 "추론 최소화" 시스템 지시.
+// 여러 런타임의 관용 토큰을 함께 담아 reasoning 모델의 thinking 지연을 줄인다.
+//   - gpt-oss : "Reasoning: low"
+//   - Qwen 계열: "/no_think"
+//   - 일반     : 직접 답하라는 지시
+const NO_THINK_SYSTEM =
+  'Reasoning: low\nAnswer directly and concisely. Do not produce any chain-of-thought or <think> reasoning. /no_think';
+
 const THINK_TAGS = ['<think>', '</think>', '<thinking>', '</thinking>'];
 const THINK_OPEN_RE = /<think(?:ing)?>/i;
 const THINK_CLOSE_RE = /<\/think(?:ing)?>/i;
@@ -141,6 +149,13 @@ export class OpenAICompatibleProvider implements LlmProvider {
 
   async *streamChat(opts: LlmChatOptions): AsyncGenerator<LlmStreamPart> {
     const startedAt = Date.now();
+    // think:false(분류·재작성 등 보조 호출)는 추론을 끄도록 시스템 지시를 주입한다.
+    // OpenAI 호환 API 엔 표준 off 플래그가 없어, reasoning 모델이 간단한 작업에도
+    // thinking 하느라 지연되는 것을 줄이기 위함. (gpt-oss=Reasoning: low, Qwen=/no_think 등)
+    const messages: ChatMessage[] =
+      opts.think === false
+        ? [{ role: 'system', content: NO_THINK_SYSTEM }, ...opts.messages]
+        : opts.messages;
     const res = await fetch(`${opts.endpoint}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -150,7 +165,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
       signal: opts.signal,
       body: JSON.stringify({
         model: opts.model,
-        messages: opts.messages.map(toOpenAiMessage),
+        messages: messages.map(toOpenAiMessage),
         stream: true,
         // 마지막 청크에 usage 를 받기 위해 필요 (OpenAI 스펙).
         stream_options: { include_usage: true },

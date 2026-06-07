@@ -107,6 +107,35 @@ const VISION_UNSUPPORTED_RE =
 const MODEL_NOT_FOUND_RE =
   /model_not_found|invalid model|model not found|unknown model|no such model|specify a valid.{0,20}model|model.{0,20}does not exist|model.{0,20}is not (?:available|found)/i;
 
+// UI locale → Tavily country (해당 국가 웹 우선). en 등은 글로벌(미지정).
+function localeToCountry(locale?: string): string | undefined {
+  switch ((locale ?? '').toLowerCase()) {
+    case 'ko':
+      return 'south korea';
+    case 'ja':
+      return 'japan';
+    case 'zh':
+      return 'china';
+    case 'fr':
+      return 'france';
+    case 'de':
+      return 'germany';
+    case 'id':
+      return 'indonesia';
+    default:
+      return undefined;
+  }
+}
+
+// 사용자 발화의 문자(스크립트)로 언어를 우선 감지해 검색 국가를 정한다.
+// (한글/가나는 확실, 한자만 있으면 중국어로 간주) — 없으면 UI locale 폴백.
+function detectSearchCountry(text: string, locale?: string): string | undefined {
+  if (/[가-힣ㄱ-ㅎㅏ-ㅣ]/.test(text)) return 'south korea';
+  if (/[぀-ゟ゠-ヿ]/.test(text)) return 'japan';
+  if (/[一-鿿]/.test(text)) return 'china';
+  return localeToCountry(locale);
+}
+
 // Instagram CDN URL은 `.heic` 확장자에 ?stp=dst-jpg 변환 매개변수가 붙어
 // 실제 응답은 JPEG로 내려오지만 URL 만 보면 HEIC. 따라서 heic/heif도 허용.
 const IMG_EXT = /\.(?:jpe?g|png|webp|gif|avif|heic|heif)(?:\?[^"'\s)]*)?$/i;
@@ -497,7 +526,6 @@ export class ChatService {
     const timer = setTimeout(() => ctrl.abort(), 20_000);
     let res: globalThis.Response;
     try {
-      // topic='news' 일 때만 country 가 의미 있음. (Tavily 스펙)
       const body: Record<string, unknown> = {
         api_key: tavilyKey,
         query,
@@ -507,7 +535,8 @@ export class ChatService {
         max_results: sourceLimit,
       };
       if (opts.topic) body.topic = opts.topic;
-      if (opts.country && opts.topic === 'news') body.country = opts.country;
+      // country 는 general/news 에서 해당 국가 웹을 우선(boost). finance 는 무의미하여 제외.
+      if (opts.country && opts.topic !== 'finance') body.country = opts.country;
       if (opts.timeRange) body.time_range = opts.timeRange;
       res = await fetch('https://api.tavily.com/search', {
         method: 'POST',
@@ -1515,9 +1544,21 @@ export class ChatService {
         reformulated.queries.length > 0
           ? reformulated.queries
           : [lastUserAuto.content.trim()];
-      const inferredTopic = reformulated.topic;
-      const inferredCountry = reformulated.country;
       const inferredTimeRange = reformulated.timeRange;
+      // 검색 국가 = 재작성이 추론한 country 우선, 없으면 사용자 발화 언어로 결정.
+      // → 발화 언어권(예: 한국어→한국) 웹을 우선 검색.
+      const langCountry = detectSearchCountry(
+        lastUserAuto.content,
+        options.locale,
+      );
+      const inferredCountry = reformulated.country ?? langCountry;
+      // Tavily 'news' 토픽은 영어권 매체 위주라 비영어권 질의에서 외국 기사가 나온다.
+      // 비영어권 발화(langCountry 존재)는 news 여도 general 로 검색해 현지 기사를 받는다.
+      // (country + time_range 는 유지 → 최신성·현지성 모두 확보)
+      let inferredTopic = reformulated.topic;
+      if (inferredTopic === 'news' && langCountry) {
+        inferredTopic = 'general';
+      }
       this.logger.log(
         `[search] final to Tavily: queries=${JSON.stringify(queries)}, topic=${inferredTopic}, country=${inferredCountry}, timeRange=${inferredTimeRange}`,
       );

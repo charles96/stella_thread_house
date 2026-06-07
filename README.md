@@ -55,9 +55,8 @@ Tested primarily with the gemma4 and oss-20b models served via Ollama / LM Studi
 
 # Deploy
 
-## ⚡ Quick Start (minimal)
-
-— You only need an **admin account + AI endpoint + Tavily key**.
+## Quick Start
+- You only need an **admin account + AI endpoint + Tavily key**.
 
 **`.env`**
 ```env
