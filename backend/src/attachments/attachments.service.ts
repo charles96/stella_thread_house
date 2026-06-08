@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import * as fs from 'fs';
 import * as path from 'path';
+import sharp from 'sharp';
 
 // 첨부 이미지 파일 시스템 저장 헬퍼.
 // 경로: <UPLOAD_DIR>/<messageId>/<safeFileName>
@@ -72,7 +73,12 @@ export class AttachmentsService {
     return finalName;
   }
 
-  read(messageId: string, fileName: string): { stream: fs.ReadStream; size: number; mime: string } {
+  read(messageId: string, fileName: string): {
+    stream: fs.ReadStream;
+    size: number;
+    mime: string;
+    mtimeMs: number;
+  } {
     const full = this.resolvePath(messageId, fileName);
     if (!fs.existsSync(full)) throw new NotFoundException();
     const st = fs.statSync(full);
@@ -87,7 +93,46 @@ export class AttachmentsService {
             : ext === '.svg'
               ? 'image/svg+xml'
               : 'image/jpeg';
-    return { stream: fs.createReadStream(full), size: st.size, mime };
+    return {
+      stream: fs.createReadStream(full),
+      size: st.size,
+      mime,
+      mtimeMs: st.mtimeMs,
+    };
+  }
+
+  // 첨부 이미지를 90/180/270° 물리 회전해 같은 파일에 덮어쓴다(in-place).
+  // 픽셀 해상도 유지(90/270 은 가로/세로 스왑), 포맷 보존 + 고품질 재인코딩으로 열화 최소화.
+  // 회전 후 mtime 이 갱신되므로 Last-Modified 기반 캐시가 새 이미지를 받게 된다.
+  async rotate(
+    messageId: string,
+    fileName: string,
+    degrees: number,
+  ): Promise<void> {
+    const full = this.resolvePath(messageId, fileName);
+    if (!fs.existsSync(full)) throw new NotFoundException();
+    const deg = (((degrees % 360) + 360) % 360) as number;
+    if (deg !== 90 && deg !== 180 && deg !== 270) {
+      throw new BadRequestException('degrees 는 90/180/270 만 허용');
+    }
+    const input = fs.readFileSync(full);
+    // 확장자가 아닌 실제 내용으로 포맷 판별(.heic 안에 jpeg 가 든 경우 등 대비).
+    let fmt: string | undefined;
+    try {
+      fmt = (await sharp(input).metadata()).format;
+    } catch {
+      throw new BadRequestException('이미지 디코드 실패');
+    }
+    const pipe = sharp(input, { failOn: 'none' }).rotate(deg);
+    let out: Buffer;
+    // 입력 포맷 보존 + 고품질 재인코딩(해상도는 회전만, 픽셀 유지).
+    if (fmt === 'png') out = await pipe.png({ compressionLevel: 9 }).toBuffer();
+    else if (fmt === 'webp') out = await pipe.webp({ quality: 95 }).toBuffer();
+    else if (fmt === 'jpeg') out = await pipe.jpeg({ quality: 95 }).toBuffer();
+    else if (fmt === 'jpg') out = await pipe.jpeg({ quality: 95 }).toBuffer();
+    else if (fmt) out = await pipe.toBuffer(); // tiff/avif/heif/gif 등은 입력 포맷 그대로.
+    else throw new BadRequestException('회전 미지원 포맷');
+    fs.writeFileSync(full, out);
   }
 
   // 한 메시지의 모든 첨부 파일 디렉토리를 통째로 삭제. 메시지/대화 삭제 시 디스크 정리용.

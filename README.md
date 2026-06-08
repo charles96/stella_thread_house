@@ -153,7 +153,7 @@ services:
       start_period: 10s
 
   app:
-    image: charles1031/stella-th:1.0.0   # Docker Hub — replace with the latest tag
+    image: charles1031/stella-th:1.1.0   # Docker Hub — replace with the latest tag
     container_name: stella-th-app
     restart: unless-stopped
     ports:

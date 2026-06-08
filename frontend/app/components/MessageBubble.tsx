@@ -35,6 +35,8 @@ import {
   Pencil,
   Pin,
   PinOff,
+  RotateCcw,
+  RotateCw,
   Sparkles,
   Trash2,
   X,
@@ -70,6 +72,12 @@ const ERROR_CODE_I18N: Record<string, string> = {
   vision_unsupported: 'error.visionUnsupported',
   model_not_found: 'error.modelNotFound',
 };
+
+// 물리 회전 후 같은 URL 의 이미지를 다시 받게 하는 캐시 버스트. 버전이 있을 때만 ?v= 부착.
+function withCacheBust(url: string, v?: number): string {
+  if (!v) return url;
+  return url + (url.includes('?') ? '&' : '?') + 'v=' + v;
+}
 
 function extractCodeText(children: ReactNode): string {
   const arr = Children.toArray(children);
@@ -565,6 +573,8 @@ function ImageScatter({
   onTotalPagesChange,
   hideInlinePagination = false,
   hidden = false,
+  bust,
+  localFor,
 }: {
   images: SearchImage[];
   cardOverlap: number;
@@ -584,6 +594,11 @@ function ImageScatter({
   // 부모가 확대뷰 표시 중 스캐터를 display:none 으로 숨길 때 true. 숨김→표시(닫기) 시
   // 페이지 이동처럼 카드를 슬라이드-인 재생한다.
   hidden?: boolean;
+  // 물리 회전 후 캐시 버스트 버전(URL→ver). src 에 ?v= 를 붙여 회전된 새 파일을 다시 받게 한다.
+  // 키는 표시 대상 URL(로컬 사본이 있으면 그 URL).
+  bust?: Record<string, number>;
+  // 저장된 웹 이미지(원격 URL) → 로컬 사본(/attachments/) 매핑. 표시·회전을 로컬 사본으로 처리.
+  localFor?: Record<string, string>;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [perPage, setPerPage] = useState(7);
@@ -779,6 +794,46 @@ function ImageScatter({
     });
     setImageState(src, { orient: kind });
   };
+
+  // 카드별 자연 비율(w/h) — onLoad 에서 측정. 캐시된 값이 있으면 마운트 즉시 반영(layout shift 방지).
+  // 카드 박스를 이 비율대로 그려, 선택 전(스캐터) 에도 원본 비율에 최대한 맞춰 보여준다.
+  const [ratios, setRatios] = useState<Map<string, number>>(() => {
+    const m = new Map<string, number>();
+    for (const [url, s] of hydrateImageStates(images.map((i) => i.url))) {
+      if (s.ratio && s.ratio > 0) m.set(url, s.ratio);
+    }
+    return m;
+  });
+  const markRatio = (src: string, r: number) => {
+    if (!(r > 0) || !Number.isFinite(r)) return;
+    setRatios((prev) => {
+      if (prev.get(src) === r) return prev;
+      const next = new Map(prev);
+      next.set(src, r);
+      return next;
+    });
+    setImageState(src, { ratio: r });
+  };
+  // 카드 박스 치수 계산 — 긴 변을 BOX_MAX 로, 짧은 변은 비율대로(BOX_MIN 하한). 비율 모르면 orient 폴백.
+  const BOX_MAX = 112; // 긴 변 최대 px (기존 w-28)
+  const BOX_MIN = 64; // 짧은 변 최소 px — 극단적 파노라마/세로형이 너무 얇아지지 않게 클램프
+  const cardBox = (
+    url: string,
+    kind: SearchImage['kind'],
+    fallbackLandscape: boolean,
+  ): { w: number; h: number } => {
+    // YouTube/X 썸네일은 16:9 고정 느낌 유지.
+    if (kind === 'youtube' || kind === 'x') return { w: 112, h: 88 };
+    const r = ratios.get(url);
+    if (r && r > 0) {
+      if (r >= 1) {
+        return { w: BOX_MAX, h: Math.max(BOX_MIN, Math.round(BOX_MAX / r)) };
+      }
+      return { w: Math.max(BOX_MIN, Math.round(BOX_MAX * r)), h: BOX_MAX };
+    }
+    // 로드 전 — orient 기반 근사(가로 112×88 / 세로 88×112).
+    return fallbackLandscape ? { w: 112, h: 88 } : { w: 88, h: 112 };
+  };
   // loaded / angles 는 위에서 이미 선언됨 (슬라이드 애니메이션 effect 가 참조).
   const canPrev = safePage > 0;
   const canNext = safePage < totalPages - 1;
@@ -970,6 +1025,15 @@ function ImageScatter({
           const isFirstAppear = !animatedRef.current.has(cardKey);
           animatedRef.current.add(cardKey);
 
+          // 카드 박스 방향 — 실제(물리 회전 반영된) 이미지의 자연 비율 기준. 회전 후엔
+          // 버스트로 src 가 바뀌어 onLoad 가 다시 측정 → orientations 가 갱신된다.
+          const effLandscape =
+            img.kind === 'youtube' ||
+            img.kind === 'x' ||
+            orientations.get(img.url) === 'landscape';
+          // 실제 비율에 맞춘 카드 박스 치수(선택 전에도 원본 비율대로 최대한 노출).
+          const box = cardBox(img.url, img.kind, effLandscape);
+
           return (
             <div
               key={`${img.url || img.linkUrl || globalIndex}`}
@@ -1012,14 +1076,9 @@ function ImageScatter({
             <button
               type="button"
               onClick={handleClick}
+              style={{ width: box.w, height: box.h }}
               className={cn(
-                'block overflow-hidden rounded-lg bg-secondary/40 shadow-[0_6px_10px_rgba(0,0,0,0.5)] transition-opacity duration-300 ease-out group-hover/card:shadow-[0_16px_22px_rgba(0,0,0,0.6)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
-                // 비율 기반 카드 dim — YouTube/X 또는 가로형 이미지는 가로 카드(112×88), 세로형은 세로 카드(88×112).
-                img.kind === 'youtube' ||
-                  img.kind === 'x' ||
-                  orientations.get(img.url) === 'landscape'
-                  ? 'h-[5.5rem] w-28'
-                  : 'h-28 w-[5.5rem]',
+                'relative block overflow-hidden rounded-lg bg-secondary/40 shadow-[0_6px_10px_rgba(0,0,0,0.5)] transition-opacity duration-300 ease-out group-hover/card:shadow-[0_16px_22px_rgba(0,0,0,0.6)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
                 isLoaded ? 'opacity-100' : 'opacity-0',
                 isLoaded && isFirstAppear && 'animate-card-pop',
                 img.analyzing && 'vision-glow',
@@ -1035,7 +1094,10 @@ function ImageScatter({
               ) : (
                 /* eslint-disable-next-line @next/next/no-img-element */
                 <img
-                  src={img.url}
+                  src={(() => {
+                    const disp = localFor?.[img.url] ?? img.url;
+                    return withCacheBust(disp, bust?.[disp]);
+                  })()}
                   alt={img.sourceTitle ?? `이미지 ${globalIndex + 1}`}
                   loading="lazy"
                   referrerPolicy="no-referrer"
@@ -1055,9 +1117,10 @@ function ImageScatter({
                         ? 'landscape'
                         : 'portrait',
                     );
+                    markRatio(img.url, el.naturalWidth / el.naturalHeight);
                     markLoaded(img.url);
                   }}
-                  className="relative h-full w-full cursor-zoom-in object-cover"
+                  className="relative h-full w-full cursor-zoom-in object-cover transition-transform duration-200"
                 />
               )}
               {img.kind === 'youtube' && (
@@ -1234,6 +1297,7 @@ function MessageBubble({
   userOrdinal,
   onEditContent,
   onPinImage,
+  onRotateImage,
   attachedSourceUrls,
   isGreeting = false,
   isLive = false,
@@ -1267,6 +1331,8 @@ function MessageBubble({
   onEditContent?: (id: string, content: string) => void;
   // 포커 이미지 PIN/UNPIN — 메시지 metadata.pinnedImageUrl 영속.
   onPinImage?: (messageId: string, url: string | null) => void;
+  // 저장된 이미지 물리 회전 — 서버 파일을 deg(시계방향 90 단위)만큼 실제 회전 후 덮어쓴다.
+  onRotateImage?: (messageId: string, url: string, deg: number) => Promise<void>;
   // 현재 InputBar 에 첨부된 이미지의 원본 source URL 집합 — Attach 버튼 dim 판단에 사용.
   attachedSourceUrls?: Set<string>;
   // 첫 user 메시지 전 leading 인사말(greeting) — View/Edit 탭, follow-up 등 메타 UI 숨김.
@@ -1727,6 +1793,11 @@ function MessageBubble({
     null,
   );
   const [expandedImageLoaded, setExpandedImageLoaded] = useState(false);
+  // 확대 이미지의 자연 크기 — 회전 시 래퍼를 회전된 footprint 로 잡기 위해 onLoad 에서 측정.
+  const [expandedNatural, setExpandedNatural] = useState<{
+    w: number;
+    h: number;
+  } | null>(null);
   // YouTube 핀 모드 — true 면 영상이 viewport 상단에 fixed 로 고정. 스크롤 방향 무관 항상 따라옴.
   // X 축은 클릭 시점의 인라인 위치 그대로 유지 → Y 만 변동. 핀 즉시 fixed → 자연 위치는 placeholder 로 메꿈.
   const [isYoutubePinned, setIsYoutubePinned] = useState(false);
@@ -1745,7 +1816,79 @@ function MessageBubble({
     window.addEventListener('resize', update);
     return () => window.removeEventListener('resize', update);
   }, [isYoutubePinned, expandedImageIndex]);
-  useEffect(() => { setExpandedImageLoaded(false); }, [expandedImageIndex]);
+  useEffect(() => {
+    setExpandedImageLoaded(false);
+    setExpandedNatural(null);
+    setSpin(0);
+    setSpinTransition(true);
+  }, [expandedImageIndex]);
+  // 뷰포트 폭 — 모바일에서 확대 이미지가 좌우 버튼 거터와 함께 화면을 넘치지 않도록 표시 크기 산정에 사용.
+  // (0 = 미측정/SSR → 데스크탑 기본값 사용)
+  const [viewportW, setViewportW] = useState(0);
+  useEffect(() => {
+    const update = () => setViewportW(window.innerWidth);
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+  // 물리 회전 후 같은 세션에서 새 이미지를 다시 받기 위한 캐시 버스트 버전(URL→ver).
+  const [imgBust, setImgBust] = useState<Record<string, number>>({});
+  // 회전 진행 중 URL(중복 클릭 방지). 회전 성공 시 버전을 올려 src 를 갱신한다.
+  const [rotatingUrl, setRotatingUrl] = useState<string | null>(null);
+  // 래퍼 높이 transition 활성 여부 — 회전 시작~정착까지 켜서, 공간 확보(증가)·정착(감소) 가 모두
+  // 부드럽게 애니메이션되도록 한다(세로→가로처럼 높이가 줄어드는 경우의 '딱 끊김' 방지).
+  const [heightAnim, setHeightAnim] = useState(false);
+  // 회전 애니메이션 — 클릭 즉시 확대 이미지를 CSS 로 ±90° 부드럽게 돌리고(spin),
+  // 백엔드 회전 + 새 파일 preload 가 끝나면 트랜지션 없이 0° 로 스냅하며 동시에 교체한다.
+  // preload 로 새 파일을 캐시에 올려두면 교체가 즉시 일어나 빈(흰) 화면이 보이지 않는다.
+  const [spin, setSpin] = useState(0);
+  const [spinTransition, setSpinTransition] = useState(true);
+  async function handleRotate(url: string, deg: number) {
+    if (!onRotateImage || rotatingUrl) return;
+    setHeightAnim(true);
+    setRotatingUrl(url);
+    // 1단계: 세로 공간을 '애니메이션으로' 먼저 확보 — rotatingUrl 이 set 되면 래퍼 height 가
+    // reservedH(긴 변)로 transition 된다. 단, 높이가 늘어나는 경우(가로→세로 전환 = 현재 landscape)
+    // 에만 확보가 의미 있으므로 그때만 230ms 대기 후 회전. 높이가 줄어드는 경우(현재 portrait)는
+    // 확보할 게 없으니 바로 회전하고, 회전 후 높이를 부드럽게 줄여 정착시킨다.
+    const willGrow =
+      deg !== 180 && !!expandedNatural && expandedNatural.w > expandedNatural.h;
+    if (willGrow) await new Promise<void>((r) => setTimeout(r, 230));
+    // 2단계: 확보된 공간 안에서 이미지를 회전.
+    // 시각 회전량 — 270(반시계)은 -90, 90은 +90, 180은 +180.
+    const visual = deg === 270 ? -90 : deg === 180 ? 180 : 90;
+    setSpinTransition(true);
+    setSpin((s) => s + visual);
+    try {
+      await onRotateImage(message.id, url, deg);
+      const nextVer = (imgBust[url] ?? 0) + 1;
+      // 애니메이션 시간(≈270ms)과 새 파일 디코드를 모두 기다린 뒤 한 번에 스냅+교체.
+      const animDone = new Promise<void>((r) => setTimeout(r, 270));
+      const preloaded = new Promise<void>((resolve) => {
+        const im = new Image();
+        im.onload = () => resolve();
+        im.onerror = () => resolve();
+        im.src = withCacheBust(url, nextVer);
+      });
+      await Promise.all([animDone, preloaded]);
+      // 새(이미 회전된) 파일을 트랜지션 없이 0° 로 스냅 — spin=visual 끝 위치와 시각적으로 동일해 이음새 없음.
+      // 동시에 표시 비율(가로/세로)도 즉시 스왑해 박스가 새 방향으로 바로 맞춰지게(리사이즈 애니메이션 방지).
+      setSpinTransition(false);
+      setSpin(0);
+      if (deg !== 180) {
+        setExpandedNatural((n) => (n ? { w: n.h, h: n.w } : n));
+      }
+      setImgBust((b) => ({ ...b, [url]: nextVer }));
+    } catch {
+      // 실패 시 시각 회전 되돌림.
+      setSpin((s) => s - visual);
+    } finally {
+      // rotatingUrl 해제 → 래퍼 높이 목표가 '최종 높이'로 바뀐다. heightAnim 이 아직 켜져 있어
+      // 세로→가로처럼 높이가 줄어드는 경우 그 변화가 부드럽게 애니메이션된다. 정착 후 transition 끔.
+      setRotatingUrl(null);
+      setTimeout(() => setHeightAnim(false), 260);
+    }
+  }
   // 카드의 × 클릭 시 — 라이트박스 열지 않고, 채팅창 안에서 직접 삭제 확인 다이얼로그를 띄움.
   const [pendingDeleteUrl, setPendingDeleteUrl] = useState<string | null>(null);
   // 웹(외부) 이미지를 서버에 저장(=editImages 첨부)한 source URL 집합 — 저장 후 "저장됨" 표시.
@@ -2039,10 +2182,51 @@ function MessageBubble({
           const attachedSlice: SearchImage[] = (precedingUserImages ?? []).map(
             (src) => ({ url: src, removable: true }),
           );
+          // save 한 웹 이미지 → 로컬 사본(/attachments/) 매핑. 카드 식별자(URL)는 원격 그대로
+          // 두어 PIN/순서/인덱스 로직을 보존하고, 표시·회전만 로컬 사본으로 처리(localFor).
+          // 물리 회전은 우리가 소유한 로컬 파일만 가능하기 때문.
+          const allEditUrls = message.editImages ?? [];
+          const savedSet = new Set<string>([
+            ...(message.savedSourceUrls ?? []),
+            ...savedSourceUrls,
+          ]);
+          const baseName = (u: string): string => {
+            try {
+              const p = new URL(u, window.location.origin).pathname;
+              return decodeURIComponent(p.split('/').filter(Boolean).pop() ?? '');
+            } catch {
+              return '';
+            }
+          };
+          // 파일명 stem — 확장자 + 중복 회피 접미사(" (1)", "-<timestamp>") 제거 후 비교.
+          const stem = (n: string): string =>
+            n
+              .replace(/\.[^.]+$/, '')
+              .replace(/[\s_-]*\(\d+\)$/, '')
+              .replace(/-\d{10,}$/, '');
+          // 원격 source URL → 로컬 사본 URL 매핑 (basename 우선, 실패 시 stem 매칭).
+          const localFor: Record<string, string> = {};
+          const consumedLocal = new Set<string>();
+          for (const src of savedSet) {
+            const sb = baseName(src);
+            const ss = stem(sb);
+            const hit = allEditUrls.find(
+              (l) =>
+                !consumedLocal.has(l) &&
+                (baseName(l) === sb || stem(baseName(l)) === ss),
+            );
+            if (hit) {
+              localFor[src] = hit;
+              consumedLocal.add(hit);
+            }
+          }
+          // 한 이미지의 실제 표시/회전 대상 URL — 저장된 웹 이미지면 로컬 사본, 아니면 원본.
+          const resolveLocal = (u: string): string => localFor[u] ?? u;
           // 자연 순서(첨부 → readPages → editImages) 를 imageOrder 가 있으면 그 순서대로 재배열.
-          const editImgSlice: SearchImage[] = (message.editImages ?? []).map(
-            (url) => ({ url, removable: true }),
-          );
+          // 원격 카드의 로컬 사본으로 소비된 editImages 는 중복 카드 방지를 위해 제외.
+          const editImgSlice: SearchImage[] = allEditUrls
+            .filter((url) => !consumedLocal.has(url))
+            .map((url) => ({ url, removable: true }));
           const combinedImages: SearchImage[] = applyImageOrder(
             [...attachedSlice, ...readPageImagesFlat, ...editImgSlice],
             message.imageOrder,
@@ -2098,6 +2282,31 @@ function MessageBubble({
               _u.includes('/attachments/') ||
               savedSourceUrls.has(_u) ||
               (message.savedSourceUrls?.includes(_u) ?? false);
+            // 회전 — 물리 회전은 우리가 소유한 로컬 파일(/attachments/)만 가능.
+            // 업로드 첨부, save 로 만든 로컬 사본, 그리고 save 된 웹 이미지(→로컬 사본으로 resolve)
+            // 가 모두 해당. resolveLocal 로 실제 회전/표시 대상 URL 을 구한다.
+            const _rotateTarget = resolveLocal(_u);
+            const _isLocalFile = _rotateTarget.includes('/attachments/');
+            const showRotate = !!onRotateImage && _isImgKind && _isLocalFile;
+            // 표시 크기 — (물리 회전 반영된)자연 크기를 긴 변 340px 로 맞춤. 로드 전엔 0(폴백 클래스).
+            // 데스크탑은 기존 그대로(340). 모바일(<640px)에서는 좌우 버튼 거터(≈160px)와 함께
+            // 화면을 넘치지 않도록 긴 변을 화면 폭에 맞춰 줄여, 이미지 양옆 버튼이 항상 보이게 한다.
+            const EXP_MAXD =
+              viewportW > 0 && viewportW < 640
+                ? Math.max(120, Math.floor(viewportW * 0.9) - 168)
+                : 340;
+            let imgDispW = 0;
+            let imgDispH = 0;
+            if (expandedNatural && expandedNatural.w > 0 && expandedNatural.h > 0) {
+              const long = Math.max(expandedNatural.w, expandedNatural.h);
+              const sc = long > EXP_MAXD ? EXP_MAXD / long : 1;
+              imgDispW = Math.round(expandedNatural.w * sc);
+              imgDispH = Math.round(expandedNatural.h * sc);
+            }
+            // 회전 후 필요한 세로 공간 = 긴 변(가로/세로 중 큰 값). 회전 시작 시 래퍼 높이를 이 값으로
+            // 애니메이션(transition)해 먼저 확보한 뒤, 230ms 후 이미지를 돌린다(handleRotate 1→2단계).
+            const rotatingThis = rotatingUrl === resolveLocal(_u);
+            const reservedH = Math.max(imgDispW, imgDispH);
             const showSaveBtn =
               _isImgKind && !!_u && (_isSavedImg || !!onUploadEditImage);
             const showDeleteBtn =
@@ -2113,7 +2322,9 @@ function MessageBubble({
               // wrapper 로 바꿔서 스크롤 시 fixed iframe 이 살짝 따라 움직이는 깜빡임 발생 → 끔.
               <div
                 className={cn(
-                  'mb-6 max-w-full overflow-x-clip',
+                  'mb-6 max-w-full',
+                  // 회전 중에는 가로 클리핑을 풀어 회전 배경면이 잘려 흰색이 드러나지 않게 한다.
+                  rotatingUrl ? 'overflow-visible' : 'overflow-x-clip',
                   !stuck && 'animate-in fade-in zoom-in-95 duration-200',
                 )}
               >
@@ -2139,14 +2350,20 @@ function MessageBubble({
                 <div
                   className={cn(
                     // 우측 거터(pr-20)=닫기/핀, 좌측 거터(pl-20)=첨부/저장/삭제 포스트잇 버튼 자리.
-                    'relative pr-20',
+                    // 회전 중엔 버튼이 숨겨지므로 거터/폭 제한을 없애 회전 스윕이 잘리지 않게 한다.
+                    rotatingUrl ? 'relative' : 'relative pr-20',
                     // YouTube 는 컨테이너 폭에 맞춰 줄어들도록 block + w-full 사용 (max 800px).
                     // 단, stuck 시엔 fixed 부모가 viewport 폭이 되므로 캡처된 width 를 inline style 로 강제.
                     isYouTube
                       ? stuck
                         ? ''
                         : 'w-full max-w-[800px] pl-20' // 좌측 Delete 버튼이 영상 위로 겹치지 않게 거터 확보
-                      : 'inline-block max-w-[90%] pl-20',
+                      : rotatingUrl
+                        ? 'inline-block'
+                        : 'inline-block max-w-[90%] pl-20',
+                    // 모바일: 회전 버튼이 이미지 아래로 내려가므로 그만큼 하단 공간을 확보해
+                    // 아래 References 와 겹치지 않게 한다(데스크탑은 모서리에 있어 불필요).
+                    showRotate && 'max-[639px]:pb-12',
                   )}
                   style={
                     isYouTube && stuck && pinnedWidth !== null
@@ -2166,14 +2383,17 @@ function MessageBubble({
                   <div
                     className={cn(
                       'transition-opacity duration-150',
+                      // 회전 중에는 포스트잇 버튼들을 숨기고(rotatingUrl), 회전이 끝나면 다시 노출.
                       (pendingDeleteUrl === expanded.url ||
                         (isYouTube && isYoutubePinned) ||
+                        !!rotatingUrl ||
                         (!isYouTube && !expandedImageLoaded)) &&
                         'pointer-events-none opacity-0',
                     )}
                     aria-hidden={
                       pendingDeleteUrl === expanded.url ||
                       (isYouTube && isYoutubePinned) ||
+                      !!rotatingUrl ||
                       (!isYouTube && !expandedImageLoaded)
                     }
                   >
@@ -2217,6 +2437,37 @@ function MessageBubble({
                       </button>
                     );
                   })()}
+                  {/* 회전 — 저장 이미지 한정. close/attach 와 같은 포스트잇 버튼으로
+                      이미지 좌하단(↺)·우하단(↻) 거터에 배치. */}
+                  {showRotate && (
+                    <>
+                      <button
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => void handleRotate(_rotateTarget, 270)}
+                        disabled={!!rotatingUrl}
+                        title="왼쪽으로 90° 회전"
+                        aria-label="왼쪽으로 90° 회전"
+                        // 데스크탑: 이미지 좌하단 모서리. 모바일(<640px): 컨테이너 하단에 확보한 틈(pb-12)
+                        // 안으로 내려가 상단 버튼 스택·하단 References 와 모두 겹치지 않는다.
+                        className="absolute bottom-1 left-10 z-20 inline-flex -rotate-3 items-center justify-center rounded-md border border-primary/40 bg-card px-2 py-1 text-primary shadow-md transition-transform hover:rotate-0 hover:bg-primary hover:text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50 max-[639px]:left-2"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => void handleRotate(_rotateTarget, 90)}
+                        disabled={!!rotatingUrl}
+                        title="오른쪽으로 90° 회전"
+                        aria-label="오른쪽으로 90° 회전"
+                        // 데스크탑: 이미지 우하단 모서리. 모바일(<640px): 컨테이너 하단 틈(pb-12) 안으로 내려감.
+                        className="absolute bottom-1 right-10 z-20 inline-flex rotate-3 items-center justify-center rounded-md border border-primary/40 bg-card px-2 py-1 text-primary shadow-md transition-transform hover:rotate-0 hover:bg-primary hover:text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50 max-[639px]:right-2"
+                      >
+                        <RotateCw className="h-3.5 w-3.5" />
+                      </button>
+                    </>
+                  )}
                   {onAttachImage &&
                     expanded.kind !== 'youtube' &&
                     expanded.kind !== 'x' &&
@@ -2427,8 +2678,13 @@ function MessageBubble({
                       pendingDeleteUrl 매칭 시 이 박스 위에만 블러 + Delete 오버레이. */}
                   <div
                     className={cn(
-                      'relative z-10 overflow-hidden rounded-lg shadow-[0_8px_24px_rgba(0,0,0,0.5)]',
-                      isYouTube ? 'w-full' : 'inline-block max-w-full',
+                      'relative z-10',
+                      // 이미지: 프레임(라운드/그림자/클리핑)은 안쪽 '사진 박스' 가 가지고 통째로 회전한다.
+                      //         바깥은 위치 래퍼라 클리핑하지 않아야 회전 스윕이 잘리지 않음.
+                      // YouTube: 기존처럼 바깥 박스에 프레임 적용.
+                      isYouTube
+                        ? 'w-full overflow-hidden rounded-lg shadow-[0_8px_24px_rgba(0,0,0,0.5)]'
+                        : 'inline-block max-w-full',
                     )}
                   >
                     {pendingDeleteUrl === expanded.url && onRemoveImage && (
@@ -2506,30 +2762,83 @@ function MessageBubble({
                         />
                       </div>
                     ) : (
-                      /* eslint-disable-next-line @next/next/no-img-element */
-                      <img
-                        src={expanded.url}
-                        alt={expanded.sourceTitle ?? '이미지'}
-                        referrerPolicy="no-referrer"
-                        onLoad={() => setExpandedImageLoaded(true)}
-                        // PIN 상태에서만 클릭하면 원본을 새 탭에서 열기 — Close/Delete 가 dim 된 PIN UX 와 일관.
-                        onClick={
-                          isPinnedEffective
-                            ? () => {
-                                window.open(
-                                  expanded.url,
-                                  '_blank',
-                                  'noopener,noreferrer',
-                                );
+                      <div
+                        className="relative flex items-center justify-center"
+                        // 회전 중에는 래퍼 높이를 '회전 후 필요한 높이(reservedH=긴 변)'로 애니메이션해
+                        // 세로 공간을 먼저 확보한다(height transition). 그 동안 이미지는 아직 회전하지 않고,
+                        // 확보가 끝난 뒤 회전 → 회전이 끝나도 아래 컨텐츠가 밀려나지 않음. 가로폭은 자동.
+                        style={
+                          expandedNatural
+                            ? {
+                                height: rotatingThis ? reservedH : imgDispH,
+                                transition: heightAnim
+                                  ? 'height 220ms ease'
+                                  : 'none',
                               }
                             : undefined
                         }
-                        title={isPinnedEffective ? '원본 새 탭에서 열기' : undefined}
-                        className={cn(
-                          'block h-auto max-h-[340px] w-auto max-w-full object-contain',
-                          isPinnedEffective && 'cursor-zoom-in',
-                        )}
-                      />
+                      >
+                        {/* 사진 박스 — 라운드/그림자/클리핑을 '항상' 유지한 채 통째로 회전한다.
+                            끝낼 때는 트랜지션을 꺼서(스냅) 리사이즈·프레임 재표시 애니메이션이 생기지 않음. */}
+                        <div
+                          className="relative z-10 overflow-hidden rounded-lg shadow-[0_8px_24px_rgba(0,0,0,0.5)]"
+                          style={{
+                            ...(expandedNatural
+                              ? { width: imgDispW, height: imgDispH }
+                              : {}),
+                            transform: spin ? `rotate(${spin}deg)` : undefined,
+                            transition: spinTransition
+                              ? 'transform 260ms ease'
+                              : 'none',
+                          }}
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={withCacheBust(
+                              resolveLocal(expanded.url),
+                              imgBust[resolveLocal(expanded.url)],
+                            )}
+                            alt={expanded.sourceTitle ?? '이미지'}
+                            referrerPolicy="no-referrer"
+                            onLoad={(e) => {
+                              const el = e.currentTarget;
+                              setExpandedNatural({
+                                w: el.naturalWidth,
+                                h: el.naturalHeight,
+                              });
+                              setExpandedImageLoaded(true);
+                            }}
+                            // PIN 상태에서만 클릭하면 원본을 새 탭에서 열기 — Close/Delete 가 dim 된 PIN UX 와 일관.
+                            // 회전된 로컬 사본을 회전 반영된 상태로 열도록 resolveLocal + 캐시버스트 적용.
+                            onClick={
+                              isPinnedEffective
+                                ? () => {
+                                    const target = resolveLocal(expanded.url);
+                                    window.open(
+                                      withCacheBust(target, imgBust[target]),
+                                      '_blank',
+                                      'noopener,noreferrer',
+                                    );
+                                  }
+                                : undefined
+                            }
+                            title={
+                              isPinnedEffective
+                                ? '원본 새 탭에서 열기'
+                                : undefined
+                            }
+                            className={cn(
+                              'block',
+                              // 로드 후엔 박스(자연비율로 계산됨)를 정확히 꽉 채운다 — object-contain 의
+                              // 반올림 레터박스(하단 흰 띠) 방지. 로드 전엔 긴 변 340 한도로 contain.
+                              expandedNatural
+                                ? 'h-full w-full'
+                                : 'max-h-[340px] max-w-full object-contain',
+                              isPinnedEffective && 'cursor-zoom-in',
+                            )}
+                          />
+                        </div>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -2556,6 +2865,8 @@ function MessageBubble({
                     onTotalPagesChange={setScatterTotalPages}
                     hideInlinePagination
                     hidden={!!expanded}
+                    bust={imgBust}
+                    localFor={localFor}
                   />
                 </LazyVisible>
               </div>

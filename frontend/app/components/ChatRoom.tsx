@@ -289,6 +289,7 @@ interface MessageItemProps {
   isGreeting: boolean;
   onEditContent: (id: string, content: string) => void;
   onPinImage: (id: string, url: string | null) => void;
+  onRotateImage: (id: string, url: string, deg: number) => Promise<void>;
   onOpenArtifact: (a: Artifact) => void;
   onAttachImage: (url: string) => void;
   onFollowup: (text: string) => void;
@@ -318,6 +319,7 @@ const MessageItem = memo(function MessageItem({
   isGreeting,
   onEditContent,
   onPinImage,
+  onRotateImage,
   onOpenArtifact,
   onAttachImage,
   onFollowup,
@@ -353,6 +355,7 @@ const MessageItem = memo(function MessageItem({
             isGreeting={isGreeting}
             onEditContent={onEditContent}
             onPinImage={onPinImage}
+            onRotateImage={onRotateImage}
             attachedSourceUrls={attachedSourceUrls}
             onOpenArtifact={onOpenArtifact}
             activeArtifactId={activeArtifactId}
@@ -3128,6 +3131,29 @@ export default function ChatRoom() {
     setTimeout(() => void persistMessageMetadata(convId, messageId), 0);
   }
 
+  // 저장된 이미지 물리 회전 — 서버의 실제 파일을 90 단위로 회전(원본 해상도 유지)해 덮어쓴다.
+  // 메타데이터에 각도를 저장하지 않는다(파일이 이미 회전됨). deg 는 시계방향 90 단위(음수 허용).
+  // 호출 측(MessageBubble)이 성공 후 캐시 버스트로 새 이미지를 다시 받아 화면에 반영한다.
+  async function rotateImage(
+    _messageId: string,
+    url: string,
+    deg: number,
+  ): Promise<void> {
+    const norm = (((deg % 360) + 360) % 360) as number;
+    if (norm === 0) return;
+    // url 에서 /attachments/<msgId>/<fileName> 추출 — 첨부/저장 이미지에 한해 회전 가능.
+    const m = /\/attachments\/([^/]+)\/([^/?#]+)/.exec(url);
+    if (!m) return;
+    const res = await fetch(`${API_URL}/attachments/rotate`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      // fileName 은 url 의 인코딩된 세그먼트 그대로 — 백엔드가 decodeURIComponent 처리.
+      body: JSON.stringify({ messageId: m[1], fileName: m[2], degrees: norm }),
+    });
+    if (!res.ok) throw new Error('rotate failed');
+  }
+
   // Message Manager 에서 user 메시지 본문 편집 — 로컬 즉시 반영 + 백엔드 PATCH.
   function editUserMessageContent(userMsgId: string, nextContent: string) {
     if (!activeId) return;
@@ -4149,6 +4175,7 @@ export default function ChatRoom() {
   const _toggleCollapse = toggleTurnCollapse;
   const _editContent = editUserMessageContent;
   const _pinImg = togglePinImage;
+  const _rotImg = rotateImage;
   const _attachImg = attachImageFromUrl;
   const _send = send;
   const _stableRmImg = useRef(_rmImg);
@@ -4158,6 +4185,7 @@ export default function ChatRoom() {
   const _stableToggleCollapse = useRef(_toggleCollapse);
   const _stableEditContent = useRef(_editContent);
   const _stablePinImg = useRef(_pinImg);
+  const _stableRotImg = useRef(_rotImg);
   const _stableAttachImg = useRef(_attachImg);
   const _stableSend = useRef(_send);
   _stableRmImg.current = _rmImg;
@@ -4167,6 +4195,7 @@ export default function ChatRoom() {
   _stableToggleCollapse.current = _toggleCollapse;
   _stableEditContent.current = _editContent;
   _stablePinImg.current = _pinImg;
+  _stableRotImg.current = _rotImg;
   _stableAttachImg.current = _attachImg;
   _stableSend.current = _send;
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -4183,6 +4212,8 @@ export default function ChatRoom() {
   const stableEditContent = useCallback((id: string, content: string) => _stableEditContent.current(id, content), []);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const stablePinImg = useCallback((id: string, url: string | null) => _stablePinImg.current(id, url), []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const stableRotImg = useCallback((id: string, url: string, deg: number): Promise<void> => _stableRotImg.current(id, url, deg), []);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const stableAttachImg = useCallback((url: string) => _stableAttachImg.current(url), []);
   const stableOpenArtifact = useCallback((a: Artifact) => setActiveArtifact(a), []);
@@ -4561,6 +4592,7 @@ export default function ChatRoom() {
                     }
                     onEditContent={stableEditContent}
                     onPinImage={stablePinImg}
+                    onRotateImage={stableRotImg}
                     onOpenArtifact={stableOpenArtifact}
                     onAttachImage={stableAttachImg}
                     onFollowup={stableFollowup}
