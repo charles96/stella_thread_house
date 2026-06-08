@@ -1831,6 +1831,19 @@ function MessageBubble({
     window.addEventListener('resize', update);
     return () => window.removeEventListener('resize', update);
   }, []);
+  // 확대 뷰가 놓인 영역(= Reference documents 와 같은 컬럼)의 가용 가로폭 측정.
+  // 데스크탑에서 이 폭(버튼 거터 제외) 안에서 이미지를 최대한 크게 표시하기 위함.
+  const mediaWrapRef = useRef<HTMLDivElement>(null);
+  const [mediaWrapW, setMediaWrapW] = useState(0);
+  useEffect(() => {
+    const el = mediaWrapRef.current;
+    if (!el) return;
+    const update = () => setMediaWrapW(el.clientWidth);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [expandedImageIndex]);
   // 물리 회전 후 같은 세션에서 새 이미지를 다시 받기 위한 캐시 버스트 버전(URL→ver).
   const [imgBust, setImgBust] = useState<Record<string, number>>({});
   // 회전 진행 중 URL(중복 클릭 방지). 회전 성공 시 버전을 올려 src 를 갱신한다.
@@ -2289,12 +2302,16 @@ function MessageBubble({
             const _isLocalFile = _rotateTarget.includes('/attachments/');
             const showRotate = !!onRotateImage && _isImgKind && _isLocalFile;
             // 표시 크기 — (물리 회전 반영된)자연 크기를 긴 변 340px 로 맞춤. 로드 전엔 0(폴백 클래스).
-            // 데스크탑은 기존 그대로(340). 모바일(<640px)에서는 좌우 버튼 거터(≈160px)와 함께
-            // 화면을 넘치지 않도록 긴 변을 화면 폭에 맞춰 줄여, 이미지 양옆 버튼이 항상 보이게 한다.
+            // 모바일(<640px): 좌우 버튼 거터(≈160px)와 함께 화면을 넘치지 않도록 긴 변을 화면 폭에 맞춤.
+            // 데스크탑: Reference documents 와 같은 컬럼 가용폭(mediaWrapW)에서 버튼 거터(160)+여유(16)를
+            //   뺀 만큼까지 키워 원본 해상도에 더 가깝게 크게 표시(측정 전엔 기존 340). sc 가 1 을 넘지 않아
+            //   원본보다 확대(블러)되지는 않는다.
             const EXP_MAXD =
               viewportW > 0 && viewportW < 640
                 ? Math.max(120, Math.floor(viewportW * 0.9) - 168)
-                : 340;
+                : mediaWrapW > 0
+                  ? Math.max(340, mediaWrapW - 176)
+                  : 340;
             let imgDispW = 0;
             let imgDispH = 0;
             if (expandedNatural && expandedNatural.w > 0 && expandedNatural.h > 0) {
@@ -2302,6 +2319,13 @@ function MessageBubble({
               const sc = long > EXP_MAXD ? EXP_MAXD / long : 1;
               imgDispW = Math.round(expandedNatural.w * sc);
               imgDispH = Math.round(expandedNatural.h * sc);
+              // 세로로 긴 이미지는 화면을 너무 많이 차지 → 데스크탑에서만 20% 축소.
+              // (가로 이미지는 그대로, 모바일도 그대로)
+              const isMobile = viewportW > 0 && viewportW < 640;
+              if (!isMobile && expandedNatural.h > expandedNatural.w) {
+                imgDispW = Math.round(imgDispW * 0.8);
+                imgDispH = Math.round(imgDispH * 0.8);
+              }
             }
             // 회전 후 필요한 세로 공간 = 긴 변(가로/세로 중 큰 값). 회전 시작 시 래퍼 높이를 이 값으로
             // 애니메이션(transition)해 먼저 확보한 뒤, 230ms 후 이미지를 돌린다(handleRotate 1→2단계).
@@ -2321,6 +2345,7 @@ function MessageBubble({
               // pin 상태(stuck) 에서는 animate-in 의 transform 이 fixed 자손의 containing block 을
               // wrapper 로 바꿔서 스크롤 시 fixed iframe 이 살짝 따라 움직이는 깜빡임 발생 → 끔.
               <div
+                ref={mediaWrapRef}
                 className={cn(
                   'mb-6 max-w-full',
                   // 회전 중에는 가로 클리핑을 풀어 회전 배경면이 잘려 흰색이 드러나지 않게 한다.
@@ -2360,7 +2385,7 @@ function MessageBubble({
                         : 'w-full max-w-[800px] pl-20' // 좌측 Delete 버튼이 영상 위로 겹치지 않게 거터 확보
                       : rotatingUrl
                         ? 'inline-block'
-                        : 'inline-block max-w-[90%] pl-20',
+                        : 'inline-block max-w-full pl-20',
                     // 모바일: 회전 버튼이 이미지 아래로 내려가므로 그만큼 하단 공간을 확보해
                     // 아래 References 와 겹치지 않게 한다(데스크탑은 모서리에 있어 불필요).
                     showRotate && 'max-[639px]:pb-12',
