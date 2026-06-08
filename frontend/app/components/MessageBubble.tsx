@@ -50,7 +50,11 @@ import {
 } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { fileToResizedDataUrl, maybeConvertHeic } from '@/lib/imageUtils';
-import { hydrateImageStates, setImageState } from '@/lib/imageCache';
+import {
+  getImageState,
+  hydrateImageStates,
+  setImageState,
+} from '@/lib/imageCache';
 import { extractArtifacts, type Artifact } from '@/lib/artifacts';
 import {
   decodeHtmlEntities,
@@ -1118,6 +1122,11 @@ function ImageScatter({
                         : 'portrait',
                     );
                     markRatio(img.url, el.naturalWidth / el.naturalHeight);
+                    // 자연 픽셀 크기 캐시 — 확대 시 첫 렌더부터 최종 크기로 그리게(리사이즈 깜빡임 방지).
+                    setImageState(img.url, {
+                      natW: el.naturalWidth,
+                      natH: el.naturalHeight,
+                    });
                     markLoaded(img.url);
                   }}
                   className="relative h-full w-full cursor-zoom-in object-cover transition-transform duration-200"
@@ -2312,17 +2321,25 @@ function MessageBubble({
                 : mediaWrapW > 0
                   ? Math.max(340, mediaWrapW - 176)
                   : 340;
+            // 로드 전에도 캐시된 자연 크기가 있으면 그걸로 첫 렌더부터 최종 크기를 잡아
+            // 열 때 'fallback 크기→최종 크기' 리사이즈(커졌다 줄어드는 느낌)를 없앤다.
+            const cachedNat = (() => {
+              if (expandedNatural) return null;
+              const s = getImageState(_u);
+              return s?.natW && s?.natH ? { w: s.natW, h: s.natH } : null;
+            })();
+            const effNatural = expandedNatural ?? cachedNat;
             let imgDispW = 0;
             let imgDispH = 0;
-            if (expandedNatural && expandedNatural.w > 0 && expandedNatural.h > 0) {
-              const long = Math.max(expandedNatural.w, expandedNatural.h);
+            if (effNatural && effNatural.w > 0 && effNatural.h > 0) {
+              const long = Math.max(effNatural.w, effNatural.h);
               const sc = long > EXP_MAXD ? EXP_MAXD / long : 1;
-              imgDispW = Math.round(expandedNatural.w * sc);
-              imgDispH = Math.round(expandedNatural.h * sc);
+              imgDispW = Math.round(effNatural.w * sc);
+              imgDispH = Math.round(effNatural.h * sc);
               // 세로로 긴 이미지는 화면을 너무 많이 차지 → 데스크탑에서만 20% 축소.
               // (가로 이미지는 그대로, 모바일도 그대로)
               const isMobile = viewportW > 0 && viewportW < 640;
-              if (!isMobile && expandedNatural.h > expandedNatural.w) {
+              if (!isMobile && effNatural.h > effNatural.w) {
                 imgDispW = Math.round(imgDispW * 0.8);
                 imgDispH = Math.round(imgDispH * 0.8);
               }
@@ -2793,7 +2810,7 @@ function MessageBubble({
                         // 세로 공간을 먼저 확보한다(height transition). 그 동안 이미지는 아직 회전하지 않고,
                         // 확보가 끝난 뒤 회전 → 회전이 끝나도 아래 컨텐츠가 밀려나지 않음. 가로폭은 자동.
                         style={
-                          expandedNatural
+                          effNatural
                             ? {
                                 height: rotatingThis ? reservedH : imgDispH,
                                 transition: heightAnim
@@ -2808,7 +2825,7 @@ function MessageBubble({
                         <div
                           className="relative z-10 overflow-hidden rounded-lg shadow-[0_8px_24px_rgba(0,0,0,0.5)]"
                           style={{
-                            ...(expandedNatural
+                            ...(effNatural
                               ? { width: imgDispW, height: imgDispH }
                               : {}),
                             transform: spin ? `rotate(${spin}deg)` : undefined,
@@ -2830,6 +2847,11 @@ function MessageBubble({
                               setExpandedNatural({
                                 w: el.naturalWidth,
                                 h: el.naturalHeight,
+                              });
+                              // 자연 크기 캐시 — 다음에 열 때 첫 렌더부터 최종 크기로 그리도록.
+                              setImageState(_u, {
+                                natW: el.naturalWidth,
+                                natH: el.naturalHeight,
                               });
                               setExpandedImageLoaded(true);
                             }}
@@ -2854,9 +2876,9 @@ function MessageBubble({
                             }
                             className={cn(
                               'block',
-                              // 로드 후엔 박스(자연비율로 계산됨)를 정확히 꽉 채운다 — object-contain 의
-                              // 반올림 레터박스(하단 흰 띠) 방지. 로드 전엔 긴 변 340 한도로 contain.
-                              expandedNatural
+                              // 박스(자연비율로 계산됨)를 정확히 꽉 채운다 — object-contain 의 반올림
+                              // 레터박스(하단 흰 띠) 방지. 크기 미상(캐시도 없음)일 때만 contain 폴백.
+                              effNatural
                                 ? 'h-full w-full'
                                 : 'max-h-[340px] max-w-full object-contain',
                               isPinnedEffective && 'cursor-zoom-in',

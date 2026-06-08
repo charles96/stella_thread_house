@@ -11,6 +11,9 @@ export interface ImageState {
   orient?: 'landscape' | 'portrait';
   // 자연 가로/세로 비율(naturalWidth / naturalHeight) — 팝콘 카드를 실제 비율대로 그릴 때 사용.
   ratio?: number;
+  // 자연 픽셀 크기 — 확대 뷰가 첫 렌더부터 최종 크기로 그리도록(열 때 리사이즈 깜빡임 방지).
+  natW?: number;
+  natH?: number;
   invalid?: boolean;
   loaded?: boolean;
   // LRU eviction 용 — 최근 접근 시각.
