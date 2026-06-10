@@ -71,12 +71,69 @@ interface AssessClarityRequest {
 @Controller('chat')
 export class ChatController {
   private readonly logger = new Logger(ChatController.name);
+  // 명시적 Stop(취소)된 assistant 메시지 id 집합 — 스트림 finally 가 저장 대신 삭제하도록.
+  // 취소가 초기 저장(appendMessages)보다 먼저 와도 안전하도록 stream 쪽에서도 확인.
+  private readonly cancelledTurns = new Set<string>();
+  // 진행 중인 stream 의 abort 컨트롤러 + 종료 신호(done).
+  // cancel 이 stream 을 즉시 끊고, finally 의 저장/삭제가 끝날 때까지 기다린 뒤 삭제를
+  // 확정한다 → 'finally 저장'과 'cancel 삭제'가 경합해도 삭제가 항상 마지막 쓰기가 된다.
+  private readonly activeStreams = new Map<
+    string,
+    { abort: AbortController; done: Promise<void> }
+  >();
 
   constructor(
     private readonly chatService: ChatService,
     private readonly conversationsService: ConversationsService,
     private readonly authService: AuthService,
   ) {}
+
+  // Stop 버튼 = 이번 turn 완전 취소. user/assistant 메시지를 삭제하고,
+  // 진행 중인 stream 의 finally 가 최종 저장하지 않도록 취소 플래그를 남긴다.
+  // (우발적 disconnect 는 이 엔드포인트를 호출하지 않으므로 서버 보존 로직 유지)
+  @Post('cancel')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiOperation({ summary: '진행 중 발화 취소 — 해당 turn 메시지 삭제' })
+  async cancel(
+    @Req() req: Request,
+    @Body()
+    body: {
+      conversationId: string;
+      userMessageId: string;
+      assistantMessageId: string;
+    },
+  ): Promise<{ ok: boolean }> {
+    const userId = (req.user as { sub: string } | undefined)?.sub;
+    if (!userId || !body?.conversationId) return { ok: false };
+    // 플래그 — 동시에 도는 stream 의 finally 가 저장을 건너뛰고 삭제하도록.
+    this.cancelledTurns.add(body.assistantMessageId);
+    // 진행 중인 stream 을 즉시 끊고, 그 finally(저장 또는 삭제)가 끝날 때까지 대기한다.
+    // 프론트가 SSE 연결을 먼저 끊으면 stream finally 가 부분 응답을 '저장'할 수 있는데,
+    // 아래 deleteMessages 를 done 이후에 실행해 삭제가 항상 저장보다 나중이 되도록 보장한다.
+    const active = this.activeStreams.get(body.assistantMessageId);
+    if (active) {
+      active.abort.abort();
+      try {
+        await active.done;
+      } catch {
+        /* stream 종료 대기 실패는 무시하고 삭제로 진행 */
+      }
+    }
+    // 삭제를 마지막에 — stream finally 가 부분 응답을 저장했더라도 여기서 제거.
+    try {
+      await this.conversationsService.deleteMessages(userId, body.conversationId, [
+        body.userMessageId,
+        body.assistantMessageId,
+      ]);
+    } catch (e) {
+      this.logger.warn(
+        `[chat/cancel] delete failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+    // 플래그 정리 — save 경로로 끝난 turn 은 finally 가 플래그를 지우지 않으므로 여기서 정리.
+    this.cancelledTurns.delete(body.assistantMessageId);
+    return { ok: true };
+  }
 
   @Get('image-proxy')
   @ApiOperation({ summary: '외부 이미지를 data URL로 프록시' })
@@ -250,11 +307,23 @@ export class ChatController {
       this.logger.log('[chat/stream] client disconnected — LLM stream aborted');
     });
 
+    // cancel 이 이 stream 을 즉시 끊고 finally 완료를 기다릴 수 있도록 등록.
+    // (assistant placeholder id 를 키로 사용 — appendMessages 이전이라도 cancel 이 찾을 수 있게 미리 등록)
+    let resolveStreamDone: () => void = () => {};
+    const streamDone = new Promise<void>((r) => {
+      resolveStreamDone = r;
+    });
+    const turnKey = body.persist?.assistantMessageId;
+    if (turnKey) {
+      this.activeStreams.set(turnKey, { abort: abortCtrl, done: streamDone });
+    }
+
     // persist 가 있으면 user 메시지 + assistant placeholder 를 즉시 저장.
     const userId = (req.user as { sub: string } | undefined)?.sub;
     type PersistCtx = {
       userId: string;
       convId: string;
+      userMessageId: string;
       assistantId: string;
       content: string;
       thinking: string;
@@ -287,6 +356,7 @@ export class ChatController {
         persistCtx = {
           userId,
           convId: conversationId,
+          userMessageId: userMessage.id,
           assistantId: assistantMessageId,
           content: '',
           thinking: '',
@@ -406,7 +476,27 @@ export class ChatController {
       }
     } finally {
       clearInterval(heartbeat);
-      if (persistCtx) {
+      // 명시적 Stop(취소)된 turn — 최종 저장하지 않고 user/assistant 메시지를 삭제(완전 취소).
+      // 취소 신호가 초기 저장보다 먼저 도착했을 수 있으므로 여기서도 삭제를 보장한다.
+      if (persistCtx && this.cancelledTurns.has(persistCtx.assistantId)) {
+        const ctx = persistCtx;
+        this.cancelledTurns.delete(ctx.assistantId);
+        try {
+          await this.conversationsService.deleteMessages(ctx.userId, ctx.convId, [
+            ctx.userMessageId,
+            ctx.assistantId,
+          ]);
+        } catch (e) {
+          this.logger.warn(
+            `[chat/stream] cancel cleanup failed: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+        this.conversationsService.emitStreamEnd(
+          ctx.userId,
+          ctx.convId,
+          ctx.assistantId,
+        );
+      } else if (persistCtx) {
         const ctx = persistCtx;
         const model = body.model;
         // 1) content/thinking 최종 저장
@@ -429,7 +519,12 @@ export class ChatController {
           ctx.assistantId,
         );
         // 2) 해시태그 생성 — 연결 유지 중 await, 완료 후 SSE 로 push.
-        if (ctx.content.trim().length > 0) {
+        // 저장 직후 cancel 이 도착했다면(취소 플래그) 해시태그 생성을 건너뛰어
+        // cancel 이 done 을 빨리 기다린 뒤 삭제하도록 한다.
+        if (
+          !this.cancelledTurns.has(ctx.assistantId) &&
+          ctx.content.trim().length > 0
+        ) {
           try {
             const tagResult = await this.chatService.generateHashtags(
               ctx.content,
@@ -481,6 +576,10 @@ export class ChatController {
           }
         }
       }
+
+      // stream 의 저장/삭제가 모두 끝남 — 대기 중인 cancel 을 깨워 삭제를 확정하게 한다.
+      if (turnKey) this.activeStreams.delete(turnKey);
+      resolveStreamDone();
 
       // 모든 작업 완료 후 연결 종료.
       writeIfConnected('data: [DONE]\n\n');

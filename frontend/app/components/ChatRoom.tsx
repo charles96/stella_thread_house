@@ -884,7 +884,9 @@ export default function ChatRoom() {
     botId: string;
   } | null>(null);
 
-  // Stop 버튼 클릭 시 호출. 진행 중인 stream을 즉시 끊고, 현재 turn의 메시지들도 화면에서 제거.
+  // Stop 버튼 클릭 시 호출. 진행 중인 stream을 즉시 끊고, 현재 turn을 '완전 취소'.
+  // 화면에서 제거 + 백엔드(서버 사이드 저장)에도 취소 신호 → user/assistant 메시지 삭제.
+  // (백엔드는 stream finally 에서 최종 저장 대신 삭제 → 새로고침해도 잔재 없음)
   const stopStreaming = useCallback(() => {
     streamAbortRef.current?.abort();
     const ids = streamMsgIdsRef.current;
@@ -901,6 +903,17 @@ export default function ChatRoom() {
           };
         }),
       );
+      // 명시적 취소 신호 — abort 로 연결이 끊겨도(또는 저장 전이어도) 백엔드가 안전하게 삭제.
+      void fetch(`${API_URL}/chat/cancel`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          conversationId: ids.convId,
+          userMessageId: ids.userId,
+          assistantMessageId: ids.botId,
+        }),
+      }).catch(() => {});
       streamMsgIdsRef.current = null;
     }
   }, []);
