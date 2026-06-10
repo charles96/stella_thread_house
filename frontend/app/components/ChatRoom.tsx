@@ -810,6 +810,9 @@ export default function ChatRoom() {
   // 스트리밍 중 '하단 추종' 여부. 사용자가 위로 스크롤해 내용을 읽는 중이면 false 가 되어
   // 강제로 끌어내리지 않음. 다시 하단 근처로 오면 true 로 복귀.
   const stickBottomRef = useRef(true);
+  // 직전 scrollTop — 스크롤 '방향' 판별용. References 등장 등 높이 점프로 생기는
+  // 스크롤 이벤트가 추종을 잘못 끄지 않도록, '사용자가 위로 올린 경우'만 해제하기 위함.
+  const lastScrollTopRef = useRef(0);
   const hydratedRef = useRef(false);
 
   const loadMoreConversations = useCallback(async () => {
@@ -2156,15 +2159,22 @@ export default function ChatRoom() {
     const el = scrollRef.current;
     if (!el) return;
     const onScroll = () => {
-      if (el.scrollTop < 800) void loadOlderRef.current();
-      const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      const st = el.scrollTop;
+      const prevSt = lastScrollTopRef.current;
+      lastScrollTopRef.current = st;
+      if (st < 800) void loadOlderRef.current();
+      const distFromBottom = el.scrollHeight - st - el.clientHeight;
       if (distFromBottom < 800) void loadNewerRef.current();
-      // 자동 스크롤 윈도우 안이면 isScrolling 토글 생략.
+      // 자동 스크롤 윈도우 안이면(프로그래밍 스크롤) 추종 플래그/ isScrolling 토글 생략.
       if (Date.now() < programmaticScrollRef.current) return;
-      // 사용자가 직접 스크롤한 경우(프로그래밍 윈도우 밖): 하단 근처면 추종 ON,
-      // 위로 충분히 올라갔으면 추종 OFF → 스트리밍 중 강제로 끌어내리지 않음.
-      // 임계값은 스트리밍 추종 effect 와 동일(800)하게 맞춰 두 메커니즘이 일관되게 동작.
-      stickBottomRef.current = distFromBottom < 800;
+      // 추종 해제는 '사용자가 위로 스크롤한 경우'에만 — References 등장 등 높이 점프로
+      // distFromBottom 이 커지는 것만으로는 끄지 않는다(스크롤 위치는 그대로이므로).
+      // 하단 근처로 돌아오면 다시 추종 ON.
+      if (distFromBottom < 120) {
+        stickBottomRef.current = true;
+      } else if (st < prevSt - 4) {
+        stickBottomRef.current = false;
+      }
       // 이미 스크롤 중이면 불필요한 state 업데이트 생략 (매 픽셀마다 setIsScrolling 호출 방지).
       if (!isScrollingRef.current) {
         isScrollingRef.current = true;

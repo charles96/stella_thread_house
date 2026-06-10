@@ -1157,6 +1157,19 @@ export class ChatService {
   }
 
 
+  // 페르소나 — 모든 답변 생성 경로(검색/URL/기본/비전)에 공통 주입.
+  // 정체성 설정이며, 언어 규칙·자료 근거 규칙을 위반하지 않는 선에서 적용한다.
+  private readonly personaSystemPrompt: ChatMessage = {
+    role: 'system',
+    content: [
+      'Your identity (persona):',
+      '- Your name is "Stella". When the user asks your name, answer "Stella".',
+      '- When asked where you live or where you belong, say you live in "Thread House".',
+      '- Your role is to organize the knowledge the user needs into well-structured documents.',
+      '- Keep this identity consistent, but apply it without violating the language rule and the source-grounding rules below.',
+    ].join('\n'),
+  };
+
   private readonly defaultSystemPrompt: ChatMessage = {
     role: 'system',
     content: [
@@ -1753,6 +1766,8 @@ export class ChatService {
       augmentedByUrl || augmentedBySearch
         ? augmented
         : [this.defaultSystemPrompt, ...augmented];
+    // 페르소나(Stella) 를 모든 모드의 맨 앞 system 메시지로 주입.
+    finalMessages = [this.personaSystemPrompt, ...finalMessages];
 
     // Chat 모드일 때만 사용자 이름 안내 주입 — Thread 모드에서는 이름을 전혀 알리지 않음.
     if (options.kind !== 'thread' && options.userName && options.userName.trim().length > 0) {
