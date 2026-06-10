@@ -7,6 +7,7 @@ import {
   Bot,
   Brain,
   Check,
+  ChevronDown,
   ChevronsUpDown,
   Clock,
   Eye,
@@ -49,7 +50,7 @@ import {
   TAVILY_TOP_READ_MIN,
   TAVILY_TOP_READ_MAX,
 } from '@/lib/threadSettings';
-import type { AuthUser, ModelInfo } from './ChatRoom';
+import type { AiGroupCfg, AuthUser, ModelInfo } from './ChatRoom';
 
 interface Props {
   open: boolean;
@@ -57,21 +58,14 @@ interface Props {
   user?: AuthUser | null;
   // 사용자 정보(이름 등) 변경 후 부모의 user state 를 갱신하기 위한 콜백.
   onUserUpdated?: (user: AuthUser) => void;
-  models?: ModelInfo[];
-  reasoningModel?: string;
-  visionModel?: string;
-  onSelectReasoningModel?: (name: string) => void;
-  onSelectVisionModel?: (name: string) => void;
-  aiEndpoint?: string;
-  onChangeAiEndpoint?: (v: string) => void;
-  // 모델 fetch 결과 — 에러가 있으면 입력 박스 빨강 + 에러 메시지 표기.
-  aiEndpointError?: string | null;
-  aiEndpointLoading?: boolean;
-  // AI 탭이 열릴 때 엔드포인트 유효성 재검증 (모델 목록 재조회).
-  onCheckEndpoint?: () => void;
-  // OpenAI 호환 API 키 (로컬 서버는 비워둬도 됨).
-  apiKey?: string;
-  onChangeApiKey?: (v: string) => void;
+  // Reasoning / Vision 두 그룹의 AI 설정(endpoint/apiKey/model).
+  reasoningCfg?: AiGroupCfg;
+  visionCfg?: AiGroupCfg;
+  // 그룹별 부분 갱신 콜백 — { [kind]: patch } 로 PUT /admin/ai.
+  onChangeAiGroup?: (
+    kind: 'reasoning' | 'vision',
+    patch: Partial<AiGroupCfg>,
+  ) => void;
 }
 
 type Tab =
@@ -87,18 +81,9 @@ export default function SettingsModal({
   onClose,
   user,
   onUserUpdated,
-  models = [],
-  reasoningModel,
-  visionModel,
-  onSelectReasoningModel,
-  onSelectVisionModel,
-  aiEndpoint,
-  onChangeAiEndpoint,
-  aiEndpointError,
-  aiEndpointLoading,
-  onCheckEndpoint,
-  apiKey,
-  onChangeApiKey,
+  reasoningCfg,
+  visionCfg,
+  onChangeAiGroup,
 }: Props) {
   const { t } = useI18n();
   const isAdmin = user?.role === 'admin';
@@ -216,18 +201,9 @@ export default function SettingsModal({
             {tab === 'thread' && <ThreadTab />}
             {isAdmin && tab === 'admin-ai' && (
               <AiSection
-                models={models}
-                reasoningModel={reasoningModel}
-                visionModel={visionModel}
-                onSelectReasoningModel={onSelectReasoningModel}
-                onSelectVisionModel={onSelectVisionModel}
-                aiEndpoint={aiEndpoint}
-                onChangeAiEndpoint={onChangeAiEndpoint}
-                aiEndpointError={aiEndpointError}
-                aiEndpointLoading={aiEndpointLoading}
-                onCheckEndpoint={onCheckEndpoint}
-                apiKey={apiKey}
-                onChangeApiKey={onChangeApiKey}
+                reasoningCfg={reasoningCfg}
+                visionCfg={visionCfg}
+                onChangeAiGroup={onChangeAiGroup}
               />
             )}
             {isAdmin && tab === 'admin-smtp' && <SmtpSection />}
@@ -849,71 +825,236 @@ function AccountSection({ user }: { user: AuthUser }) {
   );
 }
 
-// AI 모델 섹션 — 단독 컴포넌트로 분리해 Admin > AI 탭에서 재사용.
+// AI 모델 섹션 — Reasoning / Vision 두 그룹을 각각 아코디언으로 분리.
+// 각 그룹은 독립된 AI Endpoint / API Key / Model 을 입력받는다.
 function AiSection({
-  models,
-  reasoningModel,
-  visionModel,
-  onSelectReasoningModel,
-  onSelectVisionModel,
-  aiEndpoint,
-  onChangeAiEndpoint,
-  aiEndpointError,
-  aiEndpointLoading,
-  onCheckEndpoint,
-  apiKey,
-  onChangeApiKey,
+  reasoningCfg,
+  visionCfg,
+  onChangeAiGroup,
 }: {
-  models: ModelInfo[];
-  reasoningModel?: string;
-  visionModel?: string;
-  onSelectReasoningModel?: (name: string) => void;
-  onSelectVisionModel?: (name: string) => void;
-  aiEndpoint?: string;
-  onChangeAiEndpoint?: (v: string) => void;
-  aiEndpointError?: string | null;
-  aiEndpointLoading?: boolean;
-  onCheckEndpoint?: () => void;
-  apiKey?: string;
-  onChangeApiKey?: (v: string) => void;
+  reasoningCfg?: AiGroupCfg;
+  visionCfg?: AiGroupCfg;
+  onChangeAiGroup?: (
+    kind: 'reasoning' | 'vision',
+    patch: Partial<AiGroupCfg>,
+  ) => void;
 }) {
   const { t } = useI18n();
-  // AI 탭이 열릴 때(이 컴포넌트 mount) 엔드포인트 유효성 재검증 — Tavily 와 동일.
-  useEffect(() => {
-    onCheckEndpoint?.();
-    // mount 시 1회만.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  // 엔드포인트는 입력 중에는 검증하지 않고, 포커스가 벗어날 때(blur) 또는 Enter 시에만
-  // 부모로 커밋 → 모델 조회(유효성 검사) 발동. (타이핑 중 부분 URL 검증으로 에러 깜빡임 방지)
-  const [endpointDraft, setEndpointDraft] = useState(aiEndpoint ?? '');
-  useEffect(() => {
-    setEndpointDraft(aiEndpoint ?? '');
-  }, [aiEndpoint]);
-  const commitEndpoint = () => {
-    const v = endpointDraft.trim();
-    if (v !== (aiEndpoint ?? '').trim()) onChangeAiEndpoint?.(v);
-  };
-  // 엔드포인트 검증 상태 — Tavily 의 Active 배지와 동일한 UX.
-  //   checking: 모델 조회 중 / active: 조회 성공(모델 있음) / inactive: 오류.
-  const endpointStatus: 'checking' | 'active' | 'inactive' | 'none' =
-    !aiEndpoint
-      ? 'none'
-      : aiEndpointLoading
-        ? 'checking'
-        : aiEndpointError
-          ? 'inactive'
-          : models.length > 0
-            ? 'active'
-            : 'inactive';
+  const empty: AiGroupCfg = { endpoint: '', apiKey: '', model: '' };
+  // 한 번에 하나만 펼침 — 다른 하나를 열면 기존 것은 자동으로 접힘.
+  const [openKind, setOpenKind] = useState<'reasoning' | 'vision' | null>(
+    'reasoning',
+  );
+  const toggle = (k: 'reasoning' | 'vision') =>
+    setOpenKind((prev) => (prev === k ? null : k));
   return (
     <SettingSection
       icon={<Bot className="h-5 w-5 text-primary" />}
       title={t('settings.menu.ai')}
       description={t('settings.ai.subtitle')}
     >
-      <div className="rounded-lg border border-border bg-secondary/30 p-5">
-        <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-3">
+        <AiModelGroup
+          kind="reasoning"
+          icon={<Brain className="h-4 w-4" />}
+          title={t('settings.ai.reasoning')}
+          desc={t('settings.ai.reasoning.desc')}
+          cfg={reasoningCfg ?? empty}
+          onChange={(patch) => onChangeAiGroup?.('reasoning', patch)}
+          open={openKind === 'reasoning'}
+          onToggle={() => toggle('reasoning')}
+        />
+        <AiModelGroup
+          kind="vision"
+          icon={<Eye className="h-4 w-4" />}
+          title={t('settings.ai.vision')}
+          desc={t('settings.ai.vision.desc')}
+          cfg={visionCfg ?? empty}
+          onChange={(patch) => onChangeAiGroup?.('vision', patch)}
+          open={openKind === 'vision'}
+          onToggle={() => toggle('vision')}
+        />
+      </div>
+
+      {/* Tools — Tavily 등 외부 API 키 관리. */}
+      <ToolsSubSection />
+    </SettingSection>
+  );
+}
+
+// 한 그룹(Reasoning 또는 Vision)의 아코디언 — Endpoint / API Key / Model 입력.
+// 그룹별로 자체 모델 목록(/chat/models?kind=...) 을 조회해 검증 상태 + 모델 픽커 제공.
+function AiModelGroup({
+  kind,
+  icon,
+  title,
+  desc,
+  cfg,
+  onChange,
+  open,
+  onToggle,
+}: {
+  kind: 'reasoning' | 'vision';
+  icon: React.ReactNode;
+  title: string;
+  desc: string;
+  cfg: AiGroupCfg;
+  onChange: (patch: Partial<AiGroupCfg>) => void;
+  // 부모가 제어 — 한 번에 하나만 펼치기 위해 open 상태를 끌어올림.
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const { t } = useI18n();
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [endpointDraft, setEndpointDraft] = useState(cfg.endpoint);
+  useEffect(() => {
+    setEndpointDraft(cfg.endpoint);
+  }, [cfg.endpoint]);
+  const reqRef = useRef(0);
+
+  // 그룹의 endpoint(+apiKey, 백엔드에서 그룹값 사용)로 모델 목록 조회 = 엔드포인트 유효성 검사.
+  const refresh = useCallback(
+    async (endpointOverride?: string) => {
+      const ep = (endpointOverride ?? cfg.endpoint).trim();
+      const reqId = ++reqRef.current;
+      if (!ep) {
+        setModels([]);
+        setError(null);
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
+      setError(null);
+      const ctrl = new AbortController();
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        ctrl.abort();
+      }, 10000);
+      try {
+        const qs = new URLSearchParams({ kind, endpoint: ep });
+        const res = await fetch(`${API_URL}/chat/models?${qs.toString()}`, {
+          credentials: 'include',
+          signal: ctrl.signal,
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = (await res.json()) as {
+          models: ModelInfo[];
+          error?: string;
+        };
+        if (reqRef.current !== reqId) return;
+        if (json.error) {
+          setModels([]);
+          setError(json.error);
+          return;
+        }
+        setModels(json.models);
+        setError(null);
+      } catch (e) {
+        if (reqRef.current !== reqId) return;
+        setModels([]);
+        setError(
+          timedOut
+            ? '응답 시간 초과 (10s)'
+            : e instanceof Error
+              ? e.message
+              : 'failed',
+        );
+      } finally {
+        clearTimeout(timer);
+        if (reqRef.current === reqId) setLoading(false);
+      }
+    },
+    [kind, cfg.endpoint],
+  );
+
+  // 아코디언이 열려 있을 때 + endpoint 변경 시 검증/모델 조회.
+  useEffect(() => {
+    if (open) void refresh();
+  }, [open, refresh]);
+
+  // 입력 중에는 검증하지 않고 blur/Enter 시에만 커밋 → 저장 + 모델 재조회.
+  const commitEndpoint = () => {
+    const v = endpointDraft.trim();
+    if (v !== cfg.endpoint.trim()) {
+      onChange({ endpoint: v });
+      void refresh(v);
+    }
+  };
+
+  const status: 'checking' | 'active' | 'inactive' | 'none' = !cfg.endpoint
+    ? 'none'
+    : loading
+      ? 'checking'
+      : error
+        ? 'inactive'
+        : models.length > 0
+          ? 'active'
+          : 'inactive';
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-border bg-secondary/30">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center gap-2 px-4 py-3 text-left transition-colors hover:bg-secondary/50"
+      >
+        <span className="text-primary">{icon}</span>
+        <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
+          <span className="shrink-0 text-[13px] font-semibold text-foreground">
+            {title}
+          </span>
+          {/* 접혀 있을 때 선택된 모델명을 헤더에 노출 — "- 모델명". */}
+          {!open && cfg.model && (
+            <span className="truncate text-[12px] text-muted-foreground">
+              - {cfg.model}
+            </span>
+          )}
+        </span>
+        {status !== 'none' && (
+          <span
+            className={cn(
+              'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium',
+              status === 'active'
+                ? 'bg-emerald-500/15 text-emerald-400'
+                : status === 'inactive'
+                  ? 'bg-destructive/15 text-destructive'
+                  : 'bg-muted text-muted-foreground',
+            )}
+          >
+            {status === 'active' && (
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
+            )}
+            {status === 'inactive' && (
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-destructive" />
+            )}
+            {status === 'checking'
+              ? t('settings.ai.tools.checking')
+              : status === 'active'
+                ? t('settings.ai.tools.active')
+                : t('settings.ai.tools.inactive')}
+          </span>
+        )}
+        <ChevronDown
+          className={cn(
+            'h-4 w-4 shrink-0 text-muted-foreground transition-transform',
+            open && 'rotate-180',
+          )}
+        />
+      </button>
+      {/* 펼침/접힘 — grid-rows 0fr↔1fr + opacity 로 높이까지 부드럽게 전환. */}
+      <div
+        className={cn(
+          'grid transition-all duration-300 ease-out',
+          open ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0',
+        )}
+      >
+        <div className="overflow-hidden">
+          <div className="flex flex-col gap-4 border-t border-border px-4 py-4">
+            <div className="text-[11px] text-muted-foreground">{desc}</div>
+          {/* AI Endpoint */}
           <div>
             <div className="mb-1.5 flex items-center gap-1.5">
               <span className="text-primary">
@@ -922,30 +1063,6 @@ function AiSection({
               <span className="text-[13px] font-medium text-foreground">
                 AI Endpoint
               </span>
-              {endpointStatus !== 'none' && (
-                <span
-                  className={cn(
-                    'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium',
-                    endpointStatus === 'active'
-                      ? 'bg-emerald-500/15 text-emerald-400'
-                      : endpointStatus === 'inactive'
-                        ? 'bg-destructive/15 text-destructive'
-                        : 'bg-muted text-muted-foreground',
-                  )}
-                >
-                  {endpointStatus === 'active' && (
-                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                  )}
-                  {endpointStatus === 'inactive' && (
-                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-destructive" />
-                  )}
-                  {endpointStatus === 'checking'
-                    ? t('settings.ai.tools.checking')
-                    : endpointStatus === 'active'
-                      ? t('settings.ai.tools.active')
-                      : t('settings.ai.tools.inactive')}
-                </span>
-              )}
             </div>
             <div className="mb-1.5 text-[11px] text-muted-foreground">
               OpenAI-compatible base URL (e.g. https://api.openai.com/v1,
@@ -962,25 +1079,29 @@ function AiSection({
               placeholder="https://api.openai.com/v1"
               className={cn(
                 'w-full rounded-md border bg-background px-3 py-2 text-[13px] outline-none transition-colors focus:ring-2',
-                aiEndpointError
+                error
                   ? 'border-destructive ring-destructive/30 focus:ring-destructive/50'
                   : 'border-input focus:ring-ring',
               )}
               spellCheck={false}
               autoComplete="off"
             />
-            {aiEndpointLoading && (
+            {loading && (
               <div className="mt-1 text-[11px] text-muted-foreground/80">
                 {t('settings.ai.endpoint.loading')}
               </div>
             )}
-            {aiEndpointError && (
+            {error && (
               <div className="mt-1 flex items-start gap-1 text-[11px] font-medium text-destructive">
                 <span aria-hidden>⚠️</span>
-                <span>{t('settings.ai.endpoint.error')}{aiEndpointError}</span>
+                <span>
+                  {t('settings.ai.endpoint.error')}
+                  {error}
+                </span>
               </div>
             )}
           </div>
+          {/* API Key */}
           <div>
             <div className="mb-1.5 flex items-center gap-1.5">
               <span className="text-primary">
@@ -995,44 +1116,39 @@ function AiSection({
             </div>
             <input
               type="password"
-              value={apiKey ?? ''}
-              onChange={(e) => onChangeApiKey?.(e.target.value)}
+              value={cfg.apiKey}
+              onChange={(e) => onChange({ apiKey: e.target.value })}
               placeholder="sk-..."
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-[13px] outline-none transition-colors focus:ring-2 focus:ring-ring"
               spellCheck={false}
               autoComplete="off"
             />
           </div>
+          {/* Model */}
           <ModelPickerRow
-            icon={<Brain className="h-4 w-4" />}
-            label={t('settings.ai.reasoning')}
-            desc={t('settings.ai.reasoning.desc')}
+            icon={icon}
+            label="Model"
+            desc={
+              kind === 'vision'
+                ? t('settings.ai.vision.desc')
+                : t('settings.ai.reasoning.desc')
+            }
             models={models}
-            selected={reasoningModel}
-            onSelect={onSelectReasoningModel}
+            selected={cfg.model || undefined}
+            onSelect={(m) => onChange({ model: m })}
             disabled={models.length === 0}
           />
-          <ModelPickerRow
-            icon={<Eye className="h-4 w-4" />}
-            label={t('settings.ai.vision')}
-            desc={t('settings.ai.vision.desc')}
-            models={models}
-            selected={visionModel}
-            onSelect={onSelectVisionModel}
-            disabled={models.length === 0}
-          />
+          </div>
         </div>
       </div>
-
-      {/* Tools — Tavily 등 외부 API 키 관리. */}
-      <ToolsSubSection />
-    </SettingSection>
+    </div>
   );
 }
 
 // AI 페이지 내 Tools 서브섹션 — 현재는 Tavily API key.
 function ToolsSubSection() {
   const { t } = useI18n();
+  const [open, setOpen] = useState(false);
   const [apiKeySet, setApiKeySet] = useState(false);
   const [apiKey, setApiKey] = useState('');
   const [busy, setBusy] = useState(false);
@@ -1112,10 +1228,14 @@ function ToolsSubSection() {
         <Wrench className="h-3.5 w-3.5 text-primary" />
         <span>{t('settings.ai.tools')}</span>
       </h3>
-      <div className="flex flex-col gap-2 rounded-lg border border-border bg-secondary/30 p-4">
-        <div className="flex items-center gap-1.5">
+      <div className="overflow-hidden rounded-lg border border-border bg-secondary/30">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className="flex w-full items-center gap-2 px-4 py-3 text-left transition-colors hover:bg-secondary/50"
+        >
           <Globe className="h-4 w-4 text-primary" />
-          <span className="text-[13px] font-medium text-foreground">
+          <span className="flex-1 text-[13px] font-semibold text-foreground">
             {t('settings.ai.tools.tavily')}
           </span>
           {/* Active 검증 결과 우선 표시 — 키 미설정 시에만 set/notSet 라벨 노출. */}
@@ -1147,27 +1267,51 @@ function ToolsSubSection() {
               {t('settings.ai.tools.notSet')}
             </span>
           )}
-        </div>
-        <div className="text-[11px] text-muted-foreground">
-          {t('settings.ai.tools.tavilyDesc')}
-        </div>
-        <div className="flex items-center gap-2">
-          <input
-            type="password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !busy && apiKey.trim()) save();
-            }}
-            placeholder={t('settings.ai.tools.placeholder')}
-            autoComplete="off"
-            spellCheck={false}
-            className="flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-[13px] outline-none focus:ring-2 focus:ring-ring"
+          <ChevronDown
+            className={cn(
+              'h-4 w-4 shrink-0 text-muted-foreground transition-transform',
+              open && 'rotate-180',
+            )}
           />
-          <Button size="sm" onClick={save} disabled={busy || !apiKey.trim()}>
-            {busy ? t('settings.account.saving') : t('settings.account.save')}
-          </Button>
-          {savedAt && <Check className="h-4 w-4 text-emerald-500" />}
+        </button>
+        {/* 펼침/접힘 — AI 그룹 아코디언과 동일한 grid-rows 애니메이션. */}
+        <div
+          className={cn(
+            'grid transition-all duration-300 ease-out',
+            open ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0',
+          )}
+        >
+          <div className="overflow-hidden">
+            <div className="flex flex-col gap-2 border-t border-border px-4 py-4">
+              <div className="text-[11px] text-muted-foreground">
+                {t('settings.ai.tools.tavilyDesc')}
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="password"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !busy && apiKey.trim()) save();
+                  }}
+                  placeholder={t('settings.ai.tools.placeholder')}
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-[13px] outline-none focus:ring-2 focus:ring-ring"
+                />
+                <Button
+                  size="sm"
+                  onClick={save}
+                  disabled={busy || !apiKey.trim()}
+                >
+                  {busy
+                    ? t('settings.account.saving')
+                    : t('settings.account.save')}
+                </Button>
+                {savedAt && <Check className="h-4 w-4 text-emerald-500" />}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

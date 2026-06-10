@@ -3,6 +3,12 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AttachmentsService } from '../attachments/attachments.service';
 import { SystemConfig } from '../db/entities/system-config.entity';
+import {
+  AiConfigValue,
+  AiGroup,
+  AiGroups,
+  resolveAiGroups,
+} from '../admin/ai-config.util';
 import { PageExtractResult, PageService } from '../page/page.service';
 import { LlmService } from '../llm/llm.service';
 import { statusMsg } from './chat.i18n';
@@ -292,58 +298,29 @@ export class ChatService {
   private readonly logger = new Logger(ChatService.name);
   private readonly defaultModel = process.env.AI_DEFAULT_MODEL ?? 'gemma4:26b';
 
-  // AI Endpoint — system_config 'ai' row 의 endpoint 가 단일 진실 출처.
-  // env 폴백 없음. 미설정 시 throw — 호출 측이 사용자에게 Settings 안내.
-  private async getAiEndpoint(): Promise<string> {
-    const row = await this.systemConfigs.findOne({
-      where: { key: 'ai' },
-    });
-    const v = (row?.value as { endpoint?: string } | undefined)?.endpoint;
-    if (!v || !v.trim()) {
+  // AI 설정 — system_config 'ai' row 를 Reasoning / Vision 두 그룹으로 정규화해서 로드.
+  // 각 그룹은 독립된 endpoint / apiKey / model 을 가진다(Vision 의 빈 값은 Reasoning 으로 폴백).
+  private async loadAiGroups(): Promise<AiGroups> {
+    try {
+      const row = await this.systemConfigs.findOne({ where: { key: 'ai' } });
+      return resolveAiGroups(row?.value as AiConfigValue | undefined);
+    } catch {
+      return resolveAiGroups(undefined);
+    }
+  }
+
+  // 그룹의 endpoint 를 정규화. 호출별 override(endpoint)가 유효하면 우선.
+  // 둘 다 없으면 throw — 호출 측이 사용자에게 Settings 안내.
+  private resolveGroupEndpoint(group: AiGroup, override?: string): string {
+    const o = (override ?? '').trim();
+    if (o && /^https?:\/\//i.test(o)) return o.replace(/\/$/, '');
+    const e = group.endpoint?.trim();
+    if (!e) {
       throw new Error(
         'AI Endpoint 가 설정되지 않았습니다. Settings > AI 에서 입력하세요.',
       );
     }
-    return v.trim().replace(/\/$/, '');
-  }
-
-  // Reasoning 모델 — system_config 'ai' row 의 reasoningModel 이 전역 기본값.
-  // 요청에 model 이 지정되면 그게 우선, 없으면 admin 설정 → env(AI_DEFAULT_MODEL) 순.
-  private async getReasoningModel(): Promise<string> {
-    try {
-      const row = await this.systemConfigs.findOne({ where: { key: 'ai' } });
-      const v = (row?.value as { reasoningModel?: string } | undefined)
-        ?.reasoningModel;
-      if (v && v.trim()) return v.trim();
-    } catch {
-      // ignore — env 기본값으로 폴백
-    }
-    return this.defaultModel;
-  }
-
-  // Vision 모델 — system_config 'ai' row 의 visionModel 이 전역 기본값.
-  // 첨부 이미지가 있는 답변 생성 시 사용. 미설정이면 빈 문자열(호출 측이 폴백 결정).
-  private async getVisionModel(): Promise<string> {
-    try {
-      const row = await this.systemConfigs.findOne({ where: { key: 'ai' } });
-      const v = (row?.value as { visionModel?: string } | undefined)
-        ?.visionModel;
-      if (v && v.trim()) return v.trim();
-    } catch {
-      // ignore
-    }
-    return '';
-  }
-
-  // OpenAI 호환 API 키 — system_config 'ai' row. 로컬 서버는 비어있을 수 있음.
-  private async getApiKey(): Promise<string | undefined> {
-    try {
-      const row = await this.systemConfigs.findOne({ where: { key: 'ai' } });
-      const v = (row?.value as { apiKey?: string } | undefined)?.apiKey;
-      return v?.trim() || undefined;
-    } catch {
-      return undefined;
-    }
+    return e.replace(/\/$/, '');
   }
 
   // Tavily key — system_config 'tavily' row 가 단일 출처. env 폴백 없음 (부팅 seed 만).
@@ -426,23 +403,22 @@ export class ChatService {
     return { dataUrl, contentType: ct, bytes: buf.byteLength };
   }
 
-  // 호출별로 endpoint 가 명시되면 그 값을 우선 사용. 아니면 DB 의 'ai' row.
-  private async resolveEndpoint(endpoint?: string): Promise<string> {
-    const e = (endpoint ?? '').trim();
-    if (e && /^https?:\/\//i.test(e)) return e.replace(/\/$/, '');
-    return this.getAiEndpoint();
-  }
-
-  async listModels(endpoint?: string): Promise<ModelInfo[]> {
-    // endpoint 미지정 + DB 에도 없으면 빈 배열 반환 (healthcheck/초기화 호환).
+  async listModels(
+    kind: 'reasoning' | 'vision' = 'reasoning',
+    endpoint?: string,
+  ): Promise<ModelInfo[]> {
+    // 지정한 그룹(reasoning/vision)의 endpoint + apiKey 로 모델 목록 조회.
+    // endpoint override(저장 전 draft) 가 있으면 그 값을 우선 사용, apiKey 는 그룹 값.
+    const groups = await this.loadAiGroups();
+    const group = kind === 'vision' ? groups.vision : groups.reasoning;
     let url: string;
     try {
-      url = await this.resolveEndpoint(endpoint);
+      url = this.resolveGroupEndpoint(group, endpoint);
     } catch {
+      // endpoint 미설정 → 빈 배열 (healthcheck/초기화 호환).
       return [];
     }
-    const apiKey = await this.getApiKey();
-    return this.llm.provider.listModels({ endpoint: url, apiKey });
+    return this.llm.provider.listModels({ endpoint: url, apiKey: group.apiKey });
   }
 
   // 보조 LLM 호출(검색쿼리 재작성·명확성 판단·요약·해시태그·후속질문 등) 공용 경로.
@@ -458,9 +434,10 @@ export class ChatService {
       signal?: AbortSignal;
     },
   ): Promise<string> {
-    const endpoint = await this.resolveEndpoint();
-    const model = opts?.model || (await this.getReasoningModel());
-    const apiKey = await this.getApiKey();
+    const group = (await this.loadAiGroups()).reasoning;
+    const endpoint = this.resolveGroupEndpoint(group);
+    const model = opts?.model || group.model || this.defaultModel;
+    const apiKey = group.apiKey;
     let content = '';
     for await (const part of this.llm.provider.streamChat({
       endpoint,
@@ -488,9 +465,10 @@ export class ChatService {
       signal?: AbortSignal;
     },
   ): AsyncGenerator<string> {
-    const endpoint = await this.resolveEndpoint();
-    const model = opts?.model || (await this.getReasoningModel());
-    const apiKey = await this.getApiKey();
+    const group = (await this.loadAiGroups()).reasoning;
+    const endpoint = this.resolveGroupEndpoint(group);
+    const model = opts?.model || group.model || this.defaultModel;
+    const apiKey = group.apiKey;
     for await (const part of this.llm.provider.streamChat({
       endpoint,
       model,
@@ -1816,26 +1794,29 @@ export class ChatService {
 
     // 모델 전송은 공급자(LlmProvider)에 위임 — ChatService 는 메시지 구성/인용/저장만 담당.
     // 검색/URL 모드에서는 컨텍스트가 커서 thinking 에 토큰을 많이 소비하므로 상한을 높임.
-    const endpoint = await this.resolveEndpoint(options.endpoint);
-    // 첨부 이미지가 있으면(현재 또는 history 에 남은 과거 이미지 포함) 비전 가능한
-    // Vision 모델로 답변 생성을 전환한다. (옵션 visionModel 우선 → 'ai' 설정 visionModel →
-    //  그래도 없으면 기존 reasoning/대화 모델로 폴백.)
+    // 첨부 이미지가 있으면(현재 또는 history 에 남은 과거 이미지 포함) Vision 그룹의
+    // endpoint / apiKey / model 로 답변을 생성한다. 그 외에는 Reasoning 그룹 사용.
+    const groups = await this.loadAiGroups();
+    const useVisionGroup = anyMessageHasImages;
+    const group = useVisionGroup ? groups.vision : groups.reasoning;
+    const endpoint = this.resolveGroupEndpoint(group, options.endpoint);
     let chatModel: string;
-    if (anyMessageHasImages) {
-      const vision =
-        options.visionModel?.trim() || (await this.getVisionModel());
+    if (useVisionGroup) {
+      // 옵션 visionModel 우선 → Vision 그룹 model → Reasoning 그룹 model → env 기본값.
       chatModel =
-        vision || options.model || (await this.getReasoningModel());
-      if (vision) {
-        this.logger.log(
-          `[stream] 첨부 이미지 감지 → Vision 모델로 전환: ${vision}`,
-        );
-      }
+        options.visionModel?.trim() ||
+        group.model ||
+        options.model ||
+        groups.reasoning.model ||
+        this.defaultModel;
+      this.logger.log(
+        `[stream] 첨부 이미지 감지 → Vision 설정으로 전환: ${chatModel}`,
+      );
     } else {
-      chatModel = options.model || (await this.getReasoningModel());
+      chatModel = options.model || group.model || this.defaultModel;
     }
     const maxTokens = augmentedBySearch || augmentedByUrl ? 32768 : 8192;
-    const apiKey = await this.getApiKey();
+    const apiKey = group.apiKey;
     try {
       yield* this.llm.provider.streamChat({
         endpoint,

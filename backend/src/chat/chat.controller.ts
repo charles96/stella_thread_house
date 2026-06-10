@@ -151,9 +151,14 @@ export class ChatController {
   @Get('models')
   @ApiOperation({ summary: '사용 가능한 모델 목록' })
   @ApiQuery({ name: 'endpoint', required: false })
-  async models(@Query('endpoint') endpoint?: string) {
+  @ApiQuery({ name: 'kind', required: false, enum: ['reasoning', 'vision'] })
+  async models(
+    @Query('endpoint') endpoint?: string,
+    @Query('kind') kind?: string,
+  ) {
     try {
-      const models = await this.chatService.listModels(endpoint);
+      const group = kind === 'vision' ? 'vision' : 'reasoning';
+      const models = await this.chatService.listModels(group, endpoint);
       return {
         defaultModel: this.chatService.getDefaultModel(),
         models,

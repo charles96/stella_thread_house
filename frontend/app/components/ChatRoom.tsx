@@ -36,6 +36,13 @@ export interface ModelInfo {
   family?: string;
 }
 
+// AI 설정 그룹(Reasoning / Vision) — 각각 독립된 endpoint / apiKey / model.
+export interface AiGroupCfg {
+  endpoint: string;
+  apiKey: string;
+  model: string;
+}
+
 export interface AuthUser {
   id: string;
   email: string;
@@ -650,30 +657,18 @@ export default function ChatRoom() {
     null,
   );
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [models, setModels] = useState<ModelInfo[]>([]);
-  const [defaultModel, setDefaultModel] = useState<string | null>(null);
-  // Reasoning / Vision 모델 — system_config 'ai' row 가 단일 진실 출처(admin 전역 설정).
-  // AI Endpoint 와 동일하게 GET/PUT /admin/ai 로 로드·저장. localStorage / 대화별 폴백 없음.
-  const [reasoningModel, setReasoningModelState] = useState<string | null>(null);
-  const [visionModel, setVisionModelState] = useState<string | null>(null);
-  const setReasoningModel = (m: string) => {
-    setReasoningModelState(m);
-    void fetch(`${API_URL}/admin/ai`, {
-      method: 'PUT',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reasoningModel: m }),
-    }).catch(() => {});
-  };
-  const setVisionModel = (m: string) => {
-    setVisionModelState(m);
-    void fetch(`${API_URL}/admin/ai`, {
-      method: 'PUT',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ visionModel: m }),
-    }).catch(() => {});
-  };
+  // Reasoning / Vision AI 설정 — 각 그룹이 독립된 endpoint / apiKey / model 을 가진다.
+  // system_config 'ai' row 가 단일 진실 출처. GET/PUT /admin/ai 로 로드·저장.
+  const [reasoningCfg, setReasoningCfg] = useState<AiGroupCfg>({
+    endpoint: '',
+    apiKey: '',
+    model: '',
+  });
+  const [visionCfg, setVisionCfg] = useState<AiGroupCfg>({
+    endpoint: '',
+    apiKey: '',
+    model: '',
+  });
   const router = useRouter();
   const pathname = usePathname();
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -695,11 +690,7 @@ export default function ChatRoom() {
   // 헤더 제목 인라인 편집 상태.
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
-  // AI Endpoint — backend system_config 'ai' row 가 단일 진실 출처.
-  // localStorage / env 폴백 없음. 미설정이면 빈 문자열.
-  const [aiEndpoint, setAiEndpoint] = useState<string>('');
-  // OpenAI 호환 API 키. AI Endpoint 와 동일하게 system_config 'ai' row 가 단일 진실 출처.
-  const [apiKey, setApiKeyState] = useState<string>('');
+  // AI 설정 로드 — { reasoning, vision } 중첩 스키마. 각 그룹의 endpoint/apiKey/model.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -709,16 +700,20 @@ export default function ChatRoom() {
         });
         if (!res.ok) return;
         const j = (await res.json()) as {
-          endpoint?: string;
-          reasoningModel?: string;
-          visionModel?: string;
-          apiKey?: string;
+          reasoning?: Partial<AiGroupCfg>;
+          vision?: Partial<AiGroupCfg>;
         };
         if (cancelled) return;
-        if (j.endpoint) setAiEndpoint(j.endpoint);
-        if (j.reasoningModel) setReasoningModelState(j.reasoningModel);
-        if (j.visionModel) setVisionModelState(j.visionModel);
-        if (j.apiKey) setApiKeyState(j.apiKey);
+        setReasoningCfg({
+          endpoint: j.reasoning?.endpoint ?? '',
+          apiKey: j.reasoning?.apiKey ?? '',
+          model: j.reasoning?.model ?? '',
+        });
+        setVisionCfg({
+          endpoint: j.vision?.endpoint ?? '',
+          apiKey: j.vision?.apiKey ?? '',
+          model: j.vision?.model ?? '',
+        });
       } catch {
         // ignore
       }
@@ -727,29 +722,22 @@ export default function ChatRoom() {
       cancelled = true;
     };
   }, []);
-  const updateAiEndpoint = useCallback((v: string) => {
-    setAiEndpoint(v);
-    // 입력 즉시 PUT — 디바운스 없이 매 변경마다 저장 (값이 짧고 admin 만 사용).
-    fetch(`${API_URL}/admin/ai`, {
-      method: 'PUT',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ endpoint: v.trim() }),
-    }).catch(() => {
-      // ignore
-    });
-  }, []);
-  const updateApiKey = useCallback((v: string) => {
-    setApiKeyState(v);
-    fetch(`${API_URL}/admin/ai`, {
-      method: 'PUT',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ apiKey: v.trim() }),
-    }).catch(() => {
-      // ignore
-    });
-  }, []);
+  // 그룹별 부분 갱신 — 로컬 state 즉시 반영 + 해당 그룹 patch 를 PUT /admin/ai.
+  const updateAiGroup = useCallback(
+    (kind: 'reasoning' | 'vision', patch: Partial<AiGroupCfg>) => {
+      if (kind === 'reasoning') setReasoningCfg((p) => ({ ...p, ...patch }));
+      else setVisionCfg((p) => ({ ...p, ...patch }));
+      void fetch(`${API_URL}/admin/ai`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [kind]: patch }),
+      }).catch(() => {
+        // ignore
+      });
+    },
+    [],
+  );
   // 사용자 발화별 턴(=user msg + 다음 user msg 직전까지의 assistant 응답들) 접힘 상태.
   // user msg id 기준으로 저장. 활성 대화가 바뀌면 자동 비움.
   const [collapsedTurns, setCollapsedTurns] = useState<Set<string>>(
@@ -1035,75 +1023,7 @@ export default function ChatRoom() {
     });
   }, []);
 
-  // AI Endpoint 가 바뀔 때 모델 목록을 재갱신. 실패 시 errorMessage 를 노출 (Settings UI 에서 사용).
-  const [aiEndpointError, setAiEndpointError] = useState<string | null>(null);
-  const [aiEndpointLoading, setAiEndpointLoading] = useState(false);
-  // 모델 목록 = AI Endpoint 유효성 검사. endpoint 변경 시 자동 + Settings AI 탭 열릴 때 수동 재검증.
-  // reqId 로 마지막 요청만 반영해 out-of-order 결과로 인한 상태 꼬임 방지.
-  const modelsReqIdRef = useRef(0);
-  const refreshModels = useCallback(async () => {
-    const reqId = ++modelsReqIdRef.current;
-    setAiEndpointLoading(true);
-    setAiEndpointError(null);
-    // 잘못된 엔드포인트는 서버가 대상 호스트로 fetch 하다 오래 매달릴 수 있어
-    // 클라이언트 타임아웃으로 빠르게 실패 처리 → "Checking…" 무한 대기 방지.
-    const ctrl = new AbortController();
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      ctrl.abort();
-    }, 10000);
-    try {
-      const url = aiEndpoint
-        ? `${API_URL}/chat/models?endpoint=${encodeURIComponent(aiEndpoint)}`
-        : `${API_URL}/chat/models`;
-      const res = await fetch(url, { signal: ctrl.signal });
-      if (!res.ok) {
-        let msg = `HTTP ${res.status}`;
-        try {
-          const j = (await res.json()) as { message?: string };
-          if (j.message) msg = j.message;
-        } catch {
-          // ignore
-        }
-        throw new Error(msg);
-      }
-      const json = (await res.json()) as {
-        defaultModel: string;
-        models: ModelInfo[];
-        // provider/endpoint 오류 시 백엔드가 200 + 빈 목록 + 사유로 응답.
-        error?: string;
-      };
-      if (modelsReqIdRef.current !== reqId) return; // 더 최신 요청이 있음 → 무시
-      if (json.error) {
-        // 설정 변경 중 흔한 상황(잘못된 endpoint/키) — 인라인 안내만, 콘솔 에러 없이.
-        setModels([]);
-        setDefaultModel(null);
-        setAiEndpointError(json.error);
-        return;
-      }
-      setModels(json.models);
-      setDefaultModel(json.defaultModel);
-      setAiEndpointError(null);
-    } catch (e) {
-      if (modelsReqIdRef.current !== reqId) return;
-      console.warn('모델 목록 로드 실패', e);
-      setModels([]);
-      setAiEndpointError(
-        timedOut
-          ? '엔드포인트 응답 시간 초과 (10s)'
-          : e instanceof Error
-            ? e.message
-            : '모델 목록 로드 실패',
-      );
-    } finally {
-      clearTimeout(timer);
-      if (modelsReqIdRef.current === reqId) setAiEndpointLoading(false);
-    }
-  }, [aiEndpoint]);
-  useEffect(() => {
-    void refreshModels();
-  }, [refreshModels]);
+  // (모델 목록/엔드포인트 검증은 Settings 의 AI 섹션이 그룹별로 자체 관리)
 
   // 마운트 시 데이터 로드: 서버에서 conversation 메타 + folder 목록.
   // 메시지는 active thread 가 정해지면 그때 lazy fetch.
@@ -3686,11 +3606,12 @@ export default function ChatRoom() {
         headers: { 'Content-Type': 'application/json' },
         signal: ctrl.signal,
         body: JSON.stringify({
+          // endpoint/apiKey 는 백엔드가 'ai' 설정의 Reasoning/Vision 그룹에서 직접 해석.
+          // 프론트는 모델 override(대화별 active.model 우선)만 전달.
           messages: history,
-          model: active.model || reasoningModel || defaultModel || undefined,
-          visionModel: visionModel ?? undefined,
+          model: active.model || reasoningCfg.model || undefined,
+          visionModel: visionCfg.model || undefined,
           useVision,
-          endpoint: aiEndpoint || undefined,
           tavilyTopRead,
           locale: lang,
           // 백엔드가 스트림 시작 시점에 user 메시지 + assistant placeholder 를 DB 저장하고,
@@ -4079,7 +4000,7 @@ export default function ChatRoom() {
           text,
           accumulatedContent,
           followupHistory,
-          active.model || reasoningModel || defaultModel || undefined,
+          active.model || reasoningCfg.model || undefined,
         );
       }
       // 완료 알림 — 사용자가 응답이 도착한 thread 를 직접 보고 있으면 noisy 하므로 생략.
@@ -4850,18 +4771,9 @@ export default function ChatRoom() {
         }}
         user={user}
         onUserUpdated={(u) => setUser(u)}
-        models={models}
-        reasoningModel={reasoningModel ?? defaultModel ?? undefined}
-        visionModel={visionModel ?? undefined}
-        onSelectReasoningModel={setReasoningModel}
-        onSelectVisionModel={setVisionModel}
-        aiEndpoint={aiEndpoint}
-        onChangeAiEndpoint={updateAiEndpoint}
-        aiEndpointError={aiEndpointError}
-        aiEndpointLoading={aiEndpointLoading}
-        onCheckEndpoint={refreshModels}
-        apiKey={apiKey}
-        onChangeApiKey={updateApiKey}
+        reasoningCfg={reasoningCfg}
+        visionCfg={visionCfg}
+        onChangeAiGroup={updateAiGroup}
       />
 
       <AboutModal

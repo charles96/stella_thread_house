@@ -13,21 +13,24 @@ import { Repository } from 'typeorm';
 import { AuthGuard } from '@nestjs/passport';
 import { AdminGuard } from './admin.guard';
 import { SystemConfig } from '../db/entities/system-config.entity';
+import {
+  AiConfigValue,
+  AiGroup,
+  AiGroups,
+  normalizeAiConfig,
+} from './ai-config.util';
 
 const AI_KEY = 'ai';
 
-type AiConfig = {
-  // OpenAI 호환 base URL (예: https://api.openai.com/v1, http://host:11434/v1).
-  endpoint?: string;
-  reasoningModel?: string;
-  visionModel?: string;
-  // OpenAI 호환 API 키 (로컬 서버는 비워둬도 됨).
-  apiKey?: string;
+// 부분 갱신용 — Reasoning / Vision 그룹 각각의 일부 필드만 보낼 수 있다.
+type AiConfigPatch = {
+  reasoning?: Partial<AiGroup>;
+  vision?: Partial<AiGroup>;
 };
 
 // 관리자 전용 AI 설정 — system_config 'ai' row 에 저장.
-// AI Endpoint / Reasoning Model / Vision Model 의 단일 진실 출처.
-// env / localStorage 등 별도 폴백은 사용하지 않음.
+// Reasoning / Vision 두 그룹이 각각 endpoint / apiKey / model 을 가진다(단일 진실 출처).
+// env / localStorage 등 별도 폴백은 사용하지 않음(부팅 시 env 시드만 1회).
 @ApiTags('admin/ai')
 @UseGuards(AuthGuard('jwt'), AdminGuard)
 @Controller('admin/ai')
@@ -44,62 +47,75 @@ export class AiConfigController implements OnModuleInit {
   //   - OPENAI_BASE_URL  : OpenAI 호환 base URL (예: https://api.openai.com/v1, http://host:11434/v1)
   //   - OPENAI_API_KEY   : OpenAI 호환 API 키 (로컬 서버는 불필요)
   async onModuleInit(): Promise<void> {
-    const cfg = await this.load();
-    const next: AiConfig = { ...cfg };
+    const groups = await this.loadGroups();
+    const next: AiGroups = {
+      reasoning: { ...groups.reasoning },
+      vision: { ...groups.vision },
+    };
     let changed = false;
 
     const envApiKey = process.env.OPENAI_API_KEY?.trim();
-    if (!next.apiKey && envApiKey) {
-      next.apiKey = envApiKey;
-      changed = true;
-    }
-
     const envEndpoint = process.env.OPENAI_BASE_URL?.trim();
-    if (!next.endpoint && envEndpoint) {
-      next.endpoint = envEndpoint;
-      changed = true;
+    // 두 그룹 모두 비어있을 때만 env 로 시드(기존 동작 호환 — 단일 endpoint/key).
+    for (const g of [next.reasoning, next.vision]) {
+      if (!g.apiKey && envApiKey) {
+        g.apiKey = envApiKey;
+        changed = true;
+      }
+      if (!g.endpoint && envEndpoint) {
+        g.endpoint = envEndpoint;
+        changed = true;
+      }
     }
 
     if (changed) {
-      await this.configs.upsert(
-        { key: AI_KEY, value: next },
-        { conflictPaths: ['key'] },
-      );
+      await this.save(next);
       // API 키 원문은 로그에 남기지 않음.
       this.logger.log(
-        `seeded AI config from env (endpoint=${next.endpoint ?? '-'}, ` +
-          `apiKey=${next.apiKey ? 'set' : '-'})`,
+        `seeded AI config from env (endpoint=${next.reasoning.endpoint ?? '-'}, ` +
+          `apiKey=${next.reasoning.apiKey ? 'set' : '-'})`,
       );
     }
   }
 
-  private async load(): Promise<AiConfig> {
+  private async loadRaw(): Promise<AiConfigValue> {
     const row = await this.configs.findOne({ where: { key: AI_KEY } });
-    return (row?.value as AiConfig) ?? {};
+    return (row?.value as AiConfigValue) ?? {};
+  }
+
+  // 정규화된 { reasoning, vision } 형태로 로드 — 레거시 flat 스키마도 자동 승격.
+  private async loadGroups(): Promise<AiGroups> {
+    return normalizeAiConfig(await this.loadRaw());
+  }
+
+  private async save(groups: AiGroups): Promise<void> {
+    await this.configs.upsert(
+      { key: AI_KEY, value: groups },
+      { conflictPaths: ['key'] },
+    );
   }
 
   @Get()
-  async get(): Promise<AiConfig> {
-    return this.load();
+  async get(): Promise<AiGroups> {
+    return this.loadGroups();
   }
 
   @Put()
-  async update(@Body() body: AiConfig): Promise<AiConfig> {
-    const prev = await this.load();
+  async update(@Body() body: AiConfigPatch): Promise<AiGroups> {
+    const prev = await this.loadGroups();
     // 필드를 보낸 경우(undefined 아님)에만 갱신 — 빈 문자열로 보내면 '비우기'가 되도록.
-    // (기존 `|| prev` 방식은 빈 값이 항상 이전 값으로 폴백돼 키를 지울 수 없었음.)
     const pick = (v: string | undefined, prevV?: string): string | undefined =>
       v !== undefined ? v.trim() || undefined : prevV;
-    const next: AiConfig = {
-      endpoint: pick(body.endpoint, prev.endpoint),
-      reasoningModel: pick(body.reasoningModel, prev.reasoningModel),
-      visionModel: pick(body.visionModel, prev.visionModel),
-      apiKey: pick(body.apiKey, prev.apiKey),
+    const merge = (patch: Partial<AiGroup> | undefined, base: AiGroup): AiGroup => ({
+      endpoint: pick(patch?.endpoint, base.endpoint),
+      apiKey: pick(patch?.apiKey, base.apiKey),
+      model: pick(patch?.model, base.model),
+    });
+    const next: AiGroups = {
+      reasoning: merge(body.reasoning, prev.reasoning),
+      vision: merge(body.vision, prev.vision),
     };
-    await this.configs.upsert(
-      { key: AI_KEY, value: next },
-      { conflictPaths: ['key'] },
-    );
+    await this.save(next);
     return next;
   }
 }

@@ -2,6 +2,11 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { SystemConfig } from '../db/entities/system-config.entity';
+import {
+  AiConfigValue,
+  AiGroups,
+  resolveAiGroups,
+} from '../admin/ai-config.util';
 import { LlmService } from '../llm/llm.service';
 import type { ChatMessage } from '../chat/chat.service';
 
@@ -431,18 +436,18 @@ export class PageService {
 
   private readonly logger = new Logger(PageService.name);
 
-  // OpenAI 호환 API 키 — system_config 'ai' row. 로컬 서버는 비어있을 수 있음.
-  private async getApiKey(): Promise<string | undefined> {
+  // AI 설정 — system_config 'ai' row 를 Reasoning / Vision 그룹으로 정규화.
+  private async loadAiGroups(): Promise<AiGroups> {
     try {
       const row = await this.systemConfigs.findOne({ where: { key: 'ai' } });
-      const v = (row?.value as { apiKey?: string } | undefined)?.apiKey;
-      return v?.trim() || undefined;
+      return resolveAiGroups(row?.value as AiConfigValue | undefined);
     } catch {
-      return undefined;
+      return resolveAiGroups(undefined);
     }
   }
 
   // 공급자(OpenAI 호환)를 통한 1회성 완성(제목추출·비전) — content 만 누적(thinking 제외).
+  // kind 로 endpoint/apiKey 그룹 선택: 비전 분석은 'vision', 제목 추출 등 텍스트는 'reasoning'.
   // signal 로 타임아웃/중단 전파.
   private async llmComplete(
     messages: ChatMessage[],
@@ -451,16 +456,21 @@ export class PageService {
       temperature?: number;
       maxTokens?: number;
       signal?: AbortSignal;
+      kind?: 'reasoning' | 'vision';
     },
   ): Promise<string> {
-    const endpoint = await this.getAiEndpoint();
-    const apiKey = await this.getApiKey();
+    const groups = await this.loadAiGroups();
+    const group = opts.kind === 'vision' ? groups.vision : groups.reasoning;
+    const endpoint = group.endpoint?.trim();
+    if (!endpoint) {
+      throw new Error('AI Endpoint 가 설정되지 않았습니다.');
+    }
     let content = '';
     for await (const part of this.llm.provider.streamChat({
-      endpoint,
+      endpoint: endpoint.replace(/\/$/, ''),
       model: opts.model,
       messages,
-      apiKey,
+      apiKey: group.apiKey,
       temperature: opts.temperature,
       maxTokens: opts.maxTokens,
       think: false,
@@ -475,23 +485,10 @@ export class PageService {
   private readonly visionModel =
     process.env.AI_VISION_MODEL ?? process.env.AI_DEFAULT_MODEL ?? 'gemma4:26b';
 
-  // AI Endpoint — system_config 'ai' row 가 단일 진실 출처. env 폴백 없음.
-  private async getAiEndpoint(): Promise<string> {
-    const row = await this.systemConfigs.findOne({ where: { key: 'ai' } });
-    const v = (row?.value as { endpoint?: string } | undefined)?.endpoint;
-    if (!v || !v.trim()) {
-      throw new Error('AI Endpoint 가 설정되지 않았습니다.');
-    }
-    return v.trim().replace(/\/$/, '');
-  }
-
-  // Vision 모델 — system_config 'ai' row 의 visionModel 이 전역 기본값.
-  // 호출 측이 model 을 지정하면 그게 우선, 없으면 admin 설정 → env 순.
+  // Vision 모델 — system_config 'ai' Vision 그룹 model 이 기본값. 없으면 env 폴백.
   private async getVisionModel(): Promise<string> {
     try {
-      const row = await this.systemConfigs.findOne({ where: { key: 'ai' } });
-      const v = (row?.value as { visionModel?: string } | undefined)
-        ?.visionModel;
+      const v = (await this.loadAiGroups()).vision.model;
       if (v && v.trim()) return v.trim();
     } catch {
       // ignore — env 기본값으로 폴백
@@ -1131,7 +1128,7 @@ export class PageService {
           { role: 'system', content: system },
           { role: 'user', content: user, images: [imageBase64] },
         ],
-        { model, temperature: 0.1, signal: ctrl.signal },
+        { model, temperature: 0.1, signal: ctrl.signal, kind: 'vision' },
       );
     } finally {
       clearTimeout(timer);

@@ -237,7 +237,7 @@ const dict = {
     'settings.system.autoScroll': '자동 스크롤',
     'settings.system.empty': '로그가 아직 없습니다.',
     'settings.ai.tools': '도구',
-    'settings.ai.tools.tavily': 'Tavily API Key',
+    'settings.ai.tools.tavily': 'Tavily API',
     'settings.ai.tools.tavilyDesc': '웹 검색(Tavily) 에 사용. 비워두면 환경변수로 폴백.',
     'settings.ai.tools.placeholder': 'tvly-...',
     'settings.ai.tools.set': '설정됨',
@@ -538,7 +538,7 @@ const dict = {
     'settings.system.autoScroll': 'Auto-scroll',
     'settings.system.empty': 'No logs yet.',
     'settings.ai.tools': 'Tools',
-    'settings.ai.tools.tavily': 'Tavily API Key',
+    'settings.ai.tools.tavily': 'Tavily API',
     'settings.ai.tools.tavilyDesc':
       'Used for web search (Tavily). Falls back to env if empty.',
     'settings.ai.tools.placeholder': 'tvly-...',
@@ -841,7 +841,7 @@ const dict = {
     'settings.system.autoScroll': '自動スクロール',
     'settings.system.empty': 'ログはまだありません。',
     'settings.ai.tools': 'ツール',
-    'settings.ai.tools.tavily': 'Tavily API Key',
+    'settings.ai.tools.tavily': 'Tavily API',
     'settings.ai.tools.tavilyDesc':
       'Web 検索(Tavily) に使用。空ならば環境変数にフォールバック。',
     'settings.ai.tools.placeholder': 'tvly-...',
@@ -1144,7 +1144,7 @@ const dict = {
     'settings.system.autoScroll': '自动滚动',
     'settings.system.empty': '暂无日志。',
     'settings.ai.tools': '工具',
-    'settings.ai.tools.tavily': 'Tavily API Key',
+    'settings.ai.tools.tavily': 'Tavily API',
     'settings.ai.tools.tavilyDesc':
       '用于网页搜索 (Tavily)。留空则回退到环境变量。',
     'settings.ai.tools.placeholder': 'tvly-...',
@@ -1447,7 +1447,7 @@ const dict = {
     'settings.system.autoScroll': 'Auto-scroll',
     'settings.system.empty': 'Belum ada log.',
     'settings.ai.tools': 'Alat',
-    'settings.ai.tools.tavily': 'Tavily API Key',
+    'settings.ai.tools.tavily': 'Tavily API',
     'settings.ai.tools.tavilyDesc':
       'Digunakan untuk pencarian web (Tavily). Kosongkan untuk fallback ke env.',
     'settings.ai.tools.placeholder': 'tvly-...',
@@ -1749,7 +1749,7 @@ const dict = {
     'settings.system.autoScroll': 'Défilement auto',
     'settings.system.empty': 'Aucun journal pour le moment.',
     'settings.ai.tools': 'Outils',
-    'settings.ai.tools.tavily': 'Clé API Tavily',
+    'settings.ai.tools.tavily': 'API Tavily',
     'settings.ai.tools.tavilyDesc':
       'Utilisée pour la recherche web (Tavily). Utilise la variable d\'environnement si vide.',
     'settings.ai.tools.placeholder': 'tvly-...',
@@ -2051,7 +2051,7 @@ const dict = {
     'settings.system.autoScroll': 'Automatisch scrollen',
     'settings.system.empty': 'Noch keine Protokolle.',
     'settings.ai.tools': 'Werkzeuge',
-    'settings.ai.tools.tavily': 'Tavily-API-Schlüssel',
+    'settings.ai.tools.tavily': 'Tavily-API',
     'settings.ai.tools.tavilyDesc':
       'Wird für die Websuche (Tavily) verwendet. Greift bei leerem Feld auf die Umgebungsvariable zurück.',
     'settings.ai.tools.placeholder': 'tvly-...',
