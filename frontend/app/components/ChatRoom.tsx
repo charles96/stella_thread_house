@@ -816,6 +816,12 @@ export default function ChatRoom() {
     }
   }, [isDirty, doLogout]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // 스크롤 컨테이너 내부 컨텐츠 — 스트리밍 중 높이 증가(References/thinking/답변)를
+  // ResizeObserver 로 감지해 하단을 계속 따라가게 하기 위한 참조.
+  const scrollContentRef = useRef<HTMLDivElement>(null);
+  // 스트리밍 중 '하단 추종' 여부. 사용자가 위로 스크롤해 내용을 읽는 중이면 false 가 되어
+  // 강제로 끌어내리지 않음. 다시 하단 근처로 오면 true 로 복귀.
+  const stickBottomRef = useRef(true);
   const hydratedRef = useRef(false);
 
   const loadMoreConversations = useCallback(async () => {
@@ -2235,6 +2241,10 @@ export default function ChatRoom() {
       if (distFromBottom < 800) void loadNewerRef.current();
       // 자동 스크롤 윈도우 안이면 isScrolling 토글 생략.
       if (Date.now() < programmaticScrollRef.current) return;
+      // 사용자가 직접 스크롤한 경우(프로그래밍 윈도우 밖): 하단 근처면 추종 ON,
+      // 위로 충분히 올라갔으면 추종 OFF → 스트리밍 중 강제로 끌어내리지 않음.
+      // 임계값은 스트리밍 추종 effect 와 동일(800)하게 맞춰 두 메커니즘이 일관되게 동작.
+      stickBottomRef.current = distFromBottom < 800;
       // 이미 스크롤 중이면 불필요한 state 업데이트 생략 (매 픽셀마다 setIsScrolling 호출 방지).
       if (!isScrollingRef.current) {
         isScrollingRef.current = true;
@@ -2527,12 +2537,15 @@ export default function ChatRoom() {
     forceScrollOnNextUpdateRef.current = false;
     if (!jumpInstant && !forceFollow) {
       // 같은 thread 내 후속 변경(스트리밍/메타 갱신/이미지 제거 등) — 하단 근처일 때만 따라 내림.
-      // 단, 스트리밍 중에는 References 패널 등 큰 블록이 추가되면 distFromBottom 이 단번에 커져
-      // 임계값(120) 을 넘어 자동 스크롤이 끊길 수 있어 임계값을 크게 잡음.
-      const distFromBottom =
-        el.scrollHeight - el.scrollTop - el.clientHeight;
-      const threshold = pending ? 800 : 120;
-      if (distFromBottom > threshold) return;
+      if (pending) {
+        // 스트리밍 중: 하단 추종 플래그를 따른다(ResizeObserver 추종 effect 와 동일 기준).
+        // 사용자가 위로 올라가 읽는 중이면(stickBottomRef=false) 끌어내리지 않음.
+        if (!stickBottomRef.current) return;
+      } else {
+        const distFromBottom =
+          el.scrollHeight - el.scrollTop - el.clientHeight;
+        if (distFromBottom > 120) return;
+      }
     }
     // 자동 스크롤 시작 — onScroll 핸들러가 isScrolling 을 토글하지 않도록 짧게 표시.
     programmaticScrollRef.current = Date.now() + (jumpInstant || pending ? 50 : 600);
@@ -2569,6 +2582,32 @@ export default function ChatRoom() {
     }
     // pending 도 의존 — 스트리밍 종료 후 마지막 렌더에서도 한번 더 따라 내려가도록.
   }, [active?.id, active?.messages, pending]);
+
+  // AI 응답 준비 중(pending) 하단 추종 — React state 변화(active.messages)뿐 아니라
+  // References 패널 등장, 행 펼침 애니메이션(380ms), thinking 패널 확장, 답변 텍스트 reflow,
+  // 비동기 이미지 로드 등 '높이만 늘어나는' 변화도 ResizeObserver 로 감지해 매 순간 하단으로 갱신.
+  // 사용자가 위로 스크롤해 읽는 중이면(stickBottomRef=false) 끌어내리지 않음.
+  useEffect(() => {
+    if (!pending) return;
+    const el = scrollRef.current;
+    const content = scrollContentRef.current;
+    if (!el || !content) return;
+    // pending 시작 시점: 하단 근처면 추종 ON 으로 초기화(자기 발화 직후엔 항상 하단).
+    // 멀리 위에서 읽는 중이면 추종하지 않음(원격 스트림 등에서 갑작스런 점프 방지).
+    const dist0 = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickBottomRef.current = dist0 < 800;
+    const followToBottom = () => {
+      if (!stickBottomRef.current) return;
+      // onScroll 이 사용자 스크롤로 오인하지 않도록 짧은 프로그래밍 윈도우 표시.
+      programmaticScrollRef.current = Date.now() + 80;
+      el.scrollTop = el.scrollHeight;
+    };
+    // 초기 1회 + 이후 컨텐츠 높이 변화마다.
+    followToBottom();
+    const ro = new ResizeObserver(() => followToBottom());
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, [pending]);
 
   // 스크롤에 따른 "현재 보이는 user 메시지" 추적 — Message Navigator 의 하이라이트 항목과 동기화.
   // viewport 상단(80px 마진) 위에 있고 그 중 가장 viewport top 에 가까운 user 메시지를 선택.
@@ -4504,6 +4543,7 @@ export default function ChatRoom() {
           ref={scrollRef}
         >
           <div
+            ref={scrollContentRef}
             className={cn(
               // pb-28: 입력창이 absolute 로 떠 있으므로 마지막 메시지가 가려지지 않게 여유.
               // 모바일은 좌우 padding 축소(px-3) — 화면이 좁아 가독성 우선.

@@ -97,12 +97,21 @@ const config: Config = {
           '30%': { opacity: '0' },
           '100%': { maxHeight: '3.5rem', opacity: '1' },
         },
+        // Reference documents 행이 검색 중 한 줄씩 도착할 때 — 높이를 0 에서 펼치고
+        // 살짝 위에서 내려앉으며 페이드인. 행이 쌓이면서 References 라운드가 자연스럽게 확장됨.
+        // (단일 라인 행이라 maxHeight 상한은 넉넉히, 실제 높이는 컨텐츠에 맞춰 멈춤)
+        'ref-row-in': {
+          '0%': { maxHeight: '0px', opacity: '0', transform: 'translateY(-3px)' },
+          '30%': { opacity: '0' },
+          '100%': { maxHeight: '2.25rem', opacity: '1', transform: 'translateY(0)' },
+        },
       },
       animation: {
         'caret-blink': 'caret-blink 1.25s ease-out infinite',
         'card-pop': 'card-pop 480ms cubic-bezier(0.34, 1.56, 0.64, 1) 1',
         'collapse-up': 'collapse-up 280ms cubic-bezier(0.4, 0, 0.2, 1) forwards',
         'expand-down': 'expand-down 280ms cubic-bezier(0.4, 0, 0.2, 1)',
+        'ref-row-in': 'ref-row-in 380ms cubic-bezier(0.22, 1, 0.36, 1)',
       },
     },
   },

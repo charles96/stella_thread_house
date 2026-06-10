@@ -442,9 +442,20 @@ interface RefItem {
   images?: ReadPageImage[];
 }
 
-function ReadPageRow({ page: p, index }: { page: RefItem; index: number }) {
+function ReadPageRow({
+  page: p,
+  index,
+  animate = false,
+}: {
+  page: RefItem;
+  index: number;
+  animate?: boolean;
+}) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [maxChars, setMaxChars] = useState<number | null>(null);
+  // 이 행이 '검색 진행 중(스트리밍)' 시점에 처음 나타났는지를 mount 시점에 고정.
+  // 이미 완료된 대화를 스크롤로 다시 볼 때는 애니메이션이 재생되지 않도록 함.
+  const [animateIn] = useState(() => animate);
 
   const fullTitle = decodeHtmlEntities(p.title || p.url);
   const extracted = typeof p.chars === 'number';
@@ -473,7 +484,12 @@ function ReadPageRow({ page: p, index }: { page: RefItem; index: number }) {
       : fullTitle;
 
   return (
-    <li className="flex w-full items-center gap-1.5 text-[12px]">
+    <li
+      className={cn(
+        'flex w-full items-center gap-1.5 text-[12px]',
+        animateIn && 'animate-ref-row-in overflow-hidden',
+      )}
+    >
       <span className="inline-flex h-4 min-w-[18px] shrink-0 items-center justify-center rounded-sm border border-primary/40 bg-primary/10 px-1 font-mono text-[10.5px] tabular-nums leading-none text-primary">
         {index + 1}
       </span>
@@ -579,6 +595,7 @@ function ImageScatter({
   hidden = false,
   bust,
   localFor,
+  holdPop = false,
 }: {
   images: SearchImage[];
   cardOverlap: number;
@@ -603,6 +620,9 @@ function ImageScatter({
   bust?: Record<string, number>;
   // 저장된 웹 이미지(원격 URL) → 로컬 사본(/attachments/) 매핑. 표시·회전을 로컬 사본으로 처리.
   localFor?: Record<string, string>;
+  // true 면 카드를 숨긴 채 등장(팝콘) 애니메이션을 보류. References 라운드 확장이 끝난 뒤
+  // false 로 바뀌면 그때 비로소 팝콘이 터지도록 — 검색 시 절차적(순차) 연출용.
+  holdPop?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [perPage, setPerPage] = useState(7);
@@ -1027,7 +1047,9 @@ function ImageScatter({
           // 처음 보는 카드인지 — 처음일 때만 등장 애니메이션 부여, 이후 페이징은 즉시 노출.
           const cardKey = img.url || img.linkUrl || `${globalIndex}`;
           const isFirstAppear = !animatedRef.current.has(cardKey);
-          animatedRef.current.add(cardKey);
+          // holdPop 동안에는 '첫 등장'으로 소비하지 않음 → 보류가 풀린 첫 렌더에서 비로소
+          // 팝콘/슬라이드 등장 애니메이션이 재생되도록 마킹을 미룬다.
+          if (!holdPop) animatedRef.current.add(cardKey);
 
           // 카드 박스 방향 — 실제(물리 회전 반영된) 이미지의 자연 비율 기준. 회전 후엔
           // 버스트로 src 가 바뀌어 onLoad 가 다시 측정 → orientations 가 갱신된다.
@@ -1054,6 +1076,7 @@ function ImageScatter({
                 'group/card relative shrink-0',
                 onPage &&
                   isFirstAppear &&
+                  !holdPop &&
                   'animate-in fade-in zoom-in-50 slide-in-from-top-16 duration-500 ease-out',
               )}
             >
@@ -1083,8 +1106,12 @@ function ImageScatter({
               style={{ width: box.w, height: box.h }}
               className={cn(
                 'relative block overflow-hidden rounded-lg bg-secondary/40 shadow-[0_6px_10px_rgba(0,0,0,0.5)] transition-opacity duration-300 ease-out group-hover/card:shadow-[0_16px_22px_rgba(0,0,0,0.6)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
-                isLoaded ? 'opacity-100' : 'opacity-0',
-                isLoaded && isFirstAppear && 'animate-card-pop',
+                // 보류 중(holdPop)에는 '이번에 처음 등장하는' 카드만 숨겨 확장 후 팝콘으로 나타나게 한다.
+                // 이미 떠 있던 카드(첨부 이미지 등, isFirstAppear=false)는 그대로 유지해 깜빡임 방지.
+                isLoaded && (!holdPop || !isFirstAppear)
+                  ? 'opacity-100'
+                  : 'opacity-0',
+                isLoaded && isFirstAppear && !holdPop && 'animate-card-pop',
                 img.analyzing && 'vision-glow',
               )}
             >
@@ -1555,6 +1582,28 @@ function MessageBubble({
   const autoOpen = isStreaming && hasProcessPanel;
   const open = override ?? autoOpen;
   const toggle = () => setOverride(!open);
+
+  // 절차적 연출: 검색으로 References(웹 링크)가 등장하면 먼저 라운드가 확장(ref-row-in)되고,
+  // 확장이 끝난 뒤에야 이미지 팝콘이 터지도록 한다. 라이브 스트리밍 + References 가 있을 때만 적용.
+  // (이미 완료된 대화를 다시 열 때나 References 가 없을 땐 지연 없이 즉시 노출)
+  const [popReady, setPopReady] = useState(true);
+  const popHoldStartedRef = useRef(false);
+  useEffect(() => {
+    if (!isStreaming || !hasReadPagesData) {
+      // 지연이 필요 없거나(References 없음) 스트리밍이 끝난 상태 — 항상 보류 해제(즉시 노출).
+      // 특히 확장 타이머(460ms)가 끝나기 전에 스트리밍이 종료돼도 이미지가 영영 숨지 않도록 보장.
+      setPopReady(true);
+      return;
+    }
+    // References 가 라이브로 처음 등장한 순간 1회: 팝콘을 잠시 보류 → 확장 애니메이션 후 해제.
+    if (popHoldStartedRef.current) return;
+    popHoldStartedRef.current = true;
+    setPopReady(false);
+    // ref-row-in(380ms) + 여유. 확장이 끝나는 시점에 맞춰 팝콘 해제.
+    const REF_EXPAND_MS = 460;
+    const timer = setTimeout(() => setPopReady(true), REF_EXPAND_MS);
+    return () => clearTimeout(timer);
+  }, [isStreaming, hasReadPagesData]);
 
   const artifacts = useMemo(
     () => (isUser ? [] : extractArtifacts(message.content, message.id)),
@@ -2914,6 +2963,7 @@ function MessageBubble({
                     hidden={!!expanded}
                     bust={imgBust}
                     localFor={localFor}
+                    holdPop={!popReady}
                   />
                 </LazyVisible>
               </div>
@@ -3056,6 +3106,7 @@ function MessageBubble({
                       key={r.url}
                       page={r}
                       index={i + (precedingUserImages?.length ?? 0)}
+                      animate={isStreaming}
                     />
                   ))}
                 </ul>
@@ -3503,8 +3554,10 @@ function MessageBubble({
               </div>}
               {/* Edit / Save / Cancel — 답변 마크다운 직접 편집.
                   Thread 모드 전용 + greeting 메시지 제외.
-                  본문 버블이 있으면 -mt-2 로 겹쳐 탭 느낌, Reference only 면 mt-1 로 분리. */}
-              {onEditContent && !isGreeting && !isLive && convKind === 'thread' && (
+                  본문 버블이 있으면 -mt-2 로 겹쳐 탭 느낌, Reference only 면 mt-1 로 분리.
+                  검색/처리 진행 중(Searching the web… 등 status 표시, 본문 도착 전)에는
+                  아직 편집할 답변이 없으므로 탭을 숨긴다(hasStatusPending). */}
+              {onEditContent && !isGreeting && !isLive && !hasStatusPending && convKind === 'thread' && (
                 <div className={cn((message.content || answerEditing) ? '-mt-2' : 'mt-2', 'mr-3 flex items-start gap-1 self-end')}>
                   {!answerEditing ? (
                     <>
