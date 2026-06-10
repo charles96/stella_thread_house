@@ -721,18 +721,12 @@ function AccountSection({ user }: { user: AuthUser }) {
           <div className="flex items-center gap-2">
             <Lock className="h-4 w-4 text-primary" />
             <span className="text-[13px] font-medium">{t('settings.password')}</span>
-            <span
-              className={cn(
-                'inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium',
-                user.hasPassword
-                  ? 'bg-emerald-500/15 text-emerald-400'
-                  : 'bg-muted text-muted-foreground',
-              )}
-            >
-              {user.hasPassword
-                ? t('settings.account.statusActive')
-                : t('settings.account.statusUnset')}
-            </span>
+            {/* 비밀번호 미설정일 때만 안내 배지 노출 — Active 배지는 표시하지 않음. */}
+            {!user.hasPassword && (
+              <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                {t('settings.account.statusUnset')}
+              </span>
+            )}
           </div>
           <Button
             variant="outline"
@@ -750,7 +744,16 @@ function AccountSection({ user }: { user: AuthUser }) {
           </Button>
         </div>
 
-        {pwOpen && (
+        {/* 펼침/접힘 — 아코디언과 동일한 grid-rows 0fr↔1fr + opacity 애니메이션. */}
+        <div
+          className={cn(
+            'grid transition-all duration-300 ease-out',
+            pwOpen
+              ? 'grid-rows-[1fr] opacity-100'
+              : '-mt-3 grid-rows-[0fr] opacity-0',
+          )}
+        >
+          <div className="overflow-hidden">
           <form
             onSubmit={submitChangePw}
             className="flex flex-col gap-2 rounded-md border border-border bg-background p-3"
@@ -817,12 +820,8 @@ function AccountSection({ user }: { user: AuthUser }) {
               </Button>
             </div>
           </form>
-        )}
-
-        {/* Google SSO 섹션은 일단 제거 — 추후 필요 시 git history 에서 복원. */}
-        <p className="text-[11px] text-muted-foreground">
-          {t('settings.account.help')}
-        </p>
+          </div>
+        </div>
       </div>
     </section>
   );
