@@ -7,7 +7,7 @@ import { Invitation } from './entities/invitation.entity';
 import { Message } from './entities/message.entity';
 import { SystemConfig } from './entities/system-config.entity';
 import { User } from './entities/user.entity';
-import { SCHEMA_SQL } from './schema.sql';
+import { SCHEMA_SQL, VECTOR_EXTENSION_SQL } from './schema.sql';
 
 const logger = new Logger('DbModule');
 
@@ -30,6 +30,17 @@ const logger = new Logger('DbModule');
         logger.log('Initializing database schema...');
         await dataSource.query(SCHEMA_SQL);
         logger.log('Database schema ready.');
+        // RAG 준비용 pgvector 확장만 활성화 — 없으면 경고만 남기고 진행(앱 동작 보장).
+        try {
+          await dataSource.query(VECTOR_EXTENSION_SQL);
+          logger.log('pgvector extension ready.');
+        } catch (e) {
+          logger.warn(
+            `pgvector extension unavailable — skipped: ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          );
+        }
         return dataSource;
       },
     }),

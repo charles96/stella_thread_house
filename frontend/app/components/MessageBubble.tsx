@@ -3240,8 +3240,11 @@ function MessageBubble({
         )}
 
 
-        {/* 초기 대기 (status도 thinking도 아직 없을 때) — 사용자가 기다리는 걸 알 수 있도록 */}
+        {/* 초기 대기 (status도 thinking도 아직 없을 때) — 사용자가 기다리는 걸 알 수 있도록.
+            isLive 조건: 실제로 스트리밍 중인 메시지에서만 표시 → 빈 채로 남은(중단/실패한)
+            과거 메시지를 다시 열어도 "준비 중…"이 영구히 뜨지 않도록 한다. */}
         {!isUser &&
+          isLive &&
           !message.content &&
           !message.status &&
           !hasThinkingText &&

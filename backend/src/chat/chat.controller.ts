@@ -399,6 +399,10 @@ export class ChatController {
       ? await this.authService.getCachedName(userId)
       : null;
 
+    // 생성 중 에러(타임아웃/모델 오류 등)를 finally 가 영속하도록 캡처.
+    // 에러 턴은 '실패' 답변으로 저장해 새로고침 후에도 보이게 한다(디버깅·피드백용).
+    let streamError: { message: string; code?: string } | null = null;
+
     try {
       for await (const part of this.chatService.streamChat(body.messages, {
         model: body.model,
@@ -474,6 +478,7 @@ export class ChatController {
         const message = err instanceof Error ? err.message : 'unknown error';
         // 알려진 에러는 code 를 함께 전달 → 프론트가 UI 언어로 재번역(언어 전환 반응).
         const errorCode = (err as Error & { code?: string })?.code;
+        streamError = { message, code: errorCode };
         writeIfConnected(
           `data: ${JSON.stringify({ error: message, errorCode })}\n\n`,
         );
@@ -494,6 +499,54 @@ export class ChatController {
         } catch (e) {
           this.logger.warn(
             `[chat/stream] cancel cleanup failed: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+        this.conversationsService.emitStreamEnd(
+          ctx.userId,
+          ctx.convId,
+          ctx.assistantId,
+        );
+      } else if (persistCtx && streamError) {
+        // 에러로 끝난 turn — '실패' 답변으로 저장(메타 isError) → 새로고침 후에도 보임.
+        // 빈 메시지로 남겨 "준비 중…"이 박히는 일이 없도록, 에러 문구를 content 로 채운다.
+        const ctx = persistCtx;
+        try {
+          await this.conversationsService.updateMessage(
+            ctx.userId,
+            ctx.convId,
+            ctx.assistantId,
+            {
+              content: ctx.content || streamError.message,
+              thinking: ctx.thinking || null,
+              metadata: {
+                isError: true,
+                ...(streamError.code ? { errorCode: streamError.code } : {}),
+              },
+            },
+          );
+        } catch (e) {
+          this.logger.error(
+            `[chat/stream] error persist failed: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+        this.conversationsService.emitStreamEnd(
+          ctx.userId,
+          ctx.convId,
+          ctx.assistantId,
+        );
+      } else if (persistCtx && persistCtx.content.trim().length === 0) {
+        // 빈 turn(에러도 아니고 본문도 없음) — 완료가 아니므로 user/assistant 모두 롤백 삭제.
+        // (모델이 아무것도 못 만든 경우. "완료된 답변만 영속" 정책)
+        const ctx = persistCtx;
+        try {
+          await this.conversationsService.deleteMessages(ctx.userId, ctx.convId, [
+            ctx.userMessageId,
+            ctx.assistantId,
+          ]);
+          this.logger.log('[chat/stream] empty turn rolled back (no content)');
+        } catch (e) {
+          this.logger.warn(
+            `[chat/stream] empty turn rollback failed: ${e instanceof Error ? e.message : String(e)}`,
           );
         }
         this.conversationsService.emitStreamEnd(

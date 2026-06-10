@@ -886,8 +886,23 @@ export default function ChatRoom() {
   // (백엔드는 stream finally 에서 최종 저장 대신 삭제 → 새로고침해도 잔재 없음)
   const stopStreaming = useCallback(() => {
     streamAbortRef.current?.abort();
+    streamAbortRef.current = null;
     const ids = streamMsgIdsRef.current;
+    // 스트리밍 상태를 '즉시' 해제 — 백엔드 emitStreamEnd(stream.inactive)를 기다리지 않는다.
+    // (검색 의도 분석 등 백엔드가 해당 단계를 빠져나오는 데 시간이 걸려도 중지 버튼이
+    //  바로 사라지도록. 백엔드의 후속 stream.inactive 는 no-op 이 된다.)
+    setPending(false);
+    setLiveMessageId(null);
+    setLiveTokRate(null);
+    localStreamingIdRef.current = null;
+    remotePendingRef.current = false;
     if (ids) {
+      setStreamingConvIds((prev) => {
+        if (!prev.has(ids.convId)) return prev;
+        const next = new Set(prev);
+        next.delete(ids.convId);
+        return next;
+      });
       setConversations((prev) =>
         prev.map((c) => {
           if (c.id !== ids.convId) return c;

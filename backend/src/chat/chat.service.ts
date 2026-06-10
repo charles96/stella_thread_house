@@ -564,6 +564,7 @@ export class ChatService {
     userMessage: string,
     history: ChatMessage[] = [],
     model?: string,
+    signal?: AbortSignal,
   ): Promise<{
     queries: string[];
     country?: string;
@@ -653,7 +654,7 @@ export class ChatService {
 
       const text = await this.llmComplete(
         [sys, { role: 'user', content: lines.join('\n') }],
-        { model, temperature: 0.2, maxTokens: 512 },
+        { model, temperature: 0.2, maxTokens: 512, signal },
       );
       this.logger.log(
         `[reformulate] LLM raw output (first 500): ${text.slice(0, 500)}`,
@@ -1527,7 +1528,10 @@ export class ChatService {
         lastUserAuto.content,
         messages,
         options.model,
+        options.signal,
       );
+      // 검색 의도 분석 중 Stop/연결 끊김 → Tavily 검색·페이지 읽기로 더 진행하지 말고 즉시 종료.
+      if (options.signal?.aborted) return;
       this.logger.log(
         `[search] reformulated: ${JSON.stringify(reformulated)}`,
       );

@@ -1,6 +1,9 @@
 services:
   postgres:
-    image: postgres:18-alpine
+    # pgvector 포함 PostgreSQL 18 (RAG 용 vector 확장). 공식 postgres:18 기반(Debian).
+    # 기존 alpine 데이터 볼륨에서 전환 시 glibc/musl collation 차이로 텍스트 인덱스가
+    # 어긋날 수 있으니, 운영 데이터가 있다면 전환 후 `REINDEX DATABASE <db>` 를 권장.
+    image: pgvector/pgvector:pg18
     container_name: stella-th-postgres
     restart: unless-stopped
     environment:

@@ -153,3 +153,9 @@ CREATE INDEX IF NOT EXISTS activity_log_user_date_idx ON activity_log (user_id, 
 
 CREATE INDEX IF NOT EXISTS users_role_admin_idx ON users (id) WHERE role = 'admin';
 `;
+
+// ── pgvector 확장 ────────────────────────────────────────────────────────────
+// RAG 준비를 위한 vector 확장만 활성화한다(테이블/스키마 모델링은 RAG 구현 시 별도 설계).
+// 코어 스키마(SCHEMA_SQL)와 분리해, pgvector 가 없는 환경에서도 앱이 정상 동작하도록
+// db.module 이 이 SQL 을 try/catch 로 실행한다(없으면 경고만 남기고 건너뜀).
+export const VECTOR_EXTENSION_SQL = `CREATE EXTENSION IF NOT EXISTS vector;`;

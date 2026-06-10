@@ -156,26 +156,67 @@ export class OpenAICompatibleProvider implements LlmProvider {
       opts.think === false
         ? [{ role: 'system', content: NO_THINK_SYSTEM }, ...opts.messages]
         : opts.messages;
-    const res = await fetch(`${opts.endpoint}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...this.authHeaders(opts.apiKey),
-      },
-      signal: opts.signal,
-      body: JSON.stringify({
-        model: opts.model,
-        messages: messages.map(toOpenAiMessage),
-        stream: true,
-        // 마지막 청크에 usage 를 받기 위해 필요 (OpenAI 스펙).
-        stream_options: { include_usage: true },
-        max_tokens: opts.maxTokens ?? 8192,
-        temperature: opts.temperature ?? 0.6,
-        top_p: 0.9,
-      }),
-    });
+
+    // 무응답/멈춤 방지 — 일정 시간 새 데이터가 없으면 요청을 끊고 명확한 에러로 종료.
+    // (첫 토큰 대기 + 스트림 중 멈춤 모두 커버. 토큰 수신마다 타이머 리셋.)
+    // 이게 없으면 모델이 연결만 되고 토큰을 안 주는 경우 영원히 매달려 UI 가 멈춘다.
+    const INACTIVITY_MS = Math.max(
+      5_000,
+      Number(process.env.LLM_STREAM_TIMEOUT_MS ?? 90_000),
+    );
+    const ctrl = new AbortController();
+    let timedOut = false;
+    let inactivityTimer: ReturnType<typeof setTimeout> | undefined;
+    const armInactivity = () => {
+      if (inactivityTimer) clearTimeout(inactivityTimer);
+      inactivityTimer = setTimeout(() => {
+        timedOut = true;
+        this.logger.warn(
+          `[streamChat] inactivity timeout ${INACTIVITY_MS}ms — aborting request`,
+        );
+        ctrl.abort();
+      }, INACTIVITY_MS);
+    };
+    // 외부 signal(클라 연결 끊김 / Stop / cancel)을 내부 컨트롤러로 전파.
+    const onExternalAbort = () => ctrl.abort();
+    if (opts.signal) {
+      if (opts.signal.aborted) ctrl.abort();
+      else opts.signal.addEventListener('abort', onExternalAbort);
+    }
+
+    armInactivity();
+    let res: Response;
+    try {
+      res = await fetch(`${opts.endpoint}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...this.authHeaders(opts.apiKey),
+        },
+        signal: ctrl.signal,
+        body: JSON.stringify({
+          model: opts.model,
+          messages: messages.map(toOpenAiMessage),
+          stream: true,
+          // 마지막 청크에 usage 를 받기 위해 필요 (OpenAI 스펙).
+          stream_options: { include_usage: true },
+          max_tokens: opts.maxTokens ?? 8192,
+          temperature: opts.temperature ?? 0.6,
+          top_p: 0.9,
+        }),
+      });
+    } catch (e) {
+      if (inactivityTimer) clearTimeout(inactivityTimer);
+      opts.signal?.removeEventListener('abort', onExternalAbort);
+      if (timedOut) {
+        throw new Error('모델이 응답하지 않습니다 (요청 시간 초과).');
+      }
+      throw e;
+    }
 
     if (!res.ok || !res.body) {
+      if (inactivityTimer) clearTimeout(inactivityTimer);
+      opts.signal?.removeEventListener('abort', onExternalAbort);
       const text = await res.text().catch(() => '');
       throw new Error(`OpenAI error ${res.status}: ${text || res.statusText}`);
     }
@@ -192,13 +233,25 @@ export class OpenAICompatibleProvider implements LlmProvider {
       this.logger.log('[streamChat] abort received — cancelling OpenAI reader');
       reader.cancel().catch(() => {});
     };
-    opts.signal?.addEventListener('abort', onAbort);
+    ctrl.signal.addEventListener('abort', onAbort);
 
     try {
       while (true) {
-        if (opts.signal?.aborted) break;
-        const { value, done } = await reader.read();
+        if (ctrl.signal.aborted) break;
+        let value: Uint8Array | undefined;
+        let done: boolean;
+        try {
+          ({ value, done } = await reader.read());
+        } catch (e) {
+          // 타임아웃으로 인한 abort 는 명확한 에러로 치환(클라 중단/네트워크 오류는 그대로).
+          if (timedOut) {
+            throw new Error('모델이 응답하지 않습니다 (스트림 시간 초과).');
+          }
+          throw e;
+        }
         if (done) break;
+        // 새 데이터 수신 → 무활동 타이머 리셋.
+        armInactivity();
         buffer += decoder.decode(value, { stream: true });
 
         const lines = buffer.split('\n');
@@ -257,7 +310,9 @@ export class OpenAICompatibleProvider implements LlmProvider {
         }
       }
     } finally {
-      opts.signal?.removeEventListener('abort', onAbort);
+      if (inactivityTimer) clearTimeout(inactivityTimer);
+      ctrl.signal.removeEventListener('abort', onAbort);
+      opts.signal?.removeEventListener('abort', onExternalAbort);
       try {
         reader.releaseLock();
       } catch {
