@@ -10,6 +10,7 @@ import {
   ChevronDown,
   ChevronsUpDown,
   Clock,
+  Cpu,
   Eye,
   Globe,
   Hash,
@@ -193,7 +194,9 @@ export default function SettingsModal({
             </>
           )}
         </aside>
-        <main className="flex-1 overflow-y-auto">
+        {/* scrollbar-gutter:stable — 아코디언 펼침 등으로 스크롤바가 생겨도 가로폭이
+            줄지 않게 거터를 항상 예약 → 입력 박스가 밀리는 레이아웃 시프트 방지. */}
+        <main className="flex-1 overflow-y-auto [scrollbar-gutter:stable]">
           <div className="w-full max-w-4xl px-4 py-4 md:px-8 md:py-8">
             {tab === 'general' && (
               <GeneralTab user={user} onUserUpdated={onUserUpdated} />
@@ -842,9 +845,13 @@ function AiSection({
   const { t } = useI18n();
   const empty: AiGroupCfg = { endpoint: '', apiKey: '', model: '' };
   // 한 번에 하나만 펼침 — 다른 하나를 열면 기존 것은 자동으로 접힘.
-  const [openKind, setOpenKind] = useState<'reasoning' | 'vision' | null>(
-    'reasoning',
-  );
+  // 처음엔 닫힌 상태로 렌더한 뒤 다음 프레임에 Reasoning 을 열어, 탭 진입 시
+  // 0fr→1fr 펼침 애니메이션이 자연스럽게 재생되도록 한다(즉시 펼침 시 transition 미발생).
+  const [openKind, setOpenKind] = useState<'reasoning' | 'vision' | null>(null);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setOpenKind('reasoning'));
+    return () => cancelAnimationFrame(id);
+  }, []);
   const toggle = (k: 'reasoning' | 'vision') =>
     setOpenKind((prev) => (prev === k ? null : k));
   return (
@@ -970,10 +977,11 @@ function AiModelGroup({
     [kind, cfg.endpoint],
   );
 
-  // 아코디언이 열려 있을 때 + endpoint 변경 시 검증/모델 조회.
+  // 마운트 시 + endpoint 변경 시 항상 검증/모델 조회 — 아코디언이 접혀 있어도
+  // 상태 배지(active/inactive)가 정확히 표시되도록 (열림 여부와 무관).
   useEffect(() => {
-    if (open) void refresh();
-  }, [open, refresh]);
+    void refresh();
+  }, [refresh]);
 
   // 입력 중에는 검증하지 않고 blur/Enter 시에만 커밋 → 저장 + 모델 재조회.
   const commitEndpoint = () => {
@@ -1124,9 +1132,9 @@ function AiModelGroup({
               autoComplete="off"
             />
           </div>
-          {/* Model */}
+          {/* Model — 드롭다운 선택부는 Reasoning/Vision 공통으로 Cpu 아이콘 통일. */}
           <ModelPickerRow
-            icon={icon}
+            icon={<Cpu className="h-4 w-4" />}
             label="Model"
             desc={
               kind === 'vision'
