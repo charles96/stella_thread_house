@@ -22,6 +22,13 @@ import {
 
 const AI_KEY = 'ai';
 
+// 출력 토큰 기본값 — chat.service 의 AI_MAX_TOKENS 와 동일 출처. GET 응답에서 미설정 그룹에
+// 채워 보내, Settings UI 가 '기본값으로 동작 중'임을 빈칸 대신 값으로 보여주도록 한다.
+const DEFAULT_MAX_TOKENS =
+  Number(process.env.AI_MAX_TOKENS) > 0
+    ? Math.floor(Number(process.env.AI_MAX_TOKENS))
+    : 16384;
+
 // 부분 갱신용 — Reasoning / Vision 그룹 각각의 일부 필드만 보낼 수 있다.
 type AiConfigPatch = {
   reasoning?: Partial<AiGroup>;
@@ -137,7 +144,15 @@ export class AiConfigController implements OnModuleInit {
 
   @Get()
   async get(): Promise<AiGroups> {
-    return this.loadGroups();
+    const g = await this.loadGroups();
+    // 미설정 maxTokens 는 기본값으로 채워 반환(표시용). 저장된 값은 그대로(비어있음) 유지.
+    return {
+      reasoning: {
+        ...g.reasoning,
+        maxTokens: g.reasoning.maxTokens ?? DEFAULT_MAX_TOKENS,
+      },
+      vision: { ...g.vision, maxTokens: g.vision.maxTokens ?? DEFAULT_MAX_TOKENS },
+    };
   }
 
   @Put()

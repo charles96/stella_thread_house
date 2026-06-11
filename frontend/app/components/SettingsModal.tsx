@@ -1163,10 +1163,13 @@ function AiModelGroup({
               gpt-4o = 16384
             </div>
             <input
-              type="number"
-              min={1}
+              type="text"
+              inputMode="numeric"
               value={cfg.maxTokens}
-              onChange={(e) => onChange({ maxTokens: e.target.value })}
+              // 숫자만 허용 — 한글/문자(IME 포함) 입력은 즉시 제거.
+              onChange={(e) =>
+                onChange({ maxTokens: e.target.value.replace(/[^0-9]/g, '') })
+              }
               placeholder="16384"
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-[13px] outline-none transition-colors focus:ring-2 focus:ring-ring"
               spellCheck={false}

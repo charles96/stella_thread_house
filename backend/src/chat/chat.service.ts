@@ -569,13 +569,15 @@ export class ChatService {
     model?: string,
     signal?: AbortSignal,
   ): Promise<{
+    needsSearch: boolean;
     queries: string[];
     country?: string;
     topic?: 'general' | 'news' | 'finance';
     timeRange?: 'day' | 'week' | 'month' | 'year';
   }> {
     const u = userMessage.trim();
-    if (!u) return { queries: [] };
+    // 빈 메시지 — 검색할 내용이 없음.
+    if (!u) return { needsSearch: false, queries: [] };
     try {
       const sys: ChatMessage = {
         role: 'system',
@@ -583,8 +585,14 @@ export class ChatService {
           '당신은 사용자의 메시지를 웹 검색에 최적화된 쿼리 + Tavily 검색 옵션으로 재작성합니다.',
           '대화 맥락(이전 user/assistant 메시지)에서 대명사·지시어("그", "이 사람", "두 인물", "그 회사" 등)가 가리키는 실제 대상(고유명사·키워드)을 찾아내 쿼리에 포함하세요.',
           '',
+          '*** FIRST decide whether a web search is actually needed ("needsSearch") ***',
+          'Set "needsSearch" to false when the user message can be answered well from your own general knowledge and does NOT depend on current, real-time, recent, or frequently-changing information. Examples that do NOT need search: definitions, concepts, explanations, history, science, math, coding/how-to, translation, summarization of provided text, casual conversation, and questions about the assistant itself.',
+          'Set "needsSearch" to true ONLY when answering requires up-to-date / real-time / recent information (news, prices, today\'s events, latest releases, recently changed facts), OR specific facts you are not confident about, OR fresh details that would materially improve the answer.',
+          'If the user EXPLICITLY asks to search the web (e.g., "검색해", "찾아봐", "알아봐줘", "search for", "look it up", "google"), ALWAYS set "needsSearch" to true and still produce proper queries.',
+          'If "needsSearch" is false, return an empty "queries" array (the assistant will answer from its own knowledge).',
+          '',
           '출력 형식 (정확히 이 JSON 1개만):',
-          '{ "queries": ["쿼리1"], "topic": "general", "country": null, "timeRange": null }',
+          '{ "needsSearch": true, "queries": ["쿼리1"], "topic": "general", "country": null, "timeRange": null }',
           '',
           '*** 결정 순서 (반드시 이 순서로 판단) ***',
           '1) topic 먼저 결정',
@@ -665,14 +673,18 @@ export class ChatService {
       const m = text.match(/\{[\s\S]*\}/);
       if (!m) {
         this.logger.warn('[reformulate] no JSON object found in LLM output');
-        return { queries: [] };
+        // 판단 실패 — 안전하게 검색 진행(기존 동작).
+        return { needsSearch: true, queries: [] };
       }
       const parsed = JSON.parse(m[0]) as {
+        needsSearch?: unknown;
         queries?: unknown;
         topic?: unknown;
         country?: unknown;
         timeRange?: unknown;
       };
+      // 명시적으로 false 일 때만 검색 생략 — 누락/불명확하면 검색 진행(안전).
+      const needsSearch = parsed.needsSearch !== false;
       const arr = Array.isArray(parsed.queries) ? parsed.queries : [];
       const cleaned = arr
         .filter((q): q is string => typeof q === 'string')
@@ -697,14 +709,15 @@ export class ChatService {
           ? (parsed.timeRange as 'day' | 'week' | 'month' | 'year')
           : undefined;
       this.logger.log(
-        `[reformulate] cleaned: queries=${JSON.stringify(cleaned)}, topic=${topic}, country=${country}, timeRange=${timeRange}`,
+        `[reformulate] needsSearch=${needsSearch}, queries=${JSON.stringify(cleaned)}, topic=${topic}, country=${country}, timeRange=${timeRange}`,
       );
-      return { queries: cleaned, topic, country, timeRange };
+      return { needsSearch, queries: cleaned, topic, country, timeRange };
     } catch (e) {
       this.logger.warn(
         `검색 쿼리 재작성 실패: ${e instanceof Error ? e.message : ''}`,
       );
-      return { queries: [] };
+      // 실패 시 안전하게 검색 진행.
+      return { needsSearch: true, queries: [] };
     }
   }
 
@@ -1535,6 +1548,17 @@ export class ChatService {
       this.logger.log(
         `[search] reformulated: ${JSON.stringify(reformulated)}`,
       );
+      // AI 판단: 자신이 아는 질문이면 검색을 건너뛰고 지식 기반으로 답한다.
+      // (실시간/최신/모르는 정보가 필요하다고 판단할 때만 검색 — needsSearch)
+      // 단, 사용자가 "검색해/찾아봐/search for" 처럼 '명시적으로' 검색을 요청하면 무조건 검색.
+      const explicitSearch = looksLikeExplicitSearchRequest(
+        lastUserAuto.content,
+      );
+      if (!reformulated.needsSearch && !explicitSearch) {
+        this.logger.log(
+          '[search] LLM 판단: 검색 불필요 → 지식 기반으로 답변',
+        );
+      } else {
       const queries =
         reformulated.queries.length > 0
           ? reformulated.queries
@@ -1761,7 +1785,8 @@ export class ChatService {
           text: m.tavilyUnavailable,
         };
       }
-    }
+      } // end of: reformulated.needsSearch (검색 실행) else 블록
+    } // end of: shouldRunSearch 검색 블록
 
     // URL 직접 모드/검색 모드에서 system message 를 성공적으로 prepend 했는지 플래그로 추적.
     // (augmented 는 resolveMessageImages 로 항상 새 배열이라 reference 비교 불가)
