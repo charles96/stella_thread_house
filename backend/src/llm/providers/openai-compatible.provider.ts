@@ -122,6 +122,26 @@ export class OpenAICompatibleProvider implements LlmProvider {
     return apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
   }
 
+  // 엔드포인트가 Anthropic 인지 — 호스트로 판별. (OpenAI 호환 채팅은 Bearer 로 되지만
+  // GET /v1/models 는 호환 레이어가 아니라 네이티브 엔드포인트라 인증 방식이 다르다.)
+  private isAnthropicEndpoint(endpoint: string): boolean {
+    try {
+      return new URL(endpoint).hostname.endsWith('api.anthropic.com');
+    } catch {
+      return false;
+    }
+  }
+
+  // 모델 목록 호출용 헤더. Anthropic 네이티브 /v1/models 는 x-api-key + anthropic-version
+  // 을 요구한다(Authorization: Bearer 만 보내면 401). 일반 OpenAI 호환 서버는 Bearer 사용.
+  private listModelsHeaders(endpoint: string, apiKey?: string): Record<string, string> {
+    if (!apiKey) return {};
+    if (this.isAnthropicEndpoint(endpoint)) {
+      return { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' };
+    }
+    return { Authorization: `Bearer ${apiKey}` };
+  }
+
   async listModels(opts: LlmListModelsOptions): Promise<ModelInfo[]> {
     // 잘못된/응답 없는 엔드포인트에서 무한 대기 방지 — 8초 타임아웃.
     const ctrl = new AbortController();
@@ -129,7 +149,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
     let res: Response;
     try {
       res = await fetch(`${opts.endpoint}/models`, {
-        headers: this.authHeaders(opts.apiKey),
+        headers: this.listModelsHeaders(opts.endpoint, opts.apiKey),
         signal: ctrl.signal,
       });
     } catch (e) {

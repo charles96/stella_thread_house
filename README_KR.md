@@ -50,6 +50,15 @@ Ollama/LMStudio를 기반으로 gemma4, oss-20b 모델을 중점적으로 테스
 |Local LLM|OpenAI 호환 엔드 포인트 주소|
 |Tavily API Key|웹 검색 용|
 
+## 테스트 완료 AI 모델
+openai gpt 호환 스펙 모드로 개발되었습니다. 아래는 테스트 완료 모델 리스트 입니다.
+
+|구분|모델|용도|
+|--|--|--|
+|Ollama|Gemma4:26b|Reasoning Model|
+|Ollama|Gemma4:26b|Vison Model|
+|OpenAI|gpt-4o|Reasoning Model|
+|OpenAI|gpt-4o|Vision Model|
 
 # Deploy
 
