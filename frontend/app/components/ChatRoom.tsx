@@ -41,6 +41,8 @@ export interface AiGroupCfg {
   endpoint: string;
   apiKey: string;
   model: string;
+  // 출력 토큰 상한(문자열 입력값). 빈 값이면 백엔드 기본값 사용.
+  maxTokens: string;
 }
 
 export interface AuthUser {
@@ -663,11 +665,13 @@ export default function ChatRoom() {
     endpoint: '',
     apiKey: '',
     model: '',
+    maxTokens: '',
   });
   const [visionCfg, setVisionCfg] = useState<AiGroupCfg>({
     endpoint: '',
     apiKey: '',
     model: '',
+    maxTokens: '',
   });
   const router = useRouter();
   const pathname = usePathname();
@@ -699,21 +703,25 @@ export default function ChatRoom() {
           credentials: 'include',
         });
         if (!res.ok) return;
+        type GroupResp = {
+          endpoint?: string;
+          apiKey?: string;
+          model?: string;
+          maxTokens?: number;
+        };
         const j = (await res.json()) as {
-          reasoning?: Partial<AiGroupCfg>;
-          vision?: Partial<AiGroupCfg>;
+          reasoning?: GroupResp;
+          vision?: GroupResp;
         };
         if (cancelled) return;
-        setReasoningCfg({
-          endpoint: j.reasoning?.endpoint ?? '',
-          apiKey: j.reasoning?.apiKey ?? '',
-          model: j.reasoning?.model ?? '',
+        const toCfg = (g?: GroupResp): AiGroupCfg => ({
+          endpoint: g?.endpoint ?? '',
+          apiKey: g?.apiKey ?? '',
+          model: g?.model ?? '',
+          maxTokens: g?.maxTokens != null ? String(g.maxTokens) : '',
         });
-        setVisionCfg({
-          endpoint: j.vision?.endpoint ?? '',
-          apiKey: j.vision?.apiKey ?? '',
-          model: j.vision?.model ?? '',
-        });
+        setReasoningCfg(toCfg(j.reasoning));
+        setVisionCfg(toCfg(j.vision));
       } catch {
         // ignore
       }

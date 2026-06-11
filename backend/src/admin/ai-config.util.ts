@@ -7,6 +7,8 @@ export type AiGroup = {
   endpoint?: string;
   apiKey?: string;
   model?: string;
+  // 답변 출력 토큰 상한(모델 최대 출력에 맞춤). 웹/일반 구분 없이 공통 적용. 미설정이면 기본값.
+  maxTokens?: number;
 };
 
 export type AiConfigValue = {
@@ -27,6 +29,12 @@ const clean = (v: unknown): string | undefined => {
   return s ? s : undefined;
 };
 
+// 양수 정수만 허용 — 그 외(0/음수/NaN/빈값)는 미설정(undefined)으로 처리.
+const cleanNum = (v: unknown): number | undefined => {
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
+};
+
 // raw 'ai' value → { reasoning, vision }. 각 그룹의 빈 필드는 레거시 flat 값으로 채운다.
 export function normalizeAiConfig(value: AiConfigValue | undefined): AiGroups {
   const v = value ?? {};
@@ -36,6 +44,7 @@ export function normalizeAiConfig(value: AiConfigValue | undefined): AiGroups {
     endpoint: clean(g?.endpoint) ?? legacyEndpoint,
     apiKey: clean(g?.apiKey) ?? legacyApiKey,
     model: clean(g?.model) ?? clean(legacyModel),
+    maxTokens: cleanNum(g?.maxTokens),
   });
   return {
     reasoning: group(v.reasoning, v.reasoningModel),
@@ -53,6 +62,7 @@ export function resolveAiGroups(value: AiConfigValue | undefined): AiGroups {
       endpoint: vision.endpoint ?? reasoning.endpoint,
       apiKey: vision.apiKey ?? reasoning.apiKey,
       model: vision.model ?? reasoning.model,
+      maxTokens: vision.maxTokens ?? reasoning.maxTokens,
     },
   };
 }

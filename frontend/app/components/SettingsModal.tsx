@@ -842,7 +842,12 @@ function AiSection({
   ) => void;
 }) {
   const { t } = useI18n();
-  const empty: AiGroupCfg = { endpoint: '', apiKey: '', model: '' };
+  const empty: AiGroupCfg = {
+    endpoint: '',
+    apiKey: '',
+    model: '',
+    maxTokens: '',
+  };
   // 한 번에 하나만 펼침 — 다른 하나를 열면 기존 것은 자동으로 접힘.
   // 처음엔 닫힌 상태로 렌더한 뒤 다음 프레임에 Reasoning 을 열어, 탭 진입 시
   // 0fr→1fr 펼침 애니메이션이 자연스럽게 재생되도록 한다(즉시 펼침 시 transition 미발생).
@@ -1145,6 +1150,31 @@ function AiModelGroup({
             onSelect={(m) => onChange({ model: m })}
             disabled={models.length === 0}
           />
+          {/* Max output tokens — 웹/일반 구분 없이 공통 적용. 비우면 기본값(16384). */}
+          <div>
+            <div className="mb-1.5 flex items-center gap-1.5">
+              <span className="text-primary">
+                <Hash className="h-4 w-4" />
+              </span>
+              <span className="text-[13px] font-medium text-foreground">
+                Max output tokens
+              </span>
+            </div>
+            <div className="mb-1.5 text-[11px] text-muted-foreground">
+              Model&apos;s max output (leave empty for default 16384). e.g.
+              gpt-4o = 16384
+            </div>
+            <input
+              type="number"
+              min={1}
+              value={cfg.maxTokens}
+              onChange={(e) => onChange({ maxTokens: e.target.value })}
+              placeholder="16384"
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-[13px] outline-none transition-colors focus:ring-2 focus:ring-ring"
+              spellCheck={false}
+              autoComplete="off"
+            />
+          </div>
           </div>
         </div>
       </div>

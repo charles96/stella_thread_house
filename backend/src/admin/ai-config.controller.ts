@@ -42,10 +42,13 @@ export class AiConfigController implements OnModuleInit {
     private readonly configs: Repository<SystemConfig>,
   ) {}
 
-  // 부팅 시 한 번 — DB 의 'ai' row 의 비어있는 필드만 env 로 시드.
+  // 부팅 시 한 번 — DB 의 'ai' row 의 '비어있는 필드만' env 로 시드.
   // 이후 admin 이 Settings 에서 변경 시 DB 값이 우선이 되며 env 는 무시됨.
-  //   - OPENAI_BASE_URL  : OpenAI 호환 base URL (예: https://api.openai.com/v1, http://host:11434/v1)
-  //   - OPENAI_API_KEY   : OpenAI 호환 API 키 (로컬 서버는 불필요)
+  // Reasoning / Vision 그룹을 각각 endpoint / apiKey / model / maxTokens 로 시드 가능:
+  //   - AI_REASONING_ENDPOINT / AI_REASONING_API_KEY / AI_REASONING_MODEL / AI_REASONING_MAX_TOKENS
+  //   - AI_VISION_ENDPOINT    / AI_VISION_API_KEY    / AI_VISION_MODEL    / AI_VISION_MAX_TOKENS
+  // 레거시(단일) 폴백 — 그룹 전용 endpoint/apiKey 가 없으면 양쪽에 적용:
+  //   - OPENAI_BASE_URL / OPENAI_API_KEY
   async onModuleInit(): Promise<void> {
     const groups = await this.loadGroups();
     const next: AiGroups = {
@@ -54,26 +57,63 @@ export class AiConfigController implements OnModuleInit {
     };
     let changed = false;
 
-    const envApiKey = process.env.OPENAI_API_KEY?.trim();
-    const envEndpoint = process.env.OPENAI_BASE_URL?.trim();
-    // 두 그룹 모두 비어있을 때만 env 로 시드(기존 동작 호환 — 단일 endpoint/key).
-    for (const g of [next.reasoning, next.vision]) {
-      if (!g.apiKey && envApiKey) {
-        g.apiKey = envApiKey;
+    const env = (k: string): string | undefined =>
+      process.env[k]?.trim() || undefined;
+    const envNum = (k: string): number | undefined => {
+      const n = Number(process.env[k]);
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
+    };
+    const legacyEndpoint = env('OPENAI_BASE_URL');
+    const legacyApiKey = env('OPENAI_API_KEY');
+
+    // 비어있는 필드만 채운다(시드). 이미 값이 있으면(=Settings 에서 설정됨) 건드리지 않음.
+    const seed = (
+      g: AiGroup,
+      endpoint?: string,
+      apiKey?: string,
+      model?: string,
+      maxTokens?: number,
+    ) => {
+      if (!g.endpoint && endpoint) {
+        g.endpoint = endpoint;
         changed = true;
       }
-      if (!g.endpoint && envEndpoint) {
-        g.endpoint = envEndpoint;
+      if (!g.apiKey && apiKey) {
+        g.apiKey = apiKey;
         changed = true;
       }
-    }
+      if (!g.model && model) {
+        g.model = model;
+        changed = true;
+      }
+      if (!g.maxTokens && maxTokens) {
+        g.maxTokens = maxTokens;
+        changed = true;
+      }
+    };
+
+    seed(
+      next.reasoning,
+      env('AI_REASONING_ENDPOINT') ?? legacyEndpoint,
+      env('AI_REASONING_API_KEY') ?? legacyApiKey,
+      env('AI_REASONING_MODEL'),
+      envNum('AI_REASONING_MAX_TOKENS'),
+    );
+    seed(
+      next.vision,
+      env('AI_VISION_ENDPOINT') ?? legacyEndpoint,
+      env('AI_VISION_API_KEY') ?? legacyApiKey,
+      env('AI_VISION_MODEL'),
+      envNum('AI_VISION_MAX_TOKENS'),
+    );
 
     if (changed) {
       await this.save(next);
       // API 키 원문은 로그에 남기지 않음.
       this.logger.log(
-        `seeded AI config from env (endpoint=${next.reasoning.endpoint ?? '-'}, ` +
-          `apiKey=${next.reasoning.apiKey ? 'set' : '-'})`,
+        `seeded AI config from env ` +
+          `(reasoning: endpoint=${next.reasoning.endpoint ?? '-'}, model=${next.reasoning.model ?? '-'}, apiKey=${next.reasoning.apiKey ? 'set' : '-'}; ` +
+          `vision: endpoint=${next.vision.endpoint ?? '-'}, model=${next.vision.model ?? '-'}, apiKey=${next.vision.apiKey ? 'set' : '-'})`,
       );
     }
   }
@@ -106,10 +146,20 @@ export class AiConfigController implements OnModuleInit {
     // 필드를 보낸 경우(undefined 아님)에만 갱신 — 빈 문자열로 보내면 '비우기'가 되도록.
     const pick = (v: string | undefined, prevV?: string): string | undefined =>
       v !== undefined ? v.trim() || undefined : prevV;
+    // maxTokens — 보낸 경우에만 갱신. 양수 정수가 아니면(0/빈값 등) 비우기(기본값으로 복귀).
+    const pickNum = (
+      v: number | undefined,
+      prevV?: number,
+    ): number | undefined => {
+      if (v === undefined) return prevV;
+      const n = Number(v);
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
+    };
     const merge = (patch: Partial<AiGroup> | undefined, base: AiGroup): AiGroup => ({
       endpoint: pick(patch?.endpoint, base.endpoint),
       apiKey: pick(patch?.apiKey, base.apiKey),
       model: pick(patch?.model, base.model),
+      maxTokens: pickNum(patch?.maxTokens, base.maxTokens),
     });
     const next: AiGroups = {
       reasoning: merge(body.reasoning, prev.reasoning),

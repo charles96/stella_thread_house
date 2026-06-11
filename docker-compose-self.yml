@@ -39,7 +39,17 @@ services:
       TH_ADMIN_PASSWORD: ${TH_ADMIN_PASSWORD:-changeme1234}
       DATABASE_URL: postgres://${POSTGRES_USER:-stella}:${POSTGRES_PASSWORD:-stella_dev_pass}@postgres:5432/${POSTGRES_DB:-stella}
       # AI 설정 seed (DB 의 'ai' row 가 비어있을 때만 시드, 이후 Settings 값 우선)
-      # OpenAI 호환 base URL(/v1 포함) + API 키.
+      # Reasoning / Vision 그룹을 각각 endpoint / API key / model / max output tokens 로 시드.
+      #   (model·max tokens 는 선택. 비우면 Settings 에서 지정/기본값 사용)
+      AI_REASONING_ENDPOINT: ${AI_REASONING_ENDPOINT}
+      AI_REASONING_API_KEY: ${AI_REASONING_API_KEY}
+      AI_REASONING_MODEL: ${AI_REASONING_MODEL}
+      AI_REASONING_MAX_TOKENS: ${AI_REASONING_MAX_TOKENS}
+      AI_VISION_ENDPOINT: ${AI_VISION_ENDPOINT}
+      AI_VISION_API_KEY: ${AI_VISION_API_KEY}
+      AI_VISION_MODEL: ${AI_VISION_MODEL}
+      AI_VISION_MAX_TOKENS: ${AI_VISION_MAX_TOKENS}
+      # 레거시(단일) 폴백 — 그룹 전용 endpoint/key 가 없으면 양쪽에 적용.
       OPENAI_BASE_URL: ${OPENAI_BASE_URL}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       TAVILY_API_KEY: ${TAVILY_API_KEY}

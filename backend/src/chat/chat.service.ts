@@ -106,7 +106,7 @@ const AI_CONFIG_ERROR_RE =
 // 비전 미지원 모델에 이미지를 보냈을 때의 공급자 오류 — Settings 에서 비전 모델로
 // 바꾸라는 다국어 안내로 치환한다. (예: "does not support image inputs")
 const VISION_UNSUPPORTED_RE =
-  /not support image|does not support (?:image|vision|multimodal)|image input[s]?\b.{0,24}(?:not support|unsupported)|no vision support|not a vision model|does not support image inputs/i;
+  /not support image|does not support (?:image|vision|multimodal)|image input[s]?\b.{0,24}(?:not support|unsupported)|no vision support|not a vision model|does not support image inputs|image_url is only supported|only supported by certain models|invalid content type/i;
 
 // 선택한 모델이 서버에 없을 때의 공급자 오류 — Settings 에서 유효한 모델로 바꾸라는 안내.
 // (예: "Invalid model identifier ...", code "model_not_found")
@@ -349,6 +349,9 @@ export class ChatService {
   private readonly searchTopRead = Number(
     process.env.SEARCH_TOP_READ ?? 3,
   );
+  // 답변 출력 토큰 상한(웹/일반 구분 없이 공통). Settings 의 그룹별 maxTokens 가 우선,
+  // 미설정 시 이 기본값(env AI_MAX_TOKENS, 기본 16384 — gpt-4o 등 최대 출력에 맞춤).
+  private readonly maxOutputTokens = Number(process.env.AI_MAX_TOKENS ?? 16384);
   // URL 직접 모드에서 페이지 한 곳당 비전 분석할 일반 이미지 개수
   // 페이지에서 비전 분석할 이미지 최대 개수 (filterPageImages limit과 맞춰 페이징된 뒷 카드도 커버)
   private readonly imageAnalyzeBudget = Number(
@@ -1279,14 +1282,11 @@ export class ChatService {
 
     // 메시지 안의 URL은 자동 감지하여 페이지 내용을 읽고 답변에 활용.
     const lastUserAuto = [...messages].reverse().find((u) => u.role === 'user');
+    // 비전은 '현재 메시지에 명시적으로 첨부한 이미지'에만 동작한다.
+    // (과거 history 이미지·웹 검색 이미지는 비전 대상이 아니며, 아래에서 답변 모델 payload 의
+    //  image_url 도 제거 → 비전 미지원 모델이 과거 이미지로 거부하는 문제 방지.)
     const lastUserHasImages = (lastUserAuto?.images?.length ?? 0) > 0;
     const lastUserImageCount = lastUserAuto?.images?.length ?? 0;
-    // 대화 history(최근 윈도우)에 과거 첨부 이미지가 남아 함께 전송될 수 있으므로,
-    // 모델 선택은 "마지막 메시지"가 아니라 "payload 내 어느 메시지든 이미지 존재"로 판단.
-    // (텍스트 follow-up 인데 직전 이미지가 history 에 남아 비전 미지원 모델로 가던 버그 방지.)
-    const anyMessageHasImages = messages.some(
-      (mm) => (mm.images?.length ?? 0) > 0,
-    );
     // 첨부 이미지가 있어도 URL/Search 모드는 함께 발동 가능 — 인용 번호는 통합 정렬.
     const autoDirectUrls = lastUserAuto?.content
       ? extractUrlsFromText(lastUserAuto.content)
@@ -1811,12 +1811,29 @@ export class ChatService {
       finalMessages = [visionCitePrompt, ...finalMessages];
     }
 
+    // 비전 동작 조건: '현재(마지막) user 메시지에 명시적으로 첨부한 이미지'가 있을 때만.
+    // payload 에서 image_url 은 그 현재 첨부 이미지에만 남기고, 과거 history 이미지·웹 검색
+    // 이미지는 모두 제거한다 → 텍스트 답변/검색 답변이 비전 미지원 모델에서도 정상 동작.
+    {
+      let lastUserIdx = -1;
+      for (let i = finalMessages.length - 1; i >= 0; i--) {
+        if (finalMessages[i].role === 'user') {
+          lastUserIdx = i;
+          break;
+        }
+      }
+      finalMessages = finalMessages.map((mm, i) => {
+        const keep = lastUserHasImages && i === lastUserIdx;
+        if (keep || !mm.images || mm.images.length === 0) return mm;
+        return { ...mm, images: undefined };
+      });
+    }
+
     // 모델 전송은 공급자(LlmProvider)에 위임 — ChatService 는 메시지 구성/인용/저장만 담당.
     // 검색/URL 모드에서는 컨텍스트가 커서 thinking 에 토큰을 많이 소비하므로 상한을 높임.
-    // 첨부 이미지가 있으면(현재 또는 history 에 남은 과거 이미지 포함) Vision 그룹의
-    // endpoint / apiKey / model 로 답변을 생성한다. 그 외에는 Reasoning 그룹 사용.
+    // 현재 메시지에 첨부 이미지가 있을 때만 Vision 그룹(endpoint/apiKey/model)으로 답변 생성.
     const groups = await this.loadAiGroups();
-    const useVisionGroup = anyMessageHasImages;
+    const useVisionGroup = lastUserHasImages;
     const group = useVisionGroup ? groups.vision : groups.reasoning;
     const endpoint = this.resolveGroupEndpoint(group, options.endpoint);
     let chatModel: string;
@@ -1834,7 +1851,8 @@ export class ChatService {
     } else {
       chatModel = options.model || group.model || this.defaultModel;
     }
-    const maxTokens = augmentedBySearch || augmentedByUrl ? 32768 : 8192;
+    // 출력 토큰 상한 — 사용 그룹의 Settings 값 우선, 없으면 기본값(웹/일반 구분 없음).
+    const maxTokens = group.maxTokens || this.maxOutputTokens;
     const apiKey = group.apiKey;
     try {
       yield* this.llm.provider.streamChat({
