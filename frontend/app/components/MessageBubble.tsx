@@ -596,6 +596,7 @@ function ImageScatter({
   bust,
   localFor,
   holdPop = false,
+  visionActive = false,
 }: {
   images: SearchImage[];
   cardOverlap: number;
@@ -623,6 +624,8 @@ function ImageScatter({
   // true 면 카드를 숨긴 채 등장(팝콘) 애니메이션을 보류. References 라운드 확장이 끝난 뒤
   // false 로 바뀌면 그때 비로소 팝콘이 터지도록 — 검색 시 절차적(순차) 연출용.
   holdPop?: boolean;
+  // 첨부 이미지를 비전 처리(분석) 중일 때 카드를 천천히 깜빡이게(visionBlink) 한다.
+  visionActive?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [perPage, setPerPage] = useState(7);
@@ -1098,6 +1101,12 @@ function ImageScatter({
                 {globalIndex + 1}
               </span>
             )}
+            {/* 비전 처리(깜빡임) 중 — 이미지 우측 상단에 vision(Eye) 아이콘 표기. */}
+            {isLoaded && (img.analyzing || visionActive) && (
+              <span className="pointer-events-none absolute right-1 top-1 z-[2] inline-flex h-5 w-5 items-center justify-center rounded-full border border-purple-400/60 bg-card/90 text-purple-400 shadow-sm">
+                <Eye className="h-3 w-3" />
+              </span>
+            )}
             <Tooltip>
               <TooltipTrigger asChild>
             <button
@@ -1112,7 +1121,9 @@ function ImageScatter({
                   ? 'opacity-100'
                   : 'opacity-0',
                 isLoaded && isFirstAppear && !holdPop && 'animate-card-pop',
-                img.analyzing && 'vision-glow',
+                // 페이지 이미지 분석 중(analyzing) 또는 첨부 이미지 비전 처리 중(visionActive)이면
+                // 천천히 깜빡(visionBlink). 단 로드 완료된 카드에만.
+                isLoaded && (img.analyzing || visionActive) && 'vision-glow',
               )}
             >
               {!isLoaded && (
@@ -2964,6 +2975,8 @@ function MessageBubble({
                     bust={imgBust}
                     localFor={localFor}
                     holdPop={!popReady}
+                    // 첨부 이미지 비전 처리(분석) 중 — 답변 본문 도착 전까지 천천히 깜빡.
+                    visionActive={!!message.visionContext && isStreaming}
                   />
                 </LazyVisible>
               </div>
