@@ -90,29 +90,6 @@ export type StreamPart =
       promptTokens?: number;
     };
 
-// 공급자(OpenAI 호환 런타임)가 컨텍스트 한도 초과를 알리는 다양한 문구를 포괄 감지.
-// LM Studio: "tokens to keep from the initial prompt is greater than the context length"
-// OpenAI/vLLM: "maximum context length", "context_length_exceeded" 등.
-const CONTEXT_OVERFLOW_RE =
-  /context[\s_-]?(?:length|window|size)|maximum context|context_length_exceeded|tokens to keep|too (?:long|many tokens)|exceeds? the (?:model'?s )?(?:maximum|context)/i;
-
-// AI 공급자 설정 오류 — 잘못된 endpoint(base URL)/API 키/호스트로 인한 실패.
-//   - HTTP 401/403/404 (인증 실패·잘못된 경로)
-//   - 연결 실패(ECONNREFUSED/ENOTFOUND/getaddrinfo/fetch failed 등 — 호스트 오타)
-// 사용자에게 원문 대신 "Settings 에서 AI 설정을 고치라"는 다국어 안내로 치환한다.
-const AI_CONFIG_ERROR_RE =
-  /\b(?:401|403|404)\b|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|getaddrinfo|fetch failed|ETIMEDOUT|ECONNRESET|unauthorized|forbidden|invalid api key|incorrect api key|invalid_api_key|page not found/i;
-
-// 비전 미지원 모델에 이미지를 보냈을 때의 공급자 오류 — Settings 에서 비전 모델로
-// 바꾸라는 다국어 안내로 치환한다. (예: "does not support image inputs")
-const VISION_UNSUPPORTED_RE =
-  /not support image|does not support (?:image|vision|multimodal)|image input[s]?\b.{0,24}(?:not support|unsupported)|no vision support|not a vision model|does not support image inputs|image_url is only supported|only supported by certain models|invalid content type/i;
-
-// 선택한 모델이 서버에 없을 때의 공급자 오류 — Settings 에서 유효한 모델로 바꾸라는 안내.
-// (예: "Invalid model identifier ...", code "model_not_found")
-const MODEL_NOT_FOUND_RE =
-  /model_not_found|invalid model|model not found|unknown model|no such model|specify a valid.{0,20}model|model.{0,20}does not exist|model.{0,20}is not (?:available|found)/i;
-
 // UI locale → Tavily country (해당 국가 웹 우선). en 등은 글로벌(미지정).
 function localeToCountry(locale?: string): string | undefined {
   switch ((locale ?? '').toLowerCase()) {
@@ -1813,6 +1790,24 @@ export class ChatService {
       finalMessages = [userInfoPrompt, ...finalMessages];
     }
 
+    // Thread 모드 — 답변을 '대화'가 아니라 '독립된 문서'로 작성하도록 강제(지시는 영어로 주입).
+    // (인사말/자기소개/후속질문 유도 등 대화체 요소를 제거. Opus 등 일부 모델의
+    //  기본 대화체·맺음말 성향을 억제하기 위함.)
+    if (options.kind === 'thread') {
+      const threadDocPrompt: ChatMessage = {
+        role: 'system',
+        content: [
+          'Thread mode — Write the answer as a standalone DOCUMENT / encyclopedia-style entry, NOT a chat message (still obey the language rule above):',
+          '- No greetings or self-introduction: do not open with phrases like "Hello", "I\'m Stella", or "Let me tell you about ~".',
+          '- No closing remarks or follow-up solicitation: do not end with "I hope this helps", "Feel free to ask if you have more questions", or "Would you like to know more?".',
+          '- No conversational or meta language: do not address or refer to the user or yourself ("you", "we", "I"), and do not narrate your answering process.',
+          '- Start directly with the substantive content (heading, table, paragraph) and write objectively and descriptively, like a reference document or wiki article.',
+          '- Keep the persona (Stella) hidden in the body; only state the name if the user explicitly asks for it.',
+        ].join('\n'),
+      };
+      finalMessages = [threadDocPrompt, ...finalMessages];
+    }
+
     // 사용자가 이미지를 첨부한 경우 비전 인용 규칙을 추가 system 메시지로 주입.
     // 통합 인용 번호: 첨부 이미지가 [1]..[M], 웹 검색결과는 [M+1]..[M+N] 으로 이어짐.
     if (lastUserHasImages) {
@@ -1879,43 +1874,14 @@ export class ChatService {
     // 출력 토큰 상한 — 사용 그룹의 Settings 값 우선, 없으면 기본값(웹/일반 구분 없음).
     const maxTokens = group.maxTokens || this.maxOutputTokens;
     const apiKey = group.apiKey;
-    try {
-      yield* this.llm.provider.streamChat({
-        endpoint,
-        model: chatModel,
-        messages: finalMessages,
-        signal: options.signal,
-        maxTokens,
-        apiKey,
-      });
-    } catch (e) {
-      // 컨텍스트 초과는 원문(영문) 대신 다국어 안내 메시지로 치환해 노출.
-      // code 를 함께 실어 컨트롤러가 errorCode 로 중계 → 프론트가 UI 언어로 재번역(언어 전환 반응).
-      const raw = e instanceof Error ? e.message : String(e);
-      // 비전 미지원 모델에 이미지 전송 — "Settings 에서 비전 지원 모델로 변경" 안내.
-      if (VISION_UNSUPPORTED_RE.test(raw)) {
-        const err = new Error(m.visionUnsupported);
-        (err as Error & { code?: string }).code = 'vision_unsupported';
-        throw err;
-      }
-      // 선택한 모델이 서버에 없음 — "Settings 에서 유효한 모델로 변경" 안내.
-      if (MODEL_NOT_FOUND_RE.test(raw)) {
-        const err = new Error(m.modelNotFound);
-        (err as Error & { code?: string }).code = 'model_not_found';
-        throw err;
-      }
-      if (CONTEXT_OVERFLOW_RE.test(raw)) {
-        const err = new Error(m.contextOverflow);
-        (err as Error & { code?: string }).code = 'context_overflow';
-        throw err;
-      }
-      // 잘못된 endpoint/API 키/호스트 — "Settings 에서 AI 설정 수정" 다국어 안내로 치환.
-      if (AI_CONFIG_ERROR_RE.test(raw)) {
-        const err = new Error(m.aiConfigError);
-        (err as Error & { code?: string }).code = 'ai_config_error';
-        throw err;
-      }
-      throw e;
-    }
+    // 공급자 에러는 가공/치환하지 않고 원문 그대로 전파(표준 포맷이 아니므로 분기 무의미).
+    yield* this.llm.provider.streamChat({
+      endpoint,
+      model: chatModel,
+      messages: finalMessages,
+      signal: options.signal,
+      maxTokens,
+      apiKey,
+    });
   }
 }

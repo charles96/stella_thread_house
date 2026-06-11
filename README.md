@@ -53,6 +53,18 @@ Tested primarily with the gemma4 and oss-20b models served via Ollama / LM Studi
 | Local LLM | OpenAI-compatible endpoint URL |
 | Tavily API Key | For web search |
 
+## Tested AI Models
+Built against the OpenAI GPT-compatible spec. Below is the list of models that have been tested.
+* Note: every AI Endpoint must end with `/v1`!
+
+| Type | Model | Purpose |
+|--|--|--|
+| Ollama | Gemma4:26b | Reasoning Model |
+| Ollama | Gemma4:26b | Vision Model |
+| OpenAI | gpt-4o | Reasoning Model |
+| OpenAI | gpt-4o | Vision Model |
+| Anthropic | opus | Reasoning Model |
+
 # Deploy
 
 ## Quick Start

@@ -161,7 +161,9 @@ export class OpenAICompatibleProvider implements LlmProvider {
       clearTimeout(timer);
     }
     if (!res.ok) {
-      throw new Error(`OpenAI models ${res.status}: ${res.statusText}`);
+      // 업스트림 에러 본문을 그대로 노출. 비어있으면 status/statusText 로 폴백.
+      const text = await res.text().catch(() => '');
+      throw new Error(text || `${res.status} ${res.statusText}`.trim());
     }
     const json = (await res.json()) as { data?: Array<{ id: string }> };
     return (json.data ?? []).map((m) => ({ name: m.id }));
@@ -221,8 +223,11 @@ export class OpenAICompatibleProvider implements LlmProvider {
           // 마지막 청크에 usage 를 받기 위해 필요 (OpenAI 스펙).
           stream_options: { include_usage: true },
           max_tokens: opts.maxTokens ?? 8192,
-          temperature: opts.temperature ?? 0.6,
-          top_p: 0.9,
+          // sampling 파라미터(temperature/top_p)는 Anthropic 모델(Opus 4.7+/Fable 등)에서
+          // 제거되어 보내면 400 ("temperature is deprecated"). Anthropic 엔드포인트면 생략.
+          ...(this.isAnthropicEndpoint(opts.endpoint)
+            ? {}
+            : { temperature: opts.temperature ?? 0.6, top_p: 0.9 }),
         }),
       });
     } catch (e) {
@@ -238,7 +243,9 @@ export class OpenAICompatibleProvider implements LlmProvider {
       if (inactivityTimer) clearTimeout(inactivityTimer);
       opts.signal?.removeEventListener('abort', onExternalAbort);
       const text = await res.text().catch(() => '');
-      throw new Error(`OpenAI error ${res.status}: ${text || res.statusText}`);
+      // 업스트림 에러 본문을 가공 없이 그대로 노출(접두어 강제하지 않음).
+      // 본문이 비어있을 때만 status/statusText 로 폴백.
+      throw new Error(text || `${res.status} ${res.statusText}`.trim());
     }
 
     const reader = res.body.getReader();
@@ -304,12 +311,9 @@ export class OpenAICompatibleProvider implements LlmProvider {
           }
           // 스트림 도중 에러 페이로드 — 조용히 삼키지 말고 throw 해서
           // 컨트롤러가 사용자에게 {error} 로 노출하도록 한다.
+          // 가공/치환 없이 원문(에러 JSON) 그대로 전파.
           if (json.error) {
-            const msg =
-              (typeof json.error === 'string' ? json.error : json.error.message) ||
-              json.message ||
-              'unknown error';
-            throw new Error(`OpenAI 호환 공급자 오류: ${msg}`);
+            throw new Error(data);
           }
           const delta = json.choices?.[0]?.delta;
           // reasoning_content(vLLM/DeepSeek 등) / reasoning 필드를 thinking 으로 매핑.

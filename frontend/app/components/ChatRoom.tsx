@@ -732,17 +732,18 @@ export default function ChatRoom() {
   }, []);
   // 그룹별 부분 갱신 — 로컬 state 즉시 반영 + 해당 그룹 patch 를 PUT /admin/ai.
   const updateAiGroup = useCallback(
-    (kind: 'reasoning' | 'vision', patch: Partial<AiGroupCfg>) => {
+    (kind: 'reasoning' | 'vision', patch: Partial<AiGroupCfg>): Promise<void> => {
       if (kind === 'reasoning') setReasoningCfg((p) => ({ ...p, ...patch }));
       else setVisionCfg((p) => ({ ...p, ...patch }));
-      void fetch(`${API_URL}/admin/ai`, {
+      // PUT 완료 Promise 반환 → 호출부가 저장 완료 후 모델목록을 재조회(키 갱신 반영)할 수 있다.
+      return fetch(`${API_URL}/admin/ai`, {
         method: 'PUT',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ [kind]: patch }),
-      }).catch(() => {
-        // ignore
-      });
+      })
+        .then(() => undefined)
+        .catch(() => undefined);
     },
     [],
   );

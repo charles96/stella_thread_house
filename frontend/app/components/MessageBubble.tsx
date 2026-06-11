@@ -68,15 +68,6 @@ import { useI18n } from '@/lib/i18n';
 import { MermaidView, SvgView } from './ArtifactPanel';
 import type { Message, ReadPageImage, SearchImage } from './ChatRoom';
 
-// 백엔드가 보내는 에러 코드 → 프론트 i18n 키. 매핑이 있으면 메시지를 현재 UI 언어로
-// 번역해 렌더하므로, 언어 전환 시 에러 메시지도 즉시 따라 바뀐다.
-const ERROR_CODE_I18N: Record<string, string> = {
-  context_overflow: 'error.contextOverflow',
-  ai_config_error: 'error.aiConfig',
-  vision_unsupported: 'error.visionUnsupported',
-  model_not_found: 'error.modelNotFound',
-};
-
 // 물리 회전 후 같은 URL 의 이미지를 다시 받게 하는 캐시 버스트. 버전이 있을 때만 ?v= 부착.
 function withCacheBust(url: string, v?: number): string {
   if (!v) return url;
@@ -1623,14 +1614,8 @@ function MessageBubble({
 
   const renderedContent = useMemo(() => {
     if (isUser) return message.content;
-    // 알려진 에러 코드가 있으면 저장된 본문 대신 현재 UI 언어로 번역해 렌더 —
-    // 언어를 전환하면 에러 메시지도 즉시 그 언어로 바뀐다.
-    if (message.isError && message.errorCode) {
-      const key = ERROR_CODE_I18N[message.errorCode];
-      // 한글에 인접한 **강조** 가 ReactMarkdown 에서 풀리지 않도록 보정.
-      if (key) return fixKoreanEmphasis(t(key as Parameters<typeof t>[0]));
-    }
-    // 에러 메시지는 경고 아이콘을 별도로 렌더하므로 옛 데이터에 박힌 선행 ⚠️ 는 제거.
+    // 에러 메시지는 공급자 원문을 그대로 노출. 경고 아이콘은 별도로 렌더하므로
+    // 옛 데이터에 박힌 선행 ⚠️ 만 제거한다.
     if (message.isError) {
       return message.content.replace(/^\s*⚠️️?\s*/u, '');
     }
@@ -1644,7 +1629,7 @@ function MessageBubble({
         normalizeFlattenedTables(dedentTableRows(stripped)),
       ),
     );
-  }, [isUser, message.content, message.isError, message.errorCode, t]);
+  }, [isUser, message.content, message.isError]);
 
   // invalid 마크는 localStorage 에 캐시 — 재방문 시 깨진 이미지를 다시 로드 시도하지 않음.
   // 마운트 시 message 의 모든 이미지 URL 을 hydrate.

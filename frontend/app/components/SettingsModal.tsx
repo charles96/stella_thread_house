@@ -63,11 +63,11 @@ interface Props {
   // Reasoning / Vision 두 그룹의 AI 설정(endpoint/apiKey/model).
   reasoningCfg?: AiGroupCfg;
   visionCfg?: AiGroupCfg;
-  // 그룹별 부분 갱신 콜백 — { [kind]: patch } 로 PUT /admin/ai.
+  // 그룹별 부분 갱신 콜백 — { [kind]: patch } 로 PUT /admin/ai. PUT 완료 Promise 반환.
   onChangeAiGroup?: (
     kind: 'reasoning' | 'vision',
     patch: Partial<AiGroupCfg>,
-  ) => void;
+  ) => void | Promise<void>;
 }
 
 type Tab =
@@ -840,7 +840,7 @@ function AiSection({
   onChangeAiGroup?: (
     kind: 'reasoning' | 'vision',
     patch: Partial<AiGroupCfg>,
-  ) => void;
+  ) => void | Promise<void>;
 }) {
   const { t } = useI18n();
   const empty: AiGroupCfg = {
@@ -911,7 +911,7 @@ function AiModelGroup({
   title: string;
   desc: string;
   cfg: AiGroupCfg;
-  onChange: (patch: Partial<AiGroupCfg>) => void;
+  onChange: (patch: Partial<AiGroupCfg>) => void | Promise<void>;
   // 부모가 제어 — 한 번에 하나만 펼치기 위해 open 상태를 끌어올림.
   open: boolean;
   onToggle: () => void;
@@ -924,6 +924,11 @@ function AiModelGroup({
   useEffect(() => {
     setEndpointDraft(cfg.endpoint);
   }, [cfg.endpoint]);
+  // apiKey 도 입력 중엔 검증하지 않고 blur/Enter 시에만 커밋(저장 후 모델 재조회).
+  const [apiKeyDraft, setApiKeyDraft] = useState(cfg.apiKey);
+  useEffect(() => {
+    setApiKeyDraft(cfg.apiKey);
+  }, [cfg.apiKey]);
   const reqRef = useRef(0);
 
   // 그룹의 endpoint(+apiKey, 백엔드에서 그룹값 사용)로 모델 목록 조회 = 엔드포인트 유효성 검사.
@@ -995,6 +1000,14 @@ function AiModelGroup({
       onChange({ endpoint: v });
       void refresh(v);
     }
+  };
+  // apiKey 커밋 — 모델목록은 백엔드가 '저장된' 키를 쓰므로, PUT 완료를 기다린 뒤 재조회해야
+  // 새 키가 반영된다(기다리지 않으면 직전 키로 조회돼 키 불일치 401 이 그대로 남음).
+  const commitApiKey = async () => {
+    const v = apiKeyDraft.trim();
+    if (v === cfg.apiKey.trim()) return;
+    await onChange({ apiKey: v });
+    void refresh();
   };
 
   const status: 'checking' | 'active' | 'inactive' | 'none' = !cfg.endpoint
@@ -1126,8 +1139,12 @@ function AiModelGroup({
             </div>
             <input
               type="password"
-              value={cfg.apiKey}
-              onChange={(e) => onChange({ apiKey: e.target.value })}
+              value={apiKeyDraft}
+              onChange={(e) => setApiKeyDraft(e.target.value)}
+              onBlur={() => void commitApiKey()}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void commitApiKey();
+              }}
               placeholder="sk-..."
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-[13px] outline-none transition-colors focus:ring-2 focus:ring-ring"
               spellCheck={false}
