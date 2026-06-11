@@ -2488,6 +2488,42 @@ function ModelPickerRow({
   disabled?: boolean;
 }) {
   const { t } = useI18n();
+  // 콤보박스 — 선택창(input)에 직접 타이핑하면 모델명을 필터, 아래 리스트에서 선택.
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // 바깥 클릭 시 닫고 검색어 초기화.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        setQuery('');
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  const q = query.trim().toLowerCase();
+  const filtered = [...models]
+    .sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, {
+        numeric: true,
+        sensitivity: 'base',
+      }),
+    )
+    .filter((m) => !q || m.name.toLowerCase().includes(q));
+
+  const choose = (name: string) => {
+    onSelect?.(name);
+    setOpen(false);
+    setQuery('');
+    inputRef.current?.blur();
+  };
+
   return (
     <div className={cn(disabled && 'pointer-events-none opacity-40')}>
       <div className="mb-1.5 flex items-center gap-1.5">
@@ -2502,57 +2538,80 @@ function ModelPickerRow({
           {t('settings.ai.noModels')}
         </div>
       ) : (
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="outline" size="sm" className="w-full justify-between">
-            <span className="truncate text-[12px]">
-              {selected ?? t('settings.ai.unset')}
-            </span>
-            <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent
-          align="start"
-          sideOffset={4}
-          className="z-[120] max-h-72 w-[var(--radix-dropdown-menu-trigger-width)] overflow-y-auto"
-        >
-          {models.length === 0 && (
-            <div className="px-2 py-1.5 text-[11.5px] text-muted-foreground">
-              {t('settings.ai.noModels')}
+        <div ref={wrapRef} className="relative">
+          <div className="relative">
+            <input
+              ref={inputRef}
+              // 닫혀 있으면 선택된 모델명, 열려 있으면 타이핑한 검색어를 보여준다.
+              value={open ? query : selected ?? ''}
+              onFocus={() => {
+                setOpen(true);
+                setQuery('');
+              }}
+              onChange={(e) => {
+                setOpen(true);
+                setQuery(e.target.value);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  setOpen(false);
+                  setQuery('');
+                  inputRef.current?.blur();
+                } else if (e.key === 'Enter' && open && filtered.length > 0) {
+                  e.preventDefault();
+                  choose(filtered[0].name);
+                }
+              }}
+              placeholder={selected ?? t('settings.ai.unset')}
+              className="h-8 w-full rounded-md border border-input bg-background px-3 pr-8 text-[12px] outline-none transition-colors focus:ring-2 focus:ring-ring"
+              spellCheck={false}
+              autoComplete="off"
+            />
+            <ChevronsUpDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          </div>
+          {open && (
+            <div className="mt-1 max-h-60 overflow-y-auto rounded-md border border-border bg-popover p-1 shadow-sm">
+              {filtered.length === 0 ? (
+                <div className="px-2 py-1.5 text-[11.5px] text-muted-foreground">
+                  {models.length === 0
+                    ? t('settings.ai.noModels')
+                    : t('settings.ai.modelNoMatch')}
+                </div>
+              ) : (
+                filtered.map((m) => {
+                  const active = m.name === selected;
+                  return (
+                    <button
+                      key={m.name}
+                      type="button"
+                      // mousedown + preventDefault: input blur 전에 선택이 먼저 처리되게.
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        choose(m.name);
+                      }}
+                      className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left hover:bg-secondary"
+                    >
+                      <Check
+                        className={cn(
+                          'h-4 w-4',
+                          active ? 'opacity-100 text-primary' : 'opacity-0',
+                        )}
+                      />
+                      <span className="flex-1 truncate text-[12.5px]">
+                        {m.name}
+                      </span>
+                      {m.parameterSize && (
+                        <span className="shrink-0 text-[10.5px] text-muted-foreground">
+                          {m.parameterSize}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })
+              )}
             </div>
           )}
-          {[...models]
-            .sort((a, b) =>
-              a.name.localeCompare(b.name, undefined, {
-                numeric: true,
-                sensitivity: 'base',
-              }),
-            )
-            .map((m) => {
-            const active = m.name === selected;
-            return (
-              <DropdownMenuItem
-                key={m.name}
-                onSelect={() => onSelect?.(m.name)}
-                className="gap-2"
-              >
-                <Check
-                  className={cn(
-                    'h-4 w-4',
-                    active ? 'opacity-100 text-primary' : 'opacity-0',
-                  )}
-                />
-                <span className="flex-1 truncate text-[12.5px]">{m.name}</span>
-                {m.parameterSize && (
-                  <span className="shrink-0 text-[10.5px] text-muted-foreground">
-                    {m.parameterSize}
-                  </span>
-                )}
-              </DropdownMenuItem>
-            );
-          })}
-        </DropdownMenuContent>
-      </DropdownMenu>
+        </div>
       )}
     </div>
   );

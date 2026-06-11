@@ -301,6 +301,8 @@ const dict = {
     'settings.ai.endpoint.loading': '모델 목록 새로고침 중…',
     'settings.ai.endpoint.error': '모델 목록 로드 실패 — ',
     'settings.ai.noModels': '사용 가능한 모델이 없습니다',
+    'settings.ai.modelSearch': '모델 검색…',
+    'settings.ai.modelNoMatch': '일치하는 모델 없음',
     'settings.ai.unset': '미설정',
 
     'menu.settings': '설정',
@@ -603,6 +605,8 @@ const dict = {
     'settings.ai.endpoint.loading': 'Refreshing model list…',
     'settings.ai.endpoint.error': 'Failed to load model list — ',
     'settings.ai.noModels': 'No models available',
+    'settings.ai.modelSearch': 'Search models…',
+    'settings.ai.modelNoMatch': 'No matching models',
     'settings.ai.unset': 'Not set',
 
     'menu.settings': 'Settings',
@@ -906,6 +910,8 @@ const dict = {
     'settings.ai.endpoint.loading': 'モデル一覧を更新中…',
     'settings.ai.endpoint.error': 'モデル一覧の読み込みに失敗 — ',
     'settings.ai.noModels': '利用可能なモデルがありません',
+    'settings.ai.modelSearch': 'モデルを検索…',
+    'settings.ai.modelNoMatch': '一致するモデルがありません',
     'settings.ai.unset': '未設定',
 
     'menu.settings': '設定',
@@ -1209,6 +1215,8 @@ const dict = {
     'settings.ai.endpoint.loading': '正在刷新模型列表…',
     'settings.ai.endpoint.error': '加载模型列表失败 — ',
     'settings.ai.noModels': '没有可用的模型',
+    'settings.ai.modelSearch': '搜索模型…',
+    'settings.ai.modelNoMatch': '没有匹配的模型',
     'settings.ai.unset': '未设置',
 
     'menu.settings': '设置',
@@ -1512,6 +1520,8 @@ const dict = {
     'settings.ai.endpoint.loading': 'Memuat ulang daftar model…',
     'settings.ai.endpoint.error': 'Gagal memuat daftar model — ',
     'settings.ai.noModels': 'Tidak ada model yang tersedia',
+    'settings.ai.modelSearch': 'Cari model…',
+    'settings.ai.modelNoMatch': 'Tidak ada model yang cocok',
     'settings.ai.unset': 'Belum diatur',
 
     'menu.settings': 'Pengaturan',
@@ -1814,6 +1824,8 @@ const dict = {
     'settings.ai.endpoint.loading': 'Actualisation de la liste des modèles…',
     'settings.ai.endpoint.error': 'Échec du chargement de la liste des modèles — ',
     'settings.ai.noModels': 'Aucun modèle disponible',
+    'settings.ai.modelSearch': 'Rechercher des modèles…',
+    'settings.ai.modelNoMatch': 'Aucun modèle correspondant',
     'settings.ai.unset': 'Non défini',
 
     'menu.settings': 'Paramètres',
@@ -2116,6 +2128,8 @@ const dict = {
     'settings.ai.endpoint.loading': 'Modellliste wird aktualisiert…',
     'settings.ai.endpoint.error': 'Modellliste konnte nicht geladen werden — ',
     'settings.ai.noModels': 'Keine Modelle verfügbar',
+    'settings.ai.modelSearch': 'Modelle suchen…',
+    'settings.ai.modelNoMatch': 'Keine passenden Modelle',
     'settings.ai.unset': 'Nicht festgelegt',
 
     'menu.settings': 'Einstellungen',
