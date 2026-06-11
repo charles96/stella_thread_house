@@ -11,6 +11,7 @@ import {
   ChevronsUpDown,
   Clock,
   Cpu,
+  Gauge,
   Eye,
   Globe,
   Hash,
@@ -1028,7 +1029,9 @@ function AiModelGroup({
         {status !== 'none' && (
           <span
             className={cn(
-              'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium',
+              // min-w + justify-center 고정 폭 — Checking↔Active 텍스트/점 변화로 헤더가
+              // reflow(틀어짐)되지 않도록 배지 폭을 일정하게 유지.
+              'inline-flex min-w-[72px] shrink-0 items-center justify-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium',
               status === 'active'
                 ? 'bg-emerald-500/15 text-emerald-400'
                 : status === 'inactive'
@@ -1098,11 +1101,6 @@ function AiModelGroup({
               spellCheck={false}
               autoComplete="off"
             />
-            {loading && (
-              <div className="mt-1 text-[11px] text-muted-foreground/80">
-                {t('settings.ai.endpoint.loading')}
-              </div>
-            )}
             {error && (
               <div className="mt-1 flex items-start gap-1 text-[11px] font-medium text-destructive">
                 <span aria-hidden>⚠️</span>
@@ -1154,7 +1152,7 @@ function AiModelGroup({
           <div>
             <div className="mb-1.5 flex items-center gap-1.5">
               <span className="text-primary">
-                <Hash className="h-4 w-4" />
+                <Gauge className="h-4 w-4" />
               </span>
               <span className="text-[13px] font-medium text-foreground">
                 Max output tokens
@@ -1279,7 +1277,8 @@ function ToolsSubSection() {
           {apiKeySet ? (
             <span
               className={cn(
-                'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium',
+                // AI 그룹 배지와 동일한 고정폭·가운데정렬 — 상태 변화 시 헤더 reflow 방지 + 통일.
+                'inline-flex min-w-[72px] shrink-0 items-center justify-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium',
                 activeState === 'active'
                   ? 'bg-emerald-500/15 text-emerald-400'
                   : activeState === 'inactive'
@@ -1300,7 +1299,7 @@ function ToolsSubSection() {
                   : t('settings.ai.tools.inactive')}
             </span>
           ) : (
-            <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+            <span className="inline-flex min-w-[72px] shrink-0 items-center justify-center rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
               {t('settings.ai.tools.notSet')}
             </span>
           )}
@@ -2519,7 +2518,14 @@ function ModelPickerRow({
               {t('settings.ai.noModels')}
             </div>
           )}
-          {models.map((m) => {
+          {[...models]
+            .sort((a, b) =>
+              a.name.localeCompare(b.name, undefined, {
+                numeric: true,
+                sensitivity: 'base',
+              }),
+            )
+            .map((m) => {
             const active = m.name === selected;
             return (
               <DropdownMenuItem
