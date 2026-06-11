@@ -2385,12 +2385,19 @@ function MessageBubble({
               const sc = long > EXP_MAXD ? EXP_MAXD / long : 1;
               imgDispW = Math.round(effNatural.w * sc);
               imgDispH = Math.round(effNatural.h * sc);
-              // 세로로 긴 이미지는 화면을 너무 많이 차지 → 데스크탑에서만 20% 축소.
-              // (가로 이미지는 그대로, 모바일도 그대로)
               const isMobile = viewportW > 0 && viewportW < 640;
-              if (!isMobile && effNatural.h > effNatural.w) {
-                imgDispW = Math.round(imgDispW * 0.8);
-                imgDispH = Math.round(imgDispH * 0.8);
+              // 표시 긴 변이 100px 이상인 이미지만 추가 축소(가로/세로/정사각 공통).
+              // 그보다 작은 진짜 작은 이미지는 원본 크기 그대로 — 더 작아지지 않게.
+              const longDisp = Math.max(imgDispW, imgDispH);
+              if (!isMobile && longDisp >= 100) {
+                // 세로로 긴 이미지는 화면을 너무 많이 차지 → 데스크탑에서만 20% 축소(기존).
+                if (effNatural.h > effNatural.w) {
+                  imgDispW = Math.round(imgDispW * 0.8);
+                  imgDispH = Math.round(imgDispH * 0.8);
+                }
+                // 선택(확대) 이미지 공통 축소(가로/세로) — 15% + 추가 5% = ×0.8075 (0.85 × 0.95).
+                imgDispW = Math.round(imgDispW * 0.8075);
+                imgDispH = Math.round(imgDispH * 0.8075);
               }
             }
             // 회전 후 필요한 세로 공간 = 긴 변(가로/세로 중 큰 값). 회전 시작 시 래퍼 높이를 이 값으로
@@ -2904,25 +2911,17 @@ function MessageBubble({
                               });
                               setExpandedImageLoaded(true);
                             }}
-                            // PIN 상태에서만 클릭하면 원본을 새 탭에서 열기 — Close/Delete 가 dim 된 PIN UX 와 일관.
+                            // 선택(확대)만 해도 클릭 시 원본을 새 탭에서 열기 — pin 여부 무관.
                             // 회전된 로컬 사본을 회전 반영된 상태로 열도록 resolveLocal + 캐시버스트 적용.
-                            onClick={
-                              isPinnedEffective
-                                ? () => {
-                                    const target = resolveLocal(expanded.url);
-                                    window.open(
-                                      withCacheBust(target, imgBust[target]),
-                                      '_blank',
-                                      'noopener,noreferrer',
-                                    );
-                                  }
-                                : undefined
-                            }
-                            title={
-                              isPinnedEffective
-                                ? '원본 새 탭에서 열기'
-                                : undefined
-                            }
+                            onClick={() => {
+                              const target = resolveLocal(expanded.url);
+                              window.open(
+                                withCacheBust(target, imgBust[target]),
+                                '_blank',
+                                'noopener,noreferrer',
+                              );
+                            }}
+                            title="원본 새 탭에서 열기"
                             className={cn(
                               'block',
                               // 박스(자연비율로 계산됨)를 정확히 꽉 채운다 — object-contain 의 반올림
@@ -2930,7 +2929,8 @@ function MessageBubble({
                               effNatural
                                 ? 'h-full w-full'
                                 : 'max-h-[340px] max-w-full object-contain',
-                              isPinnedEffective && 'cursor-zoom-in',
+                              // pin 여부와 무관하게 항상 돋보기 커서.
+                              'cursor-zoom-in',
                             )}
                           />
                         </div>
