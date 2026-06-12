@@ -116,6 +116,9 @@ export interface Message {
   errorCode?: string;
   // 사용자가 이미지를 첨부했거나 vision 토글이 켜진 상태에서 발생한 봇 응답
   visionContext?: boolean;
+  // '직접 작성'으로 생성된 제목(user) 메시지 표시 — content 가 비어도 heading 을 렌더해
+  // 클릭 편집이 가능하도록 한다. metadata 로 영속되어 새로고침 후에도 유지.
+  manualEntry?: boolean;
   time: string;
   hashtags?: string[];
   // hashtag 생성이 진행 중인지 — 결과가 도착하기 전 placeholder 표시용.
@@ -294,6 +297,7 @@ interface MessageItemProps {
   attachedSourceUrls: Set<string> | undefined;
   isFresh: boolean;
   isLive: boolean;
+  autoEdit: boolean;
   isCollapsed: boolean;
   isGreeting: boolean;
   onEditContent: (id: string, content: string) => void;
@@ -324,6 +328,7 @@ const MessageItem = memo(function MessageItem({
   attachedSourceUrls,
   isFresh,
   isLive,
+  autoEdit,
   isCollapsed,
   isGreeting,
   onEditContent,
@@ -362,6 +367,7 @@ const MessageItem = memo(function MessageItem({
             convKind={convKind}
             userOrdinal={userOrdinal}
             isGreeting={isGreeting}
+            autoEdit={autoEdit}
             onEditContent={onEditContent}
             onPinImage={onPinImage}
             onRotateImage={onRotateImage}
@@ -2567,6 +2573,101 @@ export default function ChatRoom() {
   // viewport 상단(80px 마진) 위에 있고 그 중 가장 viewport top 에 가까운 user 메시지를 선택.
   // 동시에 chat 헤더에 표시할 sub-heading (bottom 이 viewport top 위로 완전히 올라간 헤딩) 도 같이 갱신.
   const isThread = (active?.kind ?? 'thread') === 'thread';
+
+  // '직접 작성' 버튼 2초 hover 프리뷰 — 켜지면 작성 영역(제목 + 본문) 실루엣을 본문 하단에
+  // 표시하고 Thread 최하단으로 강제 스크롤한다. 커서가 벗어나면 끈다.
+  const [manualPreview, setManualPreview] = useState(false);
+  const handleManualPreview = useCallback((next: boolean) => {
+    setManualPreview(next);
+  }, []);
+
+  // 최하단으로 스크롤. 레이지 이미지/지연 렌더로 하단 높이가 스크롤 도중 계속 늘어나면
+  // 한 번의 scrollTo(scrollHeight) 는 옛 바닥에 멈춰 버린다. → 높이가 안정될 때까지
+  // 매 프레임 바닥을 재타겟해 끝까지 따라간다(높이 변화 시에만 다시 smooth 스크롤 재발행).
+  const scrollToBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const start = Date.now();
+    let lastH = -1;
+    let stable = 0;
+    const step = () => {
+      const e = scrollRef.current;
+      if (!e) return;
+      programmaticScrollRef.current = Date.now() + 400;
+      const h = e.scrollHeight;
+      const distance = h - (e.scrollTop + e.clientHeight);
+      if (h !== lastH) {
+        // 컨텐츠 높이 변화(이미지/지연 렌더) → 새 바닥으로 다시 부드럽게.
+        e.scrollTo({ top: h, behavior: 'smooth' });
+        lastH = h;
+        stable = 0;
+      } else if (distance <= 2) {
+        stable++;
+      } else {
+        stable = 0;
+      }
+      // 높이 안정 + 바닥 도달이 몇 프레임 유지되거나, 안전 타임아웃이면 종료.
+      if (stable >= 4 || Date.now() - start > 2500) return;
+      requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }, []);
+
+  // '직접 작성' 버튼 클릭 — 빈 제목(user heading) + 빈 본문(assistant) 메시지를 turn 으로 생성해
+  // 로컬 반영 + DB 적재하고, 본문은 자동으로 Edit 모드로 연다(autoEditId).
+  const [autoEditId, setAutoEditId] = useState<string | null>(null);
+  const handleManualCreate = useCallback(() => {
+    const conv = conversationsRef.current.find((c) => c.id === activeIdRef.current);
+    if (!conv || (conv.kind ?? 'thread') !== 'thread') return;
+    if (pending || streamingConvIds.size > 0) return;
+    const titleId = uuidv7();
+    const bodyId = uuidv7();
+    const titleMsg: Message = {
+      id: titleId,
+      role: 'user',
+      content: '',
+      manualEntry: true,
+      time: nowTime(),
+    };
+    const bodyMsg: Message = {
+      id: bodyId,
+      role: 'assistant',
+      content: '',
+      thinking: '',
+      manualEntry: true,
+      time: nowTime(),
+    };
+    setManualPreview(false);
+    forceScrollOnNextUpdateRef.current = true;
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.id === conv.id
+          ? { ...c, messages: [...c.messages, titleMsg, bodyMsg], updatedAt: Date.now() }
+          : c,
+      ),
+    );
+    // 본문을 Edit 모드로 — mount 후 한 번만 트리거되면 되므로 잠시 뒤 해제(remount 시 재오픈 방지).
+    setAutoEditId(bodyId);
+    setTimeout(() => {
+      setAutoEditId((cur) => (cur === bodyId ? null : cur));
+    }, 1500);
+    // 새 항목(제목/본문 편집창)이 렌더된 뒤 최하단으로 스크롤(높이 변화 추적).
+    requestAnimationFrame(() => scrollToBottom());
+    // DB 적재 — conversation 메타 보장 후 두 메시지 append.
+    void ensureConversationOnServer(conv).then(() => {
+      void persistMessages(conv.id, [titleMsg, bodyMsg]);
+    });
+  }, [pending, streamingConvIds, ensureConversationOnServer, persistMessages, scrollToBottom]);
+
+  // 실루엣이 DOM 에 렌더된 뒤(다음 프레임) 갱신된 scrollHeight 기준으로 끝까지 스크롤해야
+  // 실루엣 전체가 정확히 보인다. setManualPreview 와 같은 틱에 스크롤하면 실루엣 높이가
+  // 반영되기 전이라 아래가 잘린다. → manualPreview 가 켜진 뒤 effect 에서 스크롤.
+  useEffect(() => {
+    if (!manualPreview) return;
+    const raf1 = requestAnimationFrame(() => scrollToBottom());
+    return () => cancelAnimationFrame(raf1);
+  }, [manualPreview, scrollToBottom]);
+
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -3160,34 +3261,49 @@ export default function ChatRoom() {
     if (!res.ok) throw new Error('rotate failed');
   }
 
-  // Message Manager 에서 user 메시지 본문 편집 — 로컬 즉시 반영 + 백엔드 PATCH.
+  // 메시지(제목/본문) 편집 — 로컬 즉시 반영 + 백엔드 PATCH.
   function editUserMessageContent(userMsgId: string, nextContent: string) {
     if (!activeId) return;
     const convId = activeId;
+    // 내용을 전부 비우면(빈 값) 메뉴얼 작성 항목과 동일하게 manualEntry 를 부여해,
+    // 버블/제목 + Edit 탭이 사라지지 않고 "내용/소제목을 입력하세요" 플레이스홀더로 남아
+    // 다시 작성할 수 있게 한다. (AI 작성 글을 Edit 로 비웠을 때도 동일하게 동작)
+    const becomesEmpty = nextContent.trim() === '';
     setConversations((prev) =>
       prev.map((c) =>
         c.id === convId
           ? {
               ...c,
               messages: c.messages.map((m) =>
-                m.id === userMsgId ? { ...m, content: nextContent } : m,
+                m.id === userMsgId
+                  ? {
+                      ...m,
+                      content: nextContent,
+                      ...(becomesEmpty ? { manualEntry: true } : {}),
+                    }
+                  : m,
               ),
               updatedAt: Date.now(),
             }
           : c,
       ),
     );
-    void fetch(
-      `${API_URL}/conversations/${convId}/messages/${userMsgId}`,
-      {
-        method: 'PATCH',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: nextContent }),
-      },
-    ).catch((e) => {
-      console.error('[edit message] failed', e);
-    });
+    if (becomesEmpty) {
+      // content + metadata(manualEntry 포함) 를 함께 영속 → 새로고침 후에도 빈 편집 가능 상태 유지.
+      setTimeout(() => void persistMessageMetadata(convId, userMsgId), 0);
+    } else {
+      void fetch(
+        `${API_URL}/conversations/${convId}/messages/${userMsgId}`,
+        {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: nextContent }),
+        },
+      ).catch((e) => {
+        console.error('[edit message] failed', e);
+      });
+    }
   }
 
   // 질문 1개 삭제 요청 — 확인 모달 띄움. 확인 시 실제 삭제는 deleteTurn 재사용 (기존 로직).
@@ -4480,12 +4596,7 @@ export default function ChatRoom() {
           </button>
           <button
             type="button"
-            onClick={() => {
-              const el = scrollRef.current;
-              if (!el) return;
-              programmaticScrollRef.current = Date.now() + 600;
-              el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-            }}
+            onClick={scrollToBottom}
             title={t('chat.scrollBottom')}
             aria-label={t('chat.scrollBottom')}
             className="pointer-events-auto inline-flex h-9 w-9 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-md transition-colors hover:bg-accent hover:text-foreground"
@@ -4593,6 +4704,7 @@ export default function ChatRoom() {
                     attachedSourceUrls={attachedSourceUrls}
                     isFresh={freshIds.has(m.id)}
                     isLive={m.id === liveMessageId}
+                    autoEdit={m.id === autoEditId}
                     isCollapsed={isCollapsibleUser && collapsedTurns.has(m.id)}
                     isGreeting={
                       m.role === 'assistant' &&
@@ -4663,6 +4775,25 @@ export default function ChatRoom() {
                 }
                 return elements;
               })()}
+              {/* '직접 작성' 프리뷰 실루엣 — 버튼 2초 hover 시, 작성하게 될 제목/본문 영역을
+                  본문 하단에 고스트(실루엣)로 미리 보여준다. (마우스가 벗어나면 사라짐) */}
+              {isThread && manualPreview && (
+                <div
+                  aria-hidden
+                  className="animate-in fade-in slide-in-from-bottom-2 duration-300 pb-2 pl-2 pt-8"
+                >
+                  {/* 제목 영역 실루엣 */}
+                  <div className="mb-4 h-9 w-2/3 animate-pulse rounded-lg border-2 border-dashed border-primary/40 bg-primary/5" />
+                  {/* 본문(AI 답변) 영역 실루엣 */}
+                  <div className="animate-pulse space-y-3 rounded-xl border-2 border-dashed border-border bg-muted/30 p-4">
+                    <div className="h-4 w-11/12 rounded bg-muted" />
+                    <div className="h-4 w-5/6 rounded bg-muted" />
+                    <div className="h-4 w-3/4 rounded bg-muted" />
+                    <div className="h-4 w-4/5 rounded bg-muted" />
+                    <div className="h-4 w-2/3 rounded bg-muted" />
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -4696,6 +4827,9 @@ export default function ChatRoom() {
                 onStop={stopStreaming}
                 liveTokRate={liveTokRate}
                 onAttachedChange={handleAttachedChange}
+                isThread={isThread}
+                onManualPreview={handleManualPreview}
+                onManualCreate={handleManualCreate}
               />
             </div>
           </div>

@@ -1351,6 +1351,7 @@ function MessageBubble({
   attachedSourceUrls,
   isGreeting = false,
   isLive = false,
+  autoEdit = false,
 }: {
   message: Message;
   onOpenArtifact?: (a: Artifact) => void;
@@ -1389,6 +1390,8 @@ function MessageBubble({
   isGreeting?: boolean;
   // 현재 스트리밍 중인 메시지 — true 일 때 View/Edit 탭 숨김.
   isLive?: boolean;
+  // '직접 작성'으로 막 생성된 본문(assistant) — mount 시 자동으로 답변 Edit 모드로 연다.
+  autoEdit?: boolean;
 }) {
   const { t } = useI18n();
   const isUser = message.role === 'user';
@@ -1520,9 +1523,26 @@ function MessageBubble({
     setAnswerEditing(false);
     setAnswerDraft('');
   }
+  // '직접 작성'으로 막 생성된 본문 — mount 시 한 번만 자동으로 Edit 모드로 연다.
+  const autoEditStartedRef = useRef(false);
+  useEffect(() => {
+    if (
+      autoEdit &&
+      !autoEditStartedRef.current &&
+      !isUser &&
+      convKind === 'thread' &&
+      !!onEditContent
+    ) {
+      autoEditStartedRef.current = true;
+      startAnswerEdit();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoEdit]);
   const [override, setOverride] = useState<boolean | null>(null);
+  // 직접 작성(manualEntry) 본문은 스트림으로 채워지지 않으므로, 비어 있어도 '도착함'으로 간주해
+  // 스트리밍 플레이스홀더가 뜨지 않게 한다.
   const [contentEverArrived, setContentEverArrived] = useState(
-    !isUser && !!message.content,
+    !isUser && (!!message.content || !!message.manualEntry),
   );
   useEffect(() => {
     if (!isUser && message.content && !contentEverArrived) {
@@ -3316,7 +3336,7 @@ function MessageBubble({
             </div>
           )}
 
-          {message.content && isUser && convKind === 'thread' && (
+          {(message.content || message.manualEntry) && isUser && convKind === 'thread' && (
             <Tooltip>
               <TooltipTrigger asChild>
             <h2
@@ -3386,7 +3406,13 @@ function MessageBubble({
                   key="heading-view"
                   className="doodle-underline inline-block max-w-full whitespace-pre-wrap break-words"
                 >
-                  {linkifyText(message.content)}
+                  {message.content ? (
+                    linkifyText(message.content)
+                  ) : (
+                    <span className="font-normal text-muted-foreground/50">
+                      {t('message.manualTitleEmpty')}
+                    </span>
+                  )}
                 </span>
               )}
               {/* 우측 액션 버튼 묶음 — hover/편집 시 노출. 편집 모드일 땐 ✓/×, 그 외엔 휴지통. */}
@@ -3483,10 +3509,14 @@ function MessageBubble({
 
           {/* 어시스턴트 답변: 버블 그 자체 + 하단 우측에 포스트잇 해시태그 행.
               본문이 없어도 Reference documents 가 있거나 편집 중이면 Edit/Delete 탭을 표시. */}
-          {!isUser && (message.content || hasProcessPanel || answerEditing) && (
+          {/* 본문(assistant) 렌더 — AI 작성/메뉴얼 작성 구분 없이 동일 규칙.
+              답변이 한 번이라도 정착되면(contentEverArrived: 스트림 완료 또는 메뉴얼 생성)
+              본문이 비어 있어도 버블 + Edit/Delete 탭을 유지하고 placeholder 를 보여준다.
+              → AI 글을 Edit 로 다 지워도 사라지지 않고 "내용을 입력하세요" 로 남아 다시 작성 가능. */}
+          {!isUser && (message.content || hasProcessPanel || answerEditing || contentEverArrived) && (
             <>
               {/* relative z-[1] — 버블이 아래 탭 위에 올라가서 탭이 "뒷면에서 빠져나온" 느낌. */}
-              {(message.content || answerEditing) && <div
+              {(message.content || answerEditing || contentEverArrived) && <div
                 ref={answerBubbleRef}
                 className="relative z-[1] w-full min-w-0 max-w-full overflow-x-clip transform-gpu rounded-2xl rounded-tl-md border border-border bg-bubble-bot px-3.5 py-2 text-[14.5px] leading-relaxed text-bubble-bot-foreground shadow-md"
               >
@@ -3522,7 +3552,7 @@ function MessageBubble({
                           value={answerDraft}
                           onChange={(e) => setAnswerDraft(e.target.value)}
                           className="flex-1 resize-none overflow-y-auto bg-transparent p-4 font-mono text-[13px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground"
-                          placeholder="마크다운으로 답변 편집…"
+                          placeholder={t('message.manualBodyEmpty')}
                           spellCheck={false}
                         />
                       </div>,
@@ -3538,10 +3568,15 @@ function MessageBubble({
                         Math.min(28, answerDraft.split('\n').length + 2),
                       )}
                       className="hidden w-full min-w-0 max-w-full resize-y bg-transparent font-mono text-[13px] leading-relaxed text-bubble-bot-foreground outline-none placeholder:text-muted-foreground md:block"
-                      placeholder="마크다운으로 답변 편집…"
+                      placeholder={t('message.manualBodyEmpty')}
                       spellCheck={false}
                     />
                   </>
+                ) : !message.content ? (
+                  // 본문이 비어 있을 때(메뉴얼 작성 / AI 글을 Edit 로 비움) — 아래 Edit 버튼으로 작성 안내.
+                  <span className="text-[14px] text-muted-foreground/50">
+                    {t('message.manualBodyEmpty')}
+                  </span>
                 ) : (
                   <div
                     className={cn(
@@ -3576,7 +3611,7 @@ function MessageBubble({
                   검색/처리 진행 중(Searching the web… 등 status 표시, 본문 도착 전)에는
                   아직 편집할 답변이 없으므로 탭을 숨긴다(hasStatusPending). */}
               {onEditContent && !isGreeting && !isLive && !hasStatusPending && convKind === 'thread' && (
-                <div className={cn((message.content || answerEditing) ? '-mt-2' : 'mt-2', 'mr-3 flex items-start gap-1 self-end')}>
+                <div className={cn((message.content || answerEditing || contentEverArrived) ? '-mt-2' : 'mt-2', 'mr-3 flex items-start gap-1 self-end')}>
                   {!answerEditing ? (
                     <>
                       <button

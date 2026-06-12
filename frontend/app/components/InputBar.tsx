@@ -11,8 +11,14 @@ import {
   KeyboardEvent,
   ChangeEvent,
 } from 'react';
-import { Camera, ImageIcon, Plus, SendHorizonal, Square, X } from 'lucide-react';
+import { Camera, ImageIcon, Pencil, Plus, SendHorizonal, Square, X } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { fileToResizedDataUrl, drawToCanvas } from '@/lib/imageUtils';
@@ -30,10 +36,16 @@ interface InputBarProps {
   onStop?: () => void;
   liveTokRate?: number | null;
   onAttachedChange?: (dataUrls: string[]) => void;
+  // Thread 모드에서만 '직접 작성' 버튼 노출. Chat 모드면 숨김(기본 true).
+  isThread?: boolean;
+  // '직접 작성' 버튼에 2초 이상 hover 하면 true, 벗어나면 false. (최하단 스크롤 + 입력 영역 실루엣 프리뷰)
+  onManualPreview?: (active: boolean) => void;
+  // '직접 작성' 버튼 클릭 — 빈 제목/본문 생성 + 본문 Edit 모드 오픈.
+  onManualCreate?: () => void;
 }
 
 const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
-  { onSend, disabled, isStreaming = false, onStop, liveTokRate, onAttachedChange },
+  { onSend, disabled, isStreaming = false, onStop, liveTokRate, onAttachedChange, isThread = true, onManualPreview, onManualCreate },
   ref,
 ) {
   const { t } = useI18n();
@@ -53,6 +65,11 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
   const streamingMeasureRef = useRef<HTMLSpanElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  // '직접 작성' 버튼 2초 hover 타이머.
+  const manualHoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (manualHoverTimer.current) clearTimeout(manualHoverTimer.current);
+  }, []);
 
   useEffect(() => {
     const mq = window.matchMedia('(max-width: 767px)');
@@ -223,6 +240,14 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
   // 스트리밍 중에는 포커스 여부 무시 — 전송 직후 textarea 포커스가 남아 있어도 축소 상태로.
   const isStreamingCollapsed = isStreaming && value.length === 0 && images.length === 0;
   const isExpanded = !isStreamingCollapsed && (isFocused || value.length > 0 || images.length > 0);
+  // 수동 작성 버튼 표시 조건 — Thread 모드에서, 입력창이 접혀(비포커스) 있고 스트리밍이 아닐 때만
+  // 우측에 노출. 포커스로 확장되면 사라지고, 블러로 축소(300ms)된 뒤 delay 후 다시 페이드인.
+  const showManualBtn = isThread && !isExpanded && !isStreaming;
+  // 모바일 접힘 상태에서 '버튼이 보일 때만' 입력창 폭을 보정한다. 데스크톱은 내용 맞춤 pill 을
+  // 중앙 정렬하지만 모바일은 화면이 좁아 그러면 입력창이 너무 좁으므로, 우측 버튼 공간(60px)만
+  // 남기고 입력창을 넓게(calc) + 좌측 정렬한다. Chat 모드(버튼 없음)면 기존처럼 full-width.
+  const mobileCollapsed = isMobile && !isExpanded && !isStreamingCollapsed;
+  const mobileWideForBtn = mobileCollapsed && isThread;
   // tok/s 데이터가 실제로 있는지 — 없으면 중지 버튼만 표시
   const hasTokRate = typeof liveTokRate === 'number' && liveTokRate > 0;
 
@@ -313,12 +338,74 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
 
         {/* 통합 입력 컨테이너 (팝업 위에 렌더링) */}
         <div
-          className="input-glow-border mx-auto transition-[width,border-radius] duration-300 ease-in-out"
+          className={cn(
+            'input-glow-border transition-[width,border-radius] duration-300 ease-in-out',
+            // 버튼이 보이는 모바일 접힘만 좌측 정렬(우측 여백을 버튼 공간으로). 그 외엔 중앙 정렬.
+            mobileWideForBtn ? 'mr-auto' : 'mx-auto',
+          )}
           style={{
-            width: isStreamingCollapsed ? `${hasTokRate ? streamingWidth : stopOnlyWidth}px` : isMobile ? '100%' : isExpanded ? '100%' : `${collapsedWidth}px`,
+            width: isStreamingCollapsed
+              ? `${hasTokRate ? streamingWidth : stopOnlyWidth}px`
+              : isExpanded
+                ? '100%'
+                : mobileWideForBtn
+                  ? 'calc(100% - 60px)'
+                  : isMobile
+                    ? '100%'
+                    : `${collapsedWidth}px`,
             borderRadius: isStreamingCollapsed ? '9999px' : undefined,
           }}
         >
+        {/* 수동 작성 버튼 — 입력창에 붙이지 않고 우측에 띄워 둔 원형 아이콘 (모바일 포함).
+            입력창(mx-auto, 폭 transition) 의 오른쪽 가장자리에 left-full 로 앵커.
+            · 포커스로 입력창이 100% 로 확장되면 → 즉시 opacity-0 으로 사라짐(pointer-events 차단).
+            · 블러로 입력창이 축소(300ms)되면 → delay-300 후 우측 제자리에서 페이드인.
+            (.input-glow-border > * 가 border-radius 를 강제하므로 !rounded-full 로 덮음) */}
+        {/* delayDuration={0} — 커서가 올라가면 지연 없이 즉시 풍선도움말 표시.
+            라벨은 i18n(t)로 다국어 지원. */}
+        <TooltipProvider delayDuration={0}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  // 클릭 — 빈 제목/본문 생성 + 본문 Edit 모드. 진행 중이던 hover 프리뷰는 해제.
+                  if (manualHoverTimer.current) {
+                    clearTimeout(manualHoverTimer.current);
+                    manualHoverTimer.current = null;
+                  }
+                  onManualPreview?.(false);
+                  onManualCreate?.();
+                }}
+                onMouseEnter={() => {
+                  if (!showManualBtn) return;
+                  // 2초 이상 hover 가 유지되면 프리뷰(최하단 스크롤 + 실루엣) 활성화.
+                  manualHoverTimer.current = setTimeout(() => onManualPreview?.(true), 2000);
+                }}
+                onMouseLeave={() => {
+                  if (manualHoverTimer.current) {
+                    clearTimeout(manualHoverTimer.current);
+                    manualHoverTimer.current = null;
+                  }
+                  onManualPreview?.(false);
+                }}
+                aria-label={t('input.manualWrite')}
+                aria-hidden={!showManualBtn}
+                tabIndex={showManualBtn ? 0 : -1}
+                className={cn(
+                  'absolute left-full top-1/2 z-10 ml-3 flex h-11 w-11 -translate-y-1/2 items-center justify-center !rounded-full border border-border bg-card text-muted-foreground shadow-[0_4px_14px_rgba(0,0,0,0.35)] transition-[opacity,color,background-color] duration-200 hover:bg-accent hover:text-primary',
+                  showManualBtn
+                    ? 'opacity-100 delay-300'
+                    : 'pointer-events-none opacity-0 delay-0',
+                )}
+              >
+                <Pencil className="h-5 w-5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top">{t('input.manualWrite')}</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
         {/* 팝업 메뉴 — 채팅창 너비 기준으로 슬라이드업 */}
         {menuOpen && (
           <div className="absolute bottom-0 left-0 right-0 rounded-2xl border border-border bg-card shadow-[0_0_0_4px_rgba(0,0,0,0.12),0_-4px_24px_rgba(0,0,0,0.22)] animate-in slide-in-from-bottom-2 duration-200">
