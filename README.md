@@ -75,16 +75,6 @@ Built against the OpenAI GPT-compatible spec. Below is the list of models that h
 TH_ADMIN_EMAIL_ID=admin@example.com               # admin login email
 TH_ADMIN_PASSWORD=changeme1234                    # admin login password
 
-# AI
-AI_REASONING_ENDPOINT=https://api.openai.com/v1   # OpenAI-compatible base URL (include /v1)
-AI_REASONING_API_KEY=sk-xxxxxxxx                  # leave empty for local LLM servers without auth
-AI_REASONING_MODEL=gpt-4o                         # reasoning model
-AI_VISION_ENDPOINT=https://api.openai.com/v1      # vision group — can point to a different provider
-AI_VISION_API_KEY=sk-xxxxxxxx
-AI_VISION_MODEL=gpt-4o                            # vision model
-
-TAVILY_API_KEY=tvly-xxxxxxxx                      # web search (omit to disable)
-
 # Postgres
 POSTGRES_DB=stella
 POSTGRES_USER=stella
@@ -95,8 +85,8 @@ POSTGRES_PASSWORD=stella_pass@
 ```yaml
 services:
   postgres:
-    image: pgvector/pgvector:pg18   # PostgreSQL 18 + pgvector (required for the vector extension)
-    environment:                    # injected from .env (defaults shown)
+    image: pgvector/pgvector:pg18
+    environment:
       POSTGRES_DB: ${POSTGRES_DB:-stella}
       POSTGRES_USER: ${POSTGRES_USER:-stella}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-stella}
@@ -105,20 +95,13 @@ services:
 
   app:
     image: charles1031/stella-th:latest
-    restart: unless-stopped          # retries until Postgres is ready
+    restart: unless-stopped
     ports:
       - "3100:3100"                  # web (frontend)
       - "4100:4100"                  # API (backend)
-    environment:                     # injected from .env
+    environment:
       TH_ADMIN_EMAIL_ID: ${TH_ADMIN_EMAIL_ID}
       TH_ADMIN_PASSWORD: ${TH_ADMIN_PASSWORD}
-      AI_REASONING_ENDPOINT: ${AI_REASONING_ENDPOINT}
-      AI_REASONING_API_KEY: ${AI_REASONING_API_KEY}
-      AI_REASONING_MODEL: ${AI_REASONING_MODEL}
-      AI_VISION_ENDPOINT: ${AI_VISION_ENDPOINT}
-      AI_VISION_API_KEY: ${AI_VISION_API_KEY}
-      AI_VISION_MODEL: ${AI_VISION_MODEL}
-      TAVILY_API_KEY: ${TAVILY_API_KEY}
       DATABASE_URL: postgres://${POSTGRES_USER:-stella}:${POSTGRES_PASSWORD:-stella}@postgres:5432/${POSTGRES_DB:-stella}
     depends_on:
       - postgres
@@ -130,7 +113,7 @@ volumes:
 ```bash
 docker compose up -d
 ```
-Open **http://localhost:3100** and log in with the admin account above. Set/adjust the AI model under **Settings → AI**.
+Open **http://localhost:3100**.
 
 > Need custom ports, host volumes, healthchecks, or a reverse proxy? See the full setup below.
 
