@@ -59,7 +59,9 @@ import { extractArtifacts, type Artifact } from '@/lib/artifacts';
 import {
   decodeHtmlEntities,
   dedentTableRows,
+  escapeStrayTags,
   fixKoreanEmphasis,
+  healStreamingMarkdown,
   normalizeFlattenedTables,
   styleCitations,
 } from '@/lib/markdown';
@@ -1624,12 +1626,20 @@ function MessageBubble({
       /^[\s>]*(?:#{1,6}\s*)?(?:\*\*|__)?\s*(?:\[?\s*(?:생각\s*과정|사고\s*과정|분석|thinking)\s*\]?\s*)(?:\*\*|__)?\s*[:：]?\s*$\n?/gim,
       '',
     );
-    return styleCitations(
-      fixKoreanEmphasis(
-        normalizeFlattenedTables(dedentTableRows(stripped)),
+    // 스트리밍 중(isLive)에는 미완성 토큰(구분행 없는 표 머리글, 닫히지 않은 **/~~)이
+    // raw 로 번쩍이며 깨져 보인다. 완료 전까지만 임시 보정해 부드럽게 렌더.
+    const base = isLive ? healStreamingMarkdown(stripped) : stripped;
+    // escapeStrayTags 는 가장 바깥 — fixKoreanEmphasis/styleCitations 가 주입한
+    // <strong>/<em>/<span> 은 보존하고, 모델이 쓴 `<Ruby>` 같은 태그꼴 텍스트만 이스케이프해
+    // rehype-raw 가 구조를 삼키지 않도록 한다.
+    return escapeStrayTags(
+      styleCitations(
+        fixKoreanEmphasis(
+          normalizeFlattenedTables(dedentTableRows(base)),
+        ),
       ),
     );
-  }, [isUser, message.content, message.isError]);
+  }, [isUser, message.content, message.isError, isLive]);
 
   // invalid 마크는 localStorage 에 캐시 — 재방문 시 깨진 이미지를 다시 로드 시도하지 않음.
   // 마운트 시 message 의 모든 이미지 URL 을 hydrate.

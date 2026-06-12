@@ -117,6 +117,45 @@ export function decodeHtmlEntities(input: string): string {
   );
 }
 
+// 스트리밍 중(아직 도착 중인 부분 마크다운)에는 닫히지 않은 토큰이 raw 로 번쩍여 "깨져"
+// 보인다. 완료 전 마지막 부분의 미완성 구조를 임시로 보정해 부드럽게 렌더한다.
+//   - 구분행(---) 이 아직 안 온 표 머리글 → 표가 완성될 때까지 그 줄들을 잠시 숨김
+//     (도착 전 `| A | B |` 가 raw 파이프로 번쩍이는 현상 방지)
+//   - 닫히지 않은 강조 토큰(**, ~~) → 임시로 닫아 강조로 렌더
+// 이미 완성된(스트리밍이 끝난) 마크다운에는 사실상 no-op 이므로, isLive 일 때만 적용하면
+// 최종 렌더는 기존과 동일하다.
+export function healStreamingMarkdown(text: string): string {
+  if (!text) return text;
+
+  // 열린 코드 펜스(```) 안쪽이면 그 내부는 코드로 안전하게 렌더되므로 손대지 않는다.
+  const fenceCount = (text.match(/^```/gm) || []).length;
+  if (fenceCount % 2 === 1) return text;
+
+  let out = text;
+
+  // 끝부분이 '표 행으로 보이는 줄'(파이프 2개 이상)들로 이어지는데 그 블록 안에 구분행이
+  // 아직 없으면, 표가 완성될 때까지 그 줄들을 숨긴다.
+  const lines = out.split('\n');
+  const pipes = (s: string) => (s.match(/\|/g) || []).length;
+  let tail = lines.length;
+  while (tail > 0 && pipes(lines[tail - 1]) >= 2) tail--;
+  if (tail < lines.length) {
+    const block = lines.slice(tail);
+    const hasDelim = block.some((l) => {
+      const t = l.trim();
+      return /-{3,}/.test(t) && /^[\s|:\-]+$/.test(t);
+    });
+    if (!hasDelim) out = lines.slice(0, tail).join('\n').replace(/\n+$/, '');
+  }
+
+  // 닫히지 않은 강조 토큰 보정 — 완성된 코드 영역(``` / `..`)은 제외하고 카운트.
+  const bare = out.replace(PROTECT_RE, '');
+  if (((bare.match(/\*\*/g) || []).length) % 2 === 1) out += '**';
+  if (((bare.match(/~~/g) || []).length) % 2 === 1) out += '~~';
+
+  return out;
+}
+
 export function fixKoreanEmphasis(text: string): string {
   if (!text) return text;
   const parts: string[] = [];
@@ -210,6 +249,33 @@ const CITE_BADGE_CLASS =
   'inline-flex h-4 min-w-[18px] items-center justify-center rounded-sm border border-primary/40 bg-primary/10 px-1 mx-0.5 align-middle font-mono text-[10.5px] tabular-nums leading-none text-primary';
 
 const CITE_RE = /\[(\d+(?:\s*,\s*\d+)+|\d+)\]/g;
+
+// rehype-raw 는 우리가 의도적으로 주입한 태그(fixKoreanEmphasis 의 <strong>/<em>,
+// styleCitations 의 <span>)만 실제 엘리먼트로 렌더해야 한다. 그런데 모델이 본문에 쓴
+// `<Ruby>`(앨범 제목), `<태그>` 같은 '태그처럼 생긴 텍스트'가 그대로 흘러가면 rehype-raw 가
+// 이를 실제 HTML 로 파싱한다. 특히 `<ruby>` 등 실존 인라인 엘리먼트가 닫히지 않은 채 열리면
+// 뒤따르는 리스트/헤딩/문단을 전부 자기 자식으로 삼켜 마크다운이 통째로 "풀려" 보인다.
+// (스트리밍 중 닫는 `**` 가 도착하기 전, fixKoreanEmphasis 가 아직 escape 하지 못한 구간에서
+//  특히 자주 발생.) → 주입한 태그만 화이트리스트로 남기고, 그 외 태그꼴 문자열의 <,> 를
+// 엔티티로 이스케이프해 평범한 텍스트로 렌더되게 한다. 코드 영역은 PROTECT_RE 로 보호.
+// 반드시 fixKoreanEmphasis/styleCitations 이후(가장 바깥)에 호출해야 주입 태그를 보존한다.
+const ALLOWED_TAG_RE = /^<\/?(?:strong|em|span)(?:\s[^<>]*)?>$/i;
+const TAGLIKE_RE = /<\/?[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?\/?>/g;
+
+export function escapeStrayTags(text: string): string {
+  if (!text || text.indexOf('<') === -1) return text;
+  const parts = text.split(PROTECT_RE); // 코드 영역(``` / `..`)은 홀수 인덱스 — 건드리지 않음.
+  return parts
+    .map((p, i) => {
+      if (i % 2 === 1) return p;
+      return p.replace(TAGLIKE_RE, (tag) =>
+        ALLOWED_TAG_RE.test(tag)
+          ? tag
+          : tag.replace(/</g, '&lt;').replace(/>/g, '&gt;'),
+      );
+    })
+    .join('');
+}
 
 export function styleCitations(text: string): string {
   if (!text) return text;
