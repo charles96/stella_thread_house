@@ -3446,22 +3446,32 @@ function MessageBubble({
                   </>
                 ) : (
                   onDeleteTurn && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDeleteTurn();
-                      }}
-                      title="이 질문과 답변 삭제"
-                      className={cn(
-                        'h-6 w-6 items-center justify-center rounded-full bg-destructive text-destructive-foreground shadow-md transition-opacity hover:bg-destructive/90',
-                        isCollapsed
-                          ? 'flex opacity-100'
-                          : 'hidden group-hover/bubble:flex',
-                      )}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
+                    // delayDuration={0} — 삭제 아이콘에 커서가 올라가면 지연 없이 즉시 툴팁 표시.
+                    <TooltipProvider delayDuration={0}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onDeleteTurn();
+                            }}
+                            aria-label={t('thread.heading.deleteHint')}
+                            className={cn(
+                              'h-6 w-6 items-center justify-center rounded-full bg-destructive text-destructive-foreground shadow-md transition-opacity hover:bg-destructive/90',
+                              isCollapsed
+                                ? 'flex opacity-100'
+                                : 'hidden group-hover/bubble:flex',
+                            )}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" onClick={(e) => e.stopPropagation()}>
+                          {t('thread.heading.deleteHint')}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
                   )
                 )}
               </span>
