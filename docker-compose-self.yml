@@ -22,7 +22,7 @@ services:
       start_period: 10s
 
   app:
-    image: charles1031/stella-th:1.1.0   # 업데이트 시 태그만 변경
+    image: charles1031/stella-th:1.0.0   # 업데이트 시 태그만 변경
     container_name: stella-th-app
     restart: unless-stopped
     ports:
