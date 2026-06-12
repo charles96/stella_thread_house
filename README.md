@@ -72,22 +72,34 @@ Built against the OpenAI GPT-compatible spec. Below is the list of models that h
 
 **`.env`**
 ```env
-TH_ADMIN_EMAIL_ID=admin@example.com         # admin login email
-TH_ADMIN_PASSWORD=changeme1234              # admin login password
-OPENAI_BASE_URL=https://api.openai.com/v1   # AI Endpoint URL
-OPENAI_API_KEY=sk-xxxxxxxx                  # OpenAI key (not needed for local LLM servers without auth)
-TAVILY_API_KEY=tvly-xxxxxxxx                # web search (omit to disable)
+TH_ADMIN_EMAIL_ID=admin@example.com               # admin login email
+TH_ADMIN_PASSWORD=changeme1234                    # admin login password
+
+# AI
+AI_REASONING_ENDPOINT=https://api.openai.com/v1   # OpenAI-compatible base URL (include /v1)
+AI_REASONING_API_KEY=sk-xxxxxxxx                  # leave empty for local LLM servers without auth
+AI_REASONING_MODEL=gpt-4o                         # reasoning model
+AI_VISION_ENDPOINT=https://api.openai.com/v1      # vision group — can point to a different provider
+AI_VISION_API_KEY=sk-xxxxxxxx
+AI_VISION_MODEL=gpt-4o                            # vision model
+
+TAVILY_API_KEY=tvly-xxxxxxxx                      # web search (omit to disable)
+
+# Postgres
+POSTGRES_DB=stella
+POSTGRES_USER=stella
+POSTGRES_PASSWORD=stella_pass@
 ```
 
 **`docker-compose.yml`**
 ```yaml
 services:
   postgres:
-    image: postgres:18-alpine
-    environment:
-      POSTGRES_DB: stella
-      POSTGRES_USER: stella
-      POSTGRES_PASSWORD: stella
+    image: pgvector/pgvector:pg18   # PostgreSQL 18 + pgvector (required for the vector extension)
+    environment:                    # injected from .env (defaults shown)
+      POSTGRES_DB: ${POSTGRES_DB:-stella}
+      POSTGRES_USER: ${POSTGRES_USER:-stella}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-stella}
     volumes:
       - pgdata:/var/lib/postgresql/18/docker
 
@@ -97,9 +109,17 @@ services:
     ports:
       - "3100:3100"                  # web (frontend)
       - "4100:4100"                  # API (backend)
-    env_file: .env
-    environment:
-      DATABASE_URL: postgres://stella:stella@postgres:5432/stella
+    environment:                     # injected from .env
+      TH_ADMIN_EMAIL_ID: ${TH_ADMIN_EMAIL_ID}
+      TH_ADMIN_PASSWORD: ${TH_ADMIN_PASSWORD}
+      AI_REASONING_ENDPOINT: ${AI_REASONING_ENDPOINT}
+      AI_REASONING_API_KEY: ${AI_REASONING_API_KEY}
+      AI_REASONING_MODEL: ${AI_REASONING_MODEL}
+      AI_VISION_ENDPOINT: ${AI_VISION_ENDPOINT}
+      AI_VISION_API_KEY: ${AI_VISION_API_KEY}
+      AI_VISION_MODEL: ${AI_VISION_MODEL}
+      TAVILY_API_KEY: ${TAVILY_API_KEY}
+      DATABASE_URL: postgres://${POSTGRES_USER:-stella}:${POSTGRES_PASSWORD:-stella}@postgres:5432/${POSTGRES_DB:-stella}
     depends_on:
       - postgres
 
@@ -125,11 +145,20 @@ TH_ADMIN_PASSWORD=changeme1234
 # Web (frontend) host port behind your reverse proxy. Change on port conflict.
 TH_PORT=3100
 
-# AI provider — OpenAI-compatible base URL (include /v1) + API key.
-#   OpenAI cloud:  https://api.openai.com/v1
-#   Local runtime (vLLM/LM Studio …): http://host.docker.internal:11434/v1
-OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxx   # leave empty for local servers that need no auth
+# AI — configured per group: Reasoning (text answers) and Vision (image analysis).
+# Each group has its own OpenAI-compatible endpoint (include /v1), API key, model, and max output tokens.
+# These seed the DB on first boot; afterwards values set in Settings → AI take priority.
+#   OpenAI cloud:  https://api.openai.com/v1        (e.g. model gpt-4o)
+#   Anthropic:     https://api.anthropic.com/v1     (e.g. model claude-...)
+#   Local runtime (Ollama/vLLM/LM Studio …): http://host.docker.internal:11434/v1
+AI_REASONING_ENDPOINT=https://api.openai.com/v1
+AI_REASONING_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxx   # leave empty for local servers that need no auth
+AI_REASONING_MODEL=gpt-4o
+AI_REASONING_MAX_TOKENS=16384
+AI_VISION_ENDPOINT=https://api.openai.com/v1    # can point to a different provider/model
+AI_VISION_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxx
+AI_VISION_MODEL=gpt-4o                          # vision-capable model
+AI_VISION_MAX_TOKENS=8192
 
 # ── Optional ──────────────────────────────────────────
 # Web search feature (disabled if not provided)
@@ -146,7 +175,7 @@ TAVILY_API_KEY=tvly-xxxxxxxxxxxxxxxxxxxxx
 ```yaml
 services:
   postgres:
-    image: postgres:18-alpine
+    image: pgvector/pgvector:pg18   # PostgreSQL 18 + pgvector (required for the vector extension)
     container_name: stella-th-postgres
     restart: unless-stopped
     environment:
