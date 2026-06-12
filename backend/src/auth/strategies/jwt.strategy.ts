@@ -43,9 +43,9 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       where: { id: payload.sub },
       select: { id: true, role: true, isDeactivated: true },
     });
-    if (!user) throw new UnauthorizedException('계정을 찾을 수 없습니다.');
+    if (!user) throw new UnauthorizedException('Account not found.');
     if (user.isDeactivated) {
-      throw new UnauthorizedException('비활성화된 계정입니다.');
+      throw new UnauthorizedException('This account is deactivated.');
     }
     // sub은 AdminGuard 등 다른 곳에서 DB lookup용으로 사용.
     return {

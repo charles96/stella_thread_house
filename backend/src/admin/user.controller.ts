@@ -56,20 +56,20 @@ export class AdminUserController {
   ) {
     const role = body?.role;
     if (role !== 'admin' && role !== 'member') {
-      throw new BadRequestException('role 값이 잘못되었습니다.');
+      throw new BadRequestException('Invalid role value.');
     }
     const user = await this.users.findOne({ where: { id } });
-    if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다.');
+    if (!user) throw new NotFoundException('User not found.');
 
     const requesterId = (req.user as { sub: string }).sub;
     if (id === requesterId && role === 'member') {
-      throw new ForbiddenException('자기 자신을 강등할 수 없습니다.');
+      throw new ForbiddenException('You cannot demote yourself.');
     }
     if (user.role === 'admin' && role === 'member') {
       const adminCount = await this.users.count({ where: { role: 'admin' } });
       if (adminCount <= 1) {
         throw new ForbiddenException(
-          '마지막 관리자는 강등할 수 없습니다. 다른 사용자를 먼저 admin 으로 승격하세요.',
+          'You cannot demote the last administrator. Promote another user to admin first.',
         );
       }
     }
@@ -91,14 +91,14 @@ export class AdminUserController {
   ) {
     const deactivated = body?.deactivated;
     if (typeof deactivated !== 'boolean') {
-      throw new BadRequestException('deactivated 값이 잘못되었습니다.');
+      throw new BadRequestException('Invalid deactivated value.');
     }
     const user = await this.users.findOne({ where: { id } });
-    if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다.');
+    if (!user) throw new NotFoundException('User not found.');
 
     const requesterId = (req.user as { sub: string }).sub;
     if (id === requesterId && deactivated) {
-      throw new ForbiddenException('자기 자신을 비활성화할 수 없습니다.');
+      throw new ForbiddenException('You cannot deactivate yourself.');
     }
     if (deactivated && user.role === 'admin') {
       const activeAdmins = await this.users.count({
@@ -106,7 +106,7 @@ export class AdminUserController {
       });
       if (activeAdmins <= 1) {
         throw new ForbiddenException(
-          '마지막 활성 관리자는 비활성화할 수 없습니다.',
+          'You cannot deactivate the last active administrator.',
         );
       }
     }

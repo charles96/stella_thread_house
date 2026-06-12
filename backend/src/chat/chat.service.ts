@@ -273,7 +273,8 @@ export class ChatService {
   ) {}
 
   private readonly logger = new Logger(ChatService.name);
-  private readonly defaultModel = process.env.AI_DEFAULT_MODEL ?? 'gemma4:26b';
+  // 그룹(DB ai config) 의 model 이 비어 있을 때만 쓰이는 최후 안전 기본값.
+  private readonly defaultModel = 'gemma4:26b';
 
   // AI 설정 — system_config 'ai' row 를 Reasoning / Vision 두 그룹으로 정규화해서 로드.
   // 각 그룹은 독립된 endpoint / apiKey / model 을 가진다(Vision 의 빈 값은 Reasoning 으로 폴백).
@@ -294,7 +295,7 @@ export class ChatService {
     const e = group.endpoint?.trim();
     if (!e) {
       throw new Error(
-        'AI Endpoint 가 설정되지 않았습니다. Settings > AI 에서 입력하세요.',
+        'AI endpoint is not configured. Set it in Settings > AI.',
       );
     }
     return e.replace(/\/$/, '');
@@ -559,8 +560,8 @@ export class ChatService {
       const sys: ChatMessage = {
         role: 'system',
         content: [
-          '당신은 사용자의 메시지를 웹 검색에 최적화된 쿼리 + Tavily 검색 옵션으로 재작성합니다.',
-          '대화 맥락(이전 user/assistant 메시지)에서 대명사·지시어("그", "이 사람", "두 인물", "그 회사" 등)가 가리키는 실제 대상(고유명사·키워드)을 찾아내 쿼리에 포함하세요.',
+          'You rewrite the user message into web-search-optimized queries plus Tavily search options.',
+          'From the conversation context (previous user/assistant messages), resolve what pronouns/referents ("he", "this person", "the two figures", "that company", etc.) point to (proper nouns/keywords) and include them in the queries.',
           '',
           '*** FIRST decide whether a web search is actually needed ("needsSearch") ***',
           'Set "needsSearch" to false when the user message can be answered well from your own general knowledge and does NOT depend on current, real-time, recent, or frequently-changing information. Examples that do NOT need search: definitions, concepts, explanations, history, science, math, coding/how-to, translation, summarization of provided text, casual conversation, and questions about the assistant itself.',
@@ -568,54 +569,54 @@ export class ChatService {
           'If the user EXPLICITLY asks to search the web (e.g., "검색해", "찾아봐", "알아봐줘", "search for", "look it up", "google"), ALWAYS set "needsSearch" to true and still produce proper queries.',
           'If "needsSearch" is false, return an empty "queries" array (the assistant will answer from its own knowledge).',
           '',
-          '출력 형식 (정확히 이 JSON 1개만):',
-          '{ "needsSearch": true, "queries": ["쿼리1"], "topic": "general", "country": null, "timeRange": null }',
+          'Output format (exactly this single JSON):',
+          '{ "needsSearch": true, "queries": ["query1"], "topic": "general", "country": null, "timeRange": null }',
           '',
-          '*** 결정 순서 (반드시 이 순서로 판단) ***',
-          '1) topic 먼저 결정',
-          '2) topic="news" 면 country 도 결정 (한국어 메시지면 명시 없어도 기본 "south korea")',
-          '3) timeRange 결정',
-          '4) queries 작성',
+          '*** Decision order (judge strictly in this order) ***',
+          '1) Decide topic first',
+          '2) If topic="news", also decide country (for a Korean message, default "south korea" even if unspecified)',
+          '3) Decide timeRange',
+          '4) Write queries',
           '',
-          '필드 규칙:',
+          'Field rules:',
           '* topic ("general" | "news" | "finance"):',
-          '  - "news": 메시지에 "뉴스", "속보", "최근 사건", "오늘 일어난", "보도", "이슈", "시사" 등이 포함되거나 분명히 시의성 있는 사건 정보를 요청. 예: "한국 뉴스 알려줘", "오늘 사건", "트럼프 최근 발언".',
-          '  - "finance": 주식·환율·금융 시장·기업 실적·암호화폐. 예: "삼성전자 주가", "달러 환율", "비트코인 시세".',
-          '  - "general": 그 외 일반 정보·역사·과학·기술·인물 백과 정보 등 (기본값).',
-          '* country (소문자 영문 국가명 또는 null):',
-          '  - topic="news" 일 때만 채움 (그 외 null).',
-          '  - 사용자가 국가를 명시: 그 국가 사용 ("한국" → "south korea", "미국" → "united states", "일본" → "japan", "중국" → "china", "영국" → "united kingdom").',
-          '  - 국가 명시 없음 + 사용자 메시지가 한국어: **기본값 "south korea"** (한국 사용자 관점 우선).',
-          '  - 국가 명시 없음 + 사용자 메시지가 영어: null (전세계 결과).',
-          '  - 국가 명시 없음 + 그 외 언어: 글로벌 사용자 기준으로 해당 언어권 국가를 추론해 사용 (일본어 → "japan", 중국어 → "china", 프랑스어 → "france", 독일어 → "germany", 스페인어 → "spain", 베트남어 → "vietnam" 등). 언어권이 모호하면 null.',
+          '  - "news": the message contains terms like "뉴스/news", "속보/breaking", "recent event", "today\'s", "보도/report", "이슈/issue", "시사/current affairs", or clearly requests timely event info. e.g. "한국 뉴스 알려줘", "오늘 사건", "Trump latest remarks".',
+          '  - "finance": stocks, FX, financial markets, company earnings, crypto. e.g. "삼성전자 주가", "USD exchange rate", "Bitcoin price".',
+          '  - "general": everything else — general info, history, science, tech, encyclopedic info about people, etc. (default).',
+          '* country (lowercase English country name, or null):',
+          '  - Fill only when topic="news" (otherwise null).',
+          '  - User specifies a country: use it ("한국" → "south korea", "미국" → "united states", "일본" → "japan", "중국" → "china", "영국" → "united kingdom").',
+          '  - No country specified + Korean message: **default "south korea"** (Korean-user perspective first).',
+          '  - No country specified + English message: null (worldwide results).',
+          '  - No country specified + other language: for a global user, infer the country of that language region (Japanese → "japan", Chinese → "china", French → "france", German → "germany", Spanish → "spain", Vietnamese → "vietnam", etc.). If the region is ambiguous, null.',
           '* timeRange ("day" | "week" | "month" | "year" | null):',
-          '  - "day": "오늘", "현재", "지금", "방금", "어제" 등 즉시성 강조.',
-          '  - "week": "최근", "이번 주", "요즘" 등.',
-          '  - "month": "이번 달", "최근 한 달".',
-          '  - "year": "올해", "최근 일년".',
-          '  - topic="news" 이지만 시점 명시 없으면 기본 "week" (최근 뉴스가 자연스러움).',
-          '  - 역사적·고정 정보면 null.',
-          '* queries (배열, 1~2개):',
-          '  - 둘 이상의 독립 대상(인물 둘, 제품 둘 등) 이면 개별 쿼리로 분리해 2개. 그 외 1개.',
-          '  - 각 60자 이내, 명사 위주 키워드. 조사·"~에 대해 알려줘" 같은 군더더기 제거.',
-          '  - 글로벌 사용자 대상: 쿼리는 사용자 메시지와 같은 언어로 작성한다 (한국어 → 한국어, 영어 → 영어, 일본어 → 일본어, 그 외 언어도 동일). 인물·브랜드·고유명사는 원어 표기를 그대로 두거나 원어를 함께 포함해 검색 정확도를 높인다.',
-          '  - topic="news" + country="south korea" 면 쿼리에 "한국" 또는 관련 한국어 키워드 자연스럽게 포함.',
-          '  - 맥락에서 대상을 알 수 없으면 메시지의 핵심 명사만 추출.',
+          '  - "day": emphasizes immediacy — "오늘/today", "현재/now", "지금", "방금", "어제/yesterday".',
+          '  - "week": "최근/recent", "이번 주/this week", "요즘/these days".',
+          '  - "month": "이번 달/this month", "last month".',
+          '  - "year": "올해/this year", "last year".',
+          '  - topic="news" but no time specified → default "week" (recent news is natural).',
+          '  - Historical/fixed info → null.',
+          '* queries (array, 1-2):',
+          '  - If there are two or more independent targets (two people, two products, etc.), split into 2 separate queries. Otherwise 1.',
+          '  - Each within 60 chars, noun-centric keywords. Strip particles and filler like "~에 대해 알려줘 / tell me about".',
+          '  - For global users: write queries in the SAME language as the user message (Korean → Korean, English → English, Japanese → Japanese, and likewise for any language). Keep person/brand/proper nouns in their original script, or include the original alongside, to improve search accuracy.',
+          '  - If topic="news" + country="south korea", naturally include "한국" or relevant Korean keywords in the query.',
+          '  - If the target cannot be determined from context, extract only the core nouns of the message.',
           '',
-          '*** 예시 ***',
-          '입력: "오늘 뉴스 알려줘"',
-          '출력: {"queries":["오늘 한국 주요 뉴스"],"topic":"news","country":"south korea","timeRange":"day"}',
+          '*** Examples ***',
+          'Input: "오늘 뉴스 알려줘"',
+          'Output: {"queries":["오늘 한국 주요 뉴스"],"topic":"news","country":"south korea","timeRange":"day"}',
           '',
-          '입력: "삼성전자 최근 주가"',
-          '출력: {"queries":["삼성전자 주가"],"topic":"finance","country":null,"timeRange":"week"}',
+          'Input: "삼성전자 최근 주가"',
+          'Output: {"queries":["삼성전자 주가"],"topic":"finance","country":null,"timeRange":"week"}',
           '',
-          '입력: "Albert Einstein biography"',
-          '출력: {"queries":["Albert Einstein biography"],"topic":"general","country":null,"timeRange":null}',
+          'Input: "Albert Einstein biography"',
+          'Output: {"queries":["Albert Einstein biography"],"topic":"general","country":null,"timeRange":null}',
           '',
-          '입력: "미국 대통령 선거 결과"',
-          '출력: {"queries":["미국 대통령 선거 결과"],"topic":"news","country":"united states","timeRange":"week"}',
+          'Input: "미국 대통령 선거 결과"',
+          'Output: {"queries":["미국 대통령 선거 결과"],"topic":"news","country":"united states","timeRange":"week"}',
           '',
-          'JSON 외 텍스트·코드펜스·설명 절대 금지.',
+          'Absolutely no text, code fences, or explanations outside the JSON.',
         ].join('\n'),
       };
 
@@ -629,17 +630,17 @@ export class ChatService {
 
       const lines: string[] = [];
       if (trimmedHistory.length > 0) {
-        lines.push('[지난 대화]');
+        lines.push('[Conversation so far]');
         for (const m of trimmedHistory) {
-          const tag = m.role === 'user' ? '사용자' : '어시스턴트';
+          const tag = m.role === 'user' ? 'User' : 'Assistant';
           lines.push(`${tag}: ${m.content}`);
         }
         lines.push('');
       }
-      lines.push('[새 사용자 메시지]');
+      lines.push('[New user message]');
       lines.push(u.slice(0, 1500));
       lines.push('');
-      lines.push('JSON만 출력:');
+      lines.push('Output JSON only:');
 
       const text = await this.llmComplete(
         [sys, { role: 'user', content: lines.join('\n') }],
@@ -711,26 +712,26 @@ export class ChatService {
       const sys: ChatMessage = {
         role: 'system',
         content: [
-          '당신은 사용자의 새 메시지가 답할 수 있을 만큼 충분히 구체적인지를 판단하는 분류기입니다.',
-          '판단 시 반드시 [지난 대화 맥락]을 고려해서 결정하세요.',
+          'You are a classifier that decides whether the user\'s new message is specific enough to answer.',
+          'Always consider the [conversation context] when deciding.',
           '',
-          '판단 기준:',
-          '- 인사·감사·간단한 사실 질의(예: "안녕", "1+1") → 답변 가능 → needs=false',
-          '- 새 메시지가 짧아도 [지난 대화]에서 충분히 의미가 명확하면 → needs=false (예: "더 자세히", "다른 거", "1번 알려줘"는 직전 대화의 대상이 분명한 경우)',
-          '- 새 메시지가 모호하고 지난 대화로도 분기(종류·예산·지역·시점·대상)가 결정 안 되면 → needs=true',
+          'Criteria:',
+          '- Greetings, thanks, simple factual queries (e.g. "hi", "1+1") → answerable → needs=false',
+          '- Even if the new message is short, if it is clear enough given the [conversation] → needs=false (e.g. "more detail", "another one", "tell me about #1" when the referent from the previous turn is clear)',
+          '- If the new message is ambiguous and the conversation still does not resolve the branching (type, budget, region, time, target) → needs=true',
           '',
           '**IMPORTANT — Language rule: Write question and options in the SAME language as the user\'s message. If the user wrote in English → English. If Korean → Korean.**',
           '',
-          '응답 형식 — 둘 중 하나의 JSON만 출력:',
+          'Response format — output ONLY one of these two JSON objects:',
           '{ "needs": false }',
-          '또는',
-          '{ "needs": true, "question": "한 문장 재질문 (사용자 메시지와 같은 언어)", "options": ["답변 후보 1", "답변 후보 2", "답변 후보 3"] }',
+          'or',
+          '{ "needs": true, "question": "one-sentence clarifying question (same language as the user)", "options": ["candidate answer 1", "candidate answer 2", "candidate answer 3"] }',
           '',
-          'question·options 작성 규칙 (필수):',
-          '- 반드시 [지난 대화]에서 다뤄진 주제를 유지·구체화하는 질문이어야 함 (지난 대화와 관련 없는 일반론적 분류 묻지 말 것)',
-          '- 옵션은 사용자가 그대로 보내면 자연스러운 다음 답이 되도록 짧게(8~20자), 사용자 메시지와 같은 언어로',
-          '- options는 2~4개',
-          '- JSON 외 텍스트·코드 펜스 금지',
+          'Rules for question/options (required):',
+          '- The question must keep and narrow the topic already discussed in the [conversation] (do not ask generic classification unrelated to it).',
+          '- Options should be short so that sending one verbatim is a natural next answer, in the same language as the user.',
+          '- 2-4 options.',
+          '- No text or code fences outside the JSON.',
         ].join('\n'),
       };
 
@@ -745,20 +746,20 @@ export class ChatService {
 
       const lines: string[] = [];
       if (trimmedHistory.length > 0) {
-        lines.push('[지난 대화]');
+        lines.push('[Conversation]');
         for (const m of trimmedHistory) {
-          const tag = m.role === 'user' ? '사용자' : '어시스턴트';
+          const tag = m.role === 'user' ? 'User' : 'Assistant';
           lines.push(`${tag}: ${m.content}`);
         }
         lines.push('');
       } else {
-        lines.push('[지난 대화 없음]');
+        lines.push('[No prior conversation]');
         lines.push('');
       }
-      lines.push('[새 사용자 메시지]');
+      lines.push('[New user message]');
       lines.push(u.slice(0, 1500));
       lines.push('');
-      lines.push('JSON만 출력:');
+      lines.push('Output JSON only:');
 
       const text = await this.llmComplete(
         [sys, { role: 'user', content: lines.join('\n') }],
@@ -799,30 +800,30 @@ export class ChatService {
       const sys: ChatMessage = {
         role: 'system',
         content: [
-          '당신은 어시스턴트 답변 직후, 사용자가 자연스럽게 이어서 묻고 싶을 만한 "후속 질문"을 추천합니다.',
-          '추가 정보를 사용자에게 요구하는 게 아니라, 사용자가 다음에 손쉽게 클릭해서 보낼 만한 구체적 질문을 만드는 것이 목표.',
+          'Right after the assistant reply, you suggest "follow-up questions" the user would naturally want to ask next.',
+          'The goal is NOT to ask the user for more info, but to craft specific questions the user can easily click to send next.',
           '',
-          '*** 매우 중요 — 기본은 "후속 질문 없음"이다. ***',
-          '- 답변이 이미 사용자가 원한 것을 충분히 다뤘다면 needsClarification=false 로 종료.',
-          '- 다음 같은 일반적/추상적인 후속만 떠오른다면 needsClarification=false:',
-          '  · "더 자세히 알려주세요", "다른 정보도 알려주세요", "관련된 것은?"',
-          '  · "어떤 종류가 더 있나요", "추천해주세요" 같은 정의 모호한 것',
-          '- 후속을 만들 때는 반드시 [지난 대화 + 현재 답변]에서 명시적으로 등장한 고유명사·개념·숫자·항목을 직접 가리키는 구체 질문이어야 한다.',
-          '  · 좋은 예: "조선 22대 정조의 화성 축조 비용은?", "위 비교표에서 가성비 1위 모델 스펙 더 보기"',
-          '  · 나쁜 예: "더 자세히 알려줘", "다른 정보 있어?", "관련 정보는?"',
+          '*** VERY IMPORTANT — the default is "no follow-up". ***',
+          '- If the reply already sufficiently covered what the user wanted, end with needsClarification=false.',
+          '- If only generic/abstract follow-ups come to mind, use needsClarification=false:',
+          '  · "tell me more", "give me other info too", "anything related?"',
+          '  · vaguely-defined ones like "what other kinds are there", "any recommendations?"',
+          '- When you do create follow-ups, they MUST be concrete questions that directly reference proper nouns/concepts/numbers/items explicitly present in the [conversation + current reply].',
+          '  · Good: "How much did King Jeongjo\'s construction of Hwaseong Fortress cost?", "Show more specs of the best-value model in the comparison table above"',
+          '  · Bad: "tell me more", "any other info?", "anything related?"',
           '',
           '**IMPORTANT — Language rule: Write question and options in the SAME language as the user\'s message. If the user wrote in English → English. If Korean → Korean.**',
           '',
-          '응답 형식 — 둘 중 하나의 JSON 만 출력:',
+          'Response format — output ONLY one of these two JSON objects:',
           '{ "needsClarification": false }',
-          '또는',
-          '{ "needsClarification": true, "question": "한 문장(생략 가능, 사용자 메시지와 같은 언어)", "options": ["구체 후속 질문 1", "구체 후속 질문 2"] }',
+          'or',
+          '{ "needsClarification": true, "question": "one sentence (optional, same language as the user)", "options": ["concrete follow-up 1", "concrete follow-up 2"] }',
           '',
-          '규칙:',
-          '- options 2~3개, 10~30자, 사용자 메시지와 같은 언어로, 그대로 사용자 메시지로 보낼 수 있는 완전한 질문 형태',
-          '- 같은 답변에 대해 비슷한 옵션을 만들지 말 것 — 서로 다른 각도/주제여야 함',
-          '- 확실하지 않으면 무조건 needsClarification=false (잘못된 후속보다 없는 게 낫다)',
-          '- JSON 외 텍스트·코드 펜스 금지',
+          'Rules:',
+          '- 2-3 options, short, in the same language as the user, each a complete question that can be sent verbatim as a user message.',
+          '- Do not make similar options for the same reply — they must be from different angles/topics.',
+          '- If unsure, always needsClarification=false (no follow-up is better than a wrong one).',
+          '- No text or code fences outside the JSON.',
         ].join('\n'),
       };
 
@@ -836,20 +837,20 @@ export class ChatService {
 
       const lines: string[] = [];
       if (trimmedHistory.length > 0) {
-        lines.push('[지난 대화]');
+        lines.push('[Conversation]');
         for (const m of trimmedHistory) {
-          const tag = m.role === 'user' ? '사용자' : '어시스턴트';
+          const tag = m.role === 'user' ? 'User' : 'Assistant';
           lines.push(`${tag}: ${m.content}`);
         }
         lines.push('');
       }
-      lines.push('[방금 사용자 질문]');
+      lines.push('[The user\'s latest question]');
       lines.push(u.slice(0, 1500));
       lines.push('');
-      lines.push('[방금 어시스턴트 답변]');
+      lines.push('[The assistant\'s latest reply]');
       lines.push(a.slice(0, 2500));
       lines.push('');
-      lines.push('JSON만 출력:');
+      lines.push('Output JSON only:');
 
       const user: ChatMessage = { role: 'user', content: lines.join('\n') };
       const text = await this.llmComplete([sys, user], {
@@ -895,26 +896,26 @@ export class ChatService {
       const sys: ChatMessage = {
         role: 'system',
         content: [
-          '다음 답변을 보고 (1) 한 줄 요약과 (2) 본문의 핵심 키워드 해시태그 3~6개를 한국어로 만드세요.',
-          '해시태그는 답변 본문에서 가장 핵심이 되는 단어들만 추출합니다. 양보다 정확성이 중요합니다.',
+          'Look at the following answer and produce (1) a one-line summary and (2) 3-6 hashtags of the core keywords from the body, in the SAME language as the answer.',
+          'Hashtags must be only the most central words from the answer body. Accuracy matters more than quantity.',
           '',
-          '핵심 키워드 선정 가이드:',
-          '- 본문에 실제로 등장하거나 본문의 주제를 가장 잘 대표하는 단어만 선택.',
-          '- 부가적·주변적·일반적 개념은 제외 (예: "#개요","#정보","#설명","#내용" 같은 메타성 단어 금지).',
-          '- 본문에서 한 번 스쳐 지나간 단어보다 답변 전반에서 비중 있게 다뤄진 단어를 우선.',
-          '- 너무 추상적이거나 너무 광범위한 상위 카테고리(예: "#역사","#기술")만 단독으로 쓰지 않는다 — 본문이 그 자체를 정면으로 다룬 경우에만 허용.',
-          '- 복합어는 의미가 통째로 보존되어야 가치 있을 때만 그대로 두고, 의미 손실 없이 분해할 수 있으면 핵심 부분만 남긴다.',
-          '- 명사형 단일 토큰. 특수문자·조사·서술어 금지.',
-          '- 공백이 필요한 복합어는 반드시 하이픈(-)으로 연결 (예: "#머신-러닝", "#수원-화성").',
-          '- 영어는 카멜케이스 또는 하이픈 연결 (예: "#GenerativeAI", "#Next-JS").',
-          '- 의미가 사실상 동일한 태그는 중복 제거 (대표적인 것 하나만).',
+          'Core-keyword selection guide:',
+          '- Choose only words that actually appear in the body or best represent its topic.',
+          '- Exclude auxiliary/peripheral/generic concepts (e.g. no meta words like "#overview", "#info", "#description", "#content").',
+          '- Prefer words covered substantially throughout the answer over words mentioned once in passing.',
+          '- Do not use an overly abstract or overly broad top category alone (e.g. "#history", "#technology") — allow it only when the body squarely addresses that itself.',
+          '- Keep a compound word intact only when its meaning is valuable as a whole; if it can be split without losing meaning, keep only the core part.',
+          '- Single noun-form tokens. No special characters, particles, or predicates.',
+          '- For compounds that need spaces, connect with hyphens (e.g. "#machine-learning", "#Suwon-Hwaseong").',
+          '- For English, use camelCase or hyphens (e.g. "#GenerativeAI", "#Next-JS").',
+          '- Deduplicate tags that mean essentially the same thing (keep one representative).',
           '',
-          '한 줄 요약 가이드:',
-          '- 15~40자 사이, 답변의 핵심을 한 문장으로 (마침표 없이도 OK).',
+          'One-line summary guide:',
+          '- Roughly 15-40 characters, the answer\'s core in one sentence (a trailing period is optional).',
           '',
-          '출력 형식:',
-          '- JSON 객체만 출력. 추가 설명·코드 펜스·서론·결론 금지.',
-          '- 예: {"summary":"정조의 수원 화성 축조 배경과 의의","hashtags":["#정조","#수원화성","#조선시대"]}',
+          'Output format:',
+          '- Output the JSON object only. No extra explanation, code fences, preamble, or conclusion.',
+          '- Example: {"summary":"Background and significance of Jeongjo\'s Suwon Hwaseong construction","hashtags":["#Jeongjo","#SuwonHwaseong","#Joseon"]}',
         ].join('\n'),
       };
       const content = await this.llmComplete(
@@ -955,50 +956,50 @@ export class ChatService {
     const sys: ChatMessage = {
       role: 'system',
       content: [
-        '당신은 대화 내용을 "주제별"로 정리하는 한국어 리서치 노트 작성자입니다.',
-        '아래 절차를 그대로 따릅니다.',
+        'You are a research-note writer that organizes the conversation "by topic".',
+        'Follow the procedure below exactly.',
         '',
-        '절차',
-        '1) 대화 전체를 처음부터 끝까지 훑어 다뤄진 주요 주제를 2~5개 추출한다.',
-        '   - 주제는 명사구로 짧게 (예: "Tavily 검색 통합", "이미지 카드 레이아웃").',
-        '   - 비슷한 내용은 한 주제로 묶고, 의미 없는 잡담은 배제한다.',
-        '2) 추출한 주제 각각을 별도 섹션으로 정리한다.',
-        '3) 모든 주제 섹션이 끝난 뒤 결정·다음 단계를 별도로 정리한다.',
+        'Procedure',
+        '1) Skim the whole conversation from start to finish and extract 2-5 main topics covered.',
+        '   - Keep topics as short noun phrases (e.g. "Tavily search integration", "image card layout").',
+        '   - Merge similar content into one topic; exclude meaningless chatter.',
+        '2) Organize each extracted topic into its own section.',
+        '3) After all topic sections, summarize decisions and next steps separately.',
         '',
-        '출력 형식 (이 마크다운 골격을 그대로 사용)',
+        'Output format (use this markdown skeleton as-is)',
         '',
-        '## 한 줄 요약',
-        '대화 전체의 목적과 결론을 한 문장으로.',
+        '## One-line summary',
+        'The overall purpose and conclusion of the conversation in one sentence.',
         '',
-        '## 주제 목차',
-        '- 주제 1 이름',
-        '- 주제 2 이름',
-        '- (필요 시 더)',
+        '## Topic index',
+        '- Topic 1 name',
+        '- Topic 2 name',
+        '- (more if needed)',
         '',
-        '## 1. {주제 1 이름}',
-        '- **굵은 키워드** 중심으로 4~8개 항목',
-        '- 누가 무엇을 물어봤고 어떤 답·산출물이 나왔는지 구체적으로',
-        '- 코드/명령은 ```언어 ... ``` 코드 블록으로 짧게 인용',
+        '## 1. {Topic 1 name}',
+        '- 4-8 items centered on **bold keywords**',
+        '- Specifically: who asked what, and what answers/artifacts resulted',
+        '- Quote code/commands briefly in ```lang ... ``` code blocks',
         '',
-        '## 2. {주제 2 이름}',
-        '- 같은 형식',
+        '## 2. {Topic 2 name}',
+        '- Same format',
         '',
-        '(주제 갯수만큼 ## 섹션 반복)',
+        '(Repeat ## sections for as many topics as there are)',
         '',
-        '## 결정·결과',
-        '- 합의·도출된 결론, 만들어진 산출물(파일·기능·키)',
-        '- 정해진 사항이 없으면 "아직 결정된 사항 없음"',
+        '## Decisions / results',
+        '- Agreed or derived conclusions, and artifacts produced (files, features, keys)',
+        '- If nothing was decided, write "No decisions yet"',
         '',
-        '## 다음 단계',
-        '- 후속 작업, 확인할 점, 미해결 질문',
-        '- 없으면 이 섹션 자체를 생략',
+        '## Next steps',
+        '- Follow-up work, points to confirm, open questions',
+        '- Omit this whole section if there are none',
         '',
-        '규칙',
-        '- 모든 출력은 한국어',
-        '- 출처/인용 번호 [1], [2]는 그대로 보존',
-        '- 추측·과장·대화에 없는 내용 금지',
-        '- 같은 내용을 여러 섹션에 중복하지 않기',
-        '- 헤딩은 위에 적힌 그대로 사용 (## 한 줄 요약, ## 주제 목차, ## 1. …, ## 결정·결과, ## 다음 단계)',
+        'Rules',
+        '- Write everything in the SAME language as the conversation (translate the section headings above into that language).',
+        '- Preserve source/citation numbers [1], [2] as-is',
+        '- No speculation, exaggeration, or content not present in the conversation',
+        '- Do not duplicate the same content across multiple sections',
+        '- Use the headings exactly as listed above (translated into the conversation language): One-line summary, Topic index, 1. …, Decisions / results, Next steps',
       ].join('\n'),
     };
     const trimmed = messages
@@ -1030,29 +1031,29 @@ export class ChatService {
     const sys: ChatMessage = {
       role: 'system',
       content: [
-        '당신은 대화 흐름을 누적 요약하는 한국어 노트 작성자입니다.',
-        '입력으로 [기존 요약]과 [최신 답변]이 주어집니다.',
-        '두 글을 자연스럽게 통합해 전체 대화의 흐름을 짧게 요약합니다.',
+        'You are a note writer that keeps a running summary of the conversation flow.',
+        'You are given an [existing summary] and the [latest answer] as input.',
+        'Integrate the two naturally into a short summary of the whole conversation flow.',
         '',
-        '규칙',
-        '- 한국어로 작성',
-        '- 마크다운 헤딩이나 제목 없이 짧은 문단 1~2개, 또는 불릿 3~6개',
-        '- 새로 등장한 핵심 사실·결정·산출물을 빠뜨리지 않는다',
-        '- 이미 요약에 있는 내용을 다시 길게 쓰지 않는다',
-        '- 추측·인사말·메타발화 금지',
-        '- 전체 길이는 800자를 넘지 않는다',
+        'Rules',
+        '- Write in the SAME language as the conversation',
+        '- No markdown headings or titles; 1-2 short paragraphs, or 3-6 bullets',
+        '- Do not omit newly introduced key facts, decisions, or artifacts',
+        '- Do not re-write at length content already in the summary',
+        '- No speculation, greetings, or meta-talk',
+        '- Keep the total length under 800 characters',
       ].join('\n'),
     };
     const user: ChatMessage = {
       role: 'user',
       content: [
-        '[기존 요약]',
-        prevSummary?.trim() || '(아직 없음)',
+        '[Existing summary]',
+        prevSummary?.trim() || '(none yet)',
         '',
-        '[최신 답변]',
+        '[Latest answer]',
         trimmedAnswer,
         '',
-        '위 둘을 통합한 새 요약만 출력하세요.',
+        'Output only the new integrated summary.',
       ].join('\n'),
     };
 
@@ -1132,7 +1133,7 @@ export class ChatService {
       `- User question / request: "${query}"`,
       '- Each [Page N] section contains:',
       '  · the text body extracted from the page',
-      '  · the result of a vision model analyzing each image attached to that page — a block marked `[이 페이지에 첨부된 이미지를 비전 모델로 분석한 결과 — …]` (these data markers are in Korean). Each line has the form `이미지N [관련|무관] (URL): description`, where `관련` means relevant and `무관` means irrelevant, and contains factual cues such as quoted prices, model names, labels, and figures.',
+      '  · the result of a vision model analyzing each image attached to that page — a block marked `[Vision-model analysis of images attached to this page — …]`. Each line has the form `Image N [relevant|irrelevant] (URL): description`, and contains factual cues such as quoted prices, model names, labels, and figures.',
       '',
       blocks,
       '',
@@ -1143,7 +1144,7 @@ export class ChatService {
       '4. If the text and the images conflict, state in one line which is more trustworthy and why, then decide.',
       '5. Answer structure: (a) one conclusion/summary paragraph → (b) a detailed section that elaborates the key facts confirmed from the text/images with their grounding → (c) if there are comparisons, specs, options, or differences, organize them in a markdown table → (d) if something cannot be confirmed from the page, state it explicitly as "not confirmed on the page".',
       '6. Do not bring in web search, outside knowledge, general common sense, or speculation. Answer strictly from the provided [Page N] materials.',
-      '7. Actively use image analyses marked `[관련]` (relevant). Do not cite ones marked `[무관]` (irrelevant) in the answer (though you may mention them briefly for contradiction-checking).',
+      '7. Actively use image analyses marked `[relevant]`. Do not cite ones marked `[irrelevant]` in the answer (though you may mention them briefly for contradiction-checking).',
       '8. Never write thinking-process headers in the user-visible body, e.g. "[생각 과정]", "생각 과정", "## 생각 과정", "**생각 과정**", "분석:", "사고 과정", "Thinking:". Do all reasoning only in the model\'s internal thinking step and start the body directly with the answer.',
       '9. No speculation, exaggeration, or facts beyond the materials. Write at length, but every sentence must be grounded in the page text or the image analysis.',
     ].join('\n');
@@ -1236,7 +1237,7 @@ export class ChatService {
           }
           continue;
         }
-        // 그 외 — base64 로 추정 (구버전 메시지 호환).
+        // 그 외 — base64 로 추정.
         resolved.push(s);
       }
       return { ...m, images: resolved };
@@ -1457,12 +1458,12 @@ export class ChatService {
                   )
                   .map(
                     (a, i) =>
-                      `이미지${i + 1} [${a.relevant ? '관련' : '무관'}] (${a.src}): ${a.description}`,
+                      `Image ${i + 1} [${a.relevant ? 'relevant' : 'irrelevant'}] (${a.src}): ${a.description}`,
                   )
                   .join('\n');
                 if (lines) {
                   target.content =
-                    `${target.content}\n\n[이 페이지에 첨부된 이미지를 비전 모델로 분석한 결과 — 답변에 적극 활용하시오]\n${lines}`;
+                    `${target.content}\n\n[Vision-model analysis of images attached to this page — use it actively in your answer]\n${lines}`;
                 }
               }
             }

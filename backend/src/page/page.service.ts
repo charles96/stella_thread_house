@@ -371,9 +371,9 @@ function parseVisionVerdict(text: string): {
   let relevant = false;
   let description = '';
   for (const line of lines) {
-    const m1 = /^관련\s*[:：]\s*(yes|no|예|아니오)/i.exec(line);
+    const m1 = /^relevant\s*[:：]\s*(yes|no)/i.exec(line);
     if (m1) {
-      relevant = /^(yes|예)/i.test(m1[1]);
+      relevant = /^yes/i.test(m1[1]);
       continue;
     }
     const m2 = /^(설명|description)\s*[:：]\s*(.+)$/i.exec(line);
@@ -480,10 +480,10 @@ export class PageService {
     }
     return content.trim();
   }
-  private readonly defaultModel =
-    process.env.AI_DEFAULT_MODEL ?? 'gemma4:26b';
+  // DB ai config 의 model 이 비어 있을 때만 쓰이는 최후 안전 기본값.
+  private readonly defaultModel = 'gemma4:26b';
   private readonly visionModel =
-    process.env.AI_VISION_MODEL ?? process.env.AI_DEFAULT_MODEL ?? 'gemma4:26b';
+    process.env.AI_VISION_MODEL ?? 'gemma4:26b';
 
   // Vision 모델 — system_config 'ai' Vision 그룹 model 이 기본값. 없으면 env 폴백.
   private async getVisionModel(): Promise<string> {
@@ -728,20 +728,20 @@ export class PageService {
     }
 
     const sections: string[] = [];
-    if (title) sections.push(`[제목] ${title}`);
-    if (author) sections.push(`[채널] ${author}`);
+    if (title) sections.push(`[Title] ${title}`);
+    if (author) sections.push(`[Channel] ${author}`);
     if (transcript) {
       // 너무 긴 자막은 잘라낸다 — 100k chars로 캡.
       const capped =
         transcript.length > 100_000
-          ? transcript.slice(0, 100_000) + ' …(이하 생략)'
+          ? transcript.slice(0, 100_000) + ' …(truncated)'
           : transcript;
-      sections.push(`[자막]\n${capped}`);
+      sections.push(`[Transcript]\n${capped}`);
     } else {
       sections.push(
         transcriptError
-          ? `[자막을 가져올 수 없음: ${transcriptError}]`
-          : '[자막 트랙이 없는 영상입니다]',
+          ? `[Transcript unavailable: ${transcriptError}]`
+          : '[This video has no transcript track]',
       );
     }
 
@@ -1053,7 +1053,7 @@ export class PageService {
             alt: img.alt,
             relevant: false,
             description: '',
-            error: e instanceof Error ? e.message : '분석 실패',
+            error: e instanceof Error ? e.message : 'analysis failed',
           };
         }
       }),
@@ -1099,25 +1099,25 @@ export class PageService {
     alt?: string,
   ): Promise<{ relevant: boolean; description: string }> {
     const system = [
-      '당신은 웹 페이지의 첨부 이미지를 자세히 묘사하고 페이지 제목과의 관련성을 판정하는 비전 분석기입니다.',
-      '응답 형식 (다른 글자 없이 정확히 두 줄, 두 번째 줄은 줄바꿈 없이 이어 적기):',
-      '관련: yes | no',
-      '설명: <한국어 220자 이내, 후속 답변에 도움이 되도록 가능한 한 구체적으로>',
+      'You are a vision analyzer that describes an image attached to a web page in detail and judges its relevance to the page title.',
+      'Response format (exactly two lines, no other text; write the second line continuously without line breaks):',
+      'relevant: yes | no',
+      'description: <within ~220 characters, as specific as possible to help the follow-up answer>',
       '',
-      '설명 작성 지침 (중요):',
-      '- 무엇을 보여주는지 (제품/인물/장소/상황/도표 등) 명시.',
-      '- 이미지에 보이는 텍스트(가격·모델명·라벨·수치·캡션·로고 글자)는 가능한 한 그대로 따옴표로 인용.',
-      '- 제품 이미지라면: 색상, 형태, 소재 느낌, 부착된 라벨/가격표, 사이즈/포장 표기.',
-      '- 사진이라면: 인물 수/표정/포즈/배경, 사건이라면 상황 단서.',
-      '- 도표/스크린샷이라면: 표시되는 수치·축·결론 한 줄.',
-      '- 단순 추측 금지. "보임", "표기됨" 같은 사실 위주 어휘.',
+      'Description guidelines (important):',
+      '- State what it shows (product/person/place/situation/chart, etc.).',
+      '- Quote text visible in the image (prices, model names, labels, figures, captions, logo text) verbatim in quotes as much as possible.',
+      '- For a product image: color, shape, material feel, attached labels/price tags, size/packaging markings.',
+      '- For a photo: number of people/expressions/poses/background; for an event, situational cues.',
+      '- For a chart/screenshot: the shown figures/axes and a one-line conclusion.',
+      '- No mere speculation. Use fact-oriented wording like "shows", "labeled".',
       '',
-      '관련 판정:',
-      '- 제목 주제와 시각적으로 직접 관련 있으면 yes.',
-      '- 단순 로고/아이콘/UI 장식/광고 배너/공유 버튼은 no.',
+      'Relevance judgment:',
+      '- yes if it is visually directly related to the title topic.',
+      '- no for mere logos/icons/UI decoration/ad banners/share buttons.',
     ].join('\n');
 
-    const user = `제목: ${title}${alt ? `\n이미지 alt: ${alt}` : ''}`;
+    const user = `Title: ${title}${alt ? `\nImage alt: ${alt}` : ''}`;
 
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), this.imageAnalyzeTimeoutMs);
@@ -1142,16 +1142,16 @@ export class PageService {
     text: string,
   ): Promise<string> {
     const system = [
-      '당신은 웹 페이지 본문에서 "제목과 직접 관련된 본문 텍스트"만 골라내는 추출기입니다.',
-      '규칙:',
-      '- 제목이 다루는 주제의 본문(서론·본문·결론, 설명·예시·인용문 등)만 남긴다.',
-      '- 메뉴/사이드바/광고/추천 글/관련기사/저작권/태그/SNS 공유/댓글/네비게이션은 제외.',
-      '- 원문 표현을 그대로 보존하고 요약·재서술하지 않는다. 문장 순서도 원문 순서를 유지.',
-      '- 출력은 본문 텍스트만. 머리말/꼬리말/설명/번호매기기/마크다운 강조 추가 금지.',
-      '- 해당하는 본문이 없으면 빈 문자열을 반환.',
+      'You are an extractor that selects only the "body text directly related to the title" from a web page body.',
+      'Rules:',
+      '- Keep only the body covering the title\'s topic (intro/body/conclusion, explanations/examples/quotes, etc.).',
+      '- Exclude menus/sidebars/ads/recommended posts/related articles/copyright/tags/social share/comments/navigation.',
+      '- Preserve the original wording verbatim; do not summarize or rephrase. Keep the original sentence order too.',
+      '- Output the body text only. Do not add headers/footers/explanations/numbering/markdown emphasis.',
+      '- If there is no matching body, return an empty string.',
     ].join('\n');
 
-    const user = `제목: ${title}\n\n본문:\n${text}`;
+    const user = `Title: ${title}\n\nBody:\n${text}`;
 
     const ctrl = new AbortController();
     const timer = setTimeout(() => {

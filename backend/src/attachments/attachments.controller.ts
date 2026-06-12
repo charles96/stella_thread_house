@@ -82,7 +82,7 @@ export class AttachmentsController {
       !body.fileName ||
       typeof body.degrees !== 'number'
     ) {
-      throw new BadRequestException('messageId, fileName, degrees 필요');
+      throw new BadRequestException('messageId, fileName, and degrees are required.');
     }
     await this.svc.rotate(
       body.messageId,

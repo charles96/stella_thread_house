@@ -119,12 +119,12 @@ export class SmtpController {
       const u = await this.users.findOne({ where: { id: sub } });
       to = u?.email;
     }
-    if (!to) throw new BadRequestException('수신 이메일을 결정할 수 없습니다.');
+    if (!to) throw new BadRequestException('Could not determine the recipient email.');
     const { from } = await this.mail.send({
       to,
-      subject: "Stella's Thread House — SMTP 테스트",
-      text: 'SMTP 설정이 정상적으로 동작합니다.',
-      html: `<p>SMTP 설정이 정상적으로 동작합니다.</p><p style="color:#888;font-size:12px;">발송시각: ${new Date().toISOString()}</p>`,
+      subject: "Stella's Thread House — SMTP Test",
+      text: 'Your SMTP configuration is working correctly.',
+      html: `<p>Your SMTP configuration is working correctly.</p><p style="color:#888;font-size:12px;">Sent at: ${new Date().toISOString()}</p>`,
     });
     return { ok: true, sentTo: to, from };
   }

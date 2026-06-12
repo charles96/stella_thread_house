@@ -70,7 +70,7 @@ export class MailService {
     const cfg = await this.loadConfig();
     if (!cfg.host) {
       throw new Error(
-        'SMTP host 가 설정되지 않았습니다. 관리자 → Settings → General 에서 SMTP 설정을 입력하거나 SMTP_HOST 환경변수를 지정하세요.',
+        'SMTP host is not configured. Set it in Admin → Settings → General, or specify the SMTP_HOST environment variable.',
       );
     }
     const port = cfg.port ?? 587;

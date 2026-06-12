@@ -51,11 +51,9 @@ export class AiConfigController implements OnModuleInit {
 
   // 부팅 시 한 번 — DB 의 'ai' row 의 '비어있는 필드만' env 로 시드.
   // 이후 admin 이 Settings 에서 변경 시 DB 값이 우선이 되며 env 는 무시됨.
-  // Reasoning / Vision 그룹을 각각 endpoint / apiKey / model / maxTokens 로 시드 가능:
+  // Reasoning / Vision 그룹을 각각 endpoint / apiKey / model / maxTokens 로 시드:
   //   - AI_REASONING_ENDPOINT / AI_REASONING_API_KEY / AI_REASONING_MODEL / AI_REASONING_MAX_TOKENS
   //   - AI_VISION_ENDPOINT    / AI_VISION_API_KEY    / AI_VISION_MODEL    / AI_VISION_MAX_TOKENS
-  // 레거시(단일) 폴백 — 그룹 전용 endpoint/apiKey 가 없으면 양쪽에 적용:
-  //   - OPENAI_BASE_URL / OPENAI_API_KEY
   async onModuleInit(): Promise<void> {
     const groups = await this.loadGroups();
     const next: AiGroups = {
@@ -70,9 +68,6 @@ export class AiConfigController implements OnModuleInit {
       const n = Number(process.env[k]);
       return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
     };
-    const legacyEndpoint = env('OPENAI_BASE_URL');
-    const legacyApiKey = env('OPENAI_API_KEY');
-
     // 비어있는 필드만 채운다(시드). 이미 값이 있으면(=Settings 에서 설정됨) 건드리지 않음.
     const seed = (
       g: AiGroup,
@@ -101,15 +96,15 @@ export class AiConfigController implements OnModuleInit {
 
     seed(
       next.reasoning,
-      env('AI_REASONING_ENDPOINT') ?? legacyEndpoint,
-      env('AI_REASONING_API_KEY') ?? legacyApiKey,
+      env('AI_REASONING_ENDPOINT'),
+      env('AI_REASONING_API_KEY'),
       env('AI_REASONING_MODEL'),
       envNum('AI_REASONING_MAX_TOKENS'),
     );
     seed(
       next.vision,
-      env('AI_VISION_ENDPOINT') ?? legacyEndpoint,
-      env('AI_VISION_API_KEY') ?? legacyApiKey,
+      env('AI_VISION_ENDPOINT'),
+      env('AI_VISION_API_KEY'),
       env('AI_VISION_MODEL'),
       envNum('AI_VISION_MAX_TOKENS'),
     );
@@ -130,7 +125,7 @@ export class AiConfigController implements OnModuleInit {
     return (row?.value as AiConfigValue) ?? {};
   }
 
-  // 정규화된 { reasoning, vision } 형태로 로드 — 레거시 flat 스키마도 자동 승격.
+  // 정규화된 { reasoning, vision } 형태로 로드.
   private async loadGroups(): Promise<AiGroups> {
     return normalizeAiConfig(await this.loadRaw());
   }

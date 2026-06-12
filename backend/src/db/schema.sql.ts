@@ -1,36 +1,21 @@
-/** DB 스키마 초기화 SQL — IF NOT EXISTS / DO 블록으로 멱등. */
+/** DB 스키마 초기화 SQL — 신규 DB 생성용. CREATE ... IF NOT EXISTS 로 멱등(연결 시 1회 실행). */
 export const SCHEMA_SQL = `
 -- ── 01 core tables ──────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS users (
-  id            UUID        PRIMARY KEY DEFAULT uuidv7(),
-  google_id     TEXT,
-  email         TEXT        NOT NULL,
-  name          TEXT,
-  picture       TEXT,
-  password_hash TEXT,
-  role          TEXT        NOT NULL DEFAULT 'member',
-  last_login_at TIMESTAMPTZ,
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  id             UUID        PRIMARY KEY DEFAULT uuidv7(),
+  google_id      TEXT,
+  email          TEXT        NOT NULL,
+  name           TEXT,
+  picture        TEXT,
+  password_hash  TEXT,
+  role           TEXT        NOT NULL DEFAULT 'member' CHECK (role IN ('admin', 'member')),
+  settings       JSONB       NOT NULL DEFAULT '{}'::jsonb,
+  is_deactivated BOOLEAN     NOT NULL DEFAULT false,
+  last_login_at  TIMESTAMPTZ,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_role_check') THEN
-    ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('admin', 'member'));
-  END IF;
-END $$;
-
-DO $$ BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_name = 'users' AND column_name = 'settings'
-  ) THEN
-    ALTER TABLE users ADD COLUMN settings JSONB NOT NULL DEFAULT '{}';
-  END IF;
-END $$;
-
-ALTER TABLE users ADD COLUMN IF NOT EXISTS is_deactivated BOOLEAN NOT NULL DEFAULT false;
 
 CREATE UNIQUE INDEX IF NOT EXISTS users_google_id_uidx
   ON users (google_id) WHERE google_id IS NOT NULL;
@@ -63,11 +48,10 @@ CREATE TABLE IF NOT EXISTS conversations (
   running_summary_answer_count INTEGER,
   hashtags                     JSONB       NOT NULL DEFAULT '[]'::jsonb,
   excluded_hashtags            JSONB       NOT NULL DEFAULT '[]'::jsonb,
+  pinned                       BOOLEAN     NOT NULL DEFAULT false,
   created_at                   TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at                   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
-ALTER TABLE conversations ADD COLUMN IF NOT EXISTS pinned BOOLEAN NOT NULL DEFAULT false;
 
 CREATE INDEX IF NOT EXISTS conversations_user_idx         ON conversations (user_id);
 CREATE INDEX IF NOT EXISTS conversations_folder_idx       ON conversations (folder_id);

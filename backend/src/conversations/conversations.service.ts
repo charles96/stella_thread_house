@@ -4,7 +4,6 @@ import {
   Injectable,
   Logger,
   NotFoundException,
-  OnModuleInit,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
@@ -83,7 +82,7 @@ export type MessageInput = {
 };
 
 @Injectable()
-export class ConversationsService implements OnModuleInit {
+export class ConversationsService {
   private readonly logger = new Logger(ConversationsService.name);
 
   constructor(
@@ -94,173 +93,6 @@ export class ConversationsService implements OnModuleInit {
     private readonly attachments: AttachmentsService,
     private readonly events: ConversationEventsService,
   ) {}
-
-  // 기존 DB 에 position 컬럼이 없으면 추가하고 conversation 별 id 순서로 backfill.
-  // 신규 설치는 db/init SQL 에서 이미 처리됨 — 이 마이그레이션은 idempotent (한번만 동작).
-  async onModuleInit(): Promise<void> {
-    try {
-      const exists = await this.messages.query(
-        `SELECT 1 FROM information_schema.columns
-         WHERE table_name = 'messages' AND column_name = 'position' LIMIT 1`,
-      );
-      if (!Array.isArray(exists) || exists.length === 0) {
-        this.logger.log('messages.position 컬럼 추가 + backfill 시작');
-        await this.messages.query(
-          `ALTER TABLE messages ADD COLUMN position INT NOT NULL DEFAULT 0`,
-        );
-        await this.messages.query(
-          `WITH ranked AS (
-             SELECT id, ROW_NUMBER() OVER (PARTITION BY conversation_id ORDER BY id) - 1 AS pos
-             FROM messages
-           )
-           UPDATE messages m SET position = r.pos FROM ranked r WHERE m.id = r.id`,
-        );
-        await this.messages.query(
-          `CREATE INDEX IF NOT EXISTS messages_conv_position_idx
-           ON messages (conversation_id, position ASC)`,
-        );
-        this.logger.log('messages.position 마이그레이션 완료');
-      }
-    } catch (e) {
-      this.logger.error(
-        `messages.position 마이그레이션 실패: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
-    // conversations.hashtags 마이그레이션 — Thread 단위 통합 hashtag 컬럼.
-    // 기존 데이터는 message metadata.hashtags 의 union 으로 한번 backfill.
-    try {
-      const exists = await this.conversations.query(
-        `SELECT 1 FROM information_schema.columns
-         WHERE table_name = 'conversations' AND column_name = 'hashtags' LIMIT 1`,
-      );
-      if (!Array.isArray(exists) || exists.length === 0) {
-        this.logger.log('conversations.hashtags 컬럼 추가 + backfill 시작');
-        await this.conversations.query(
-          `ALTER TABLE conversations
-           ADD COLUMN hashtags JSONB NOT NULL DEFAULT '[]'::jsonb`,
-        );
-        // message metadata 에서 distinct union 으로 채움.
-        await this.conversations.query(
-          `UPDATE conversations c SET hashtags = sub.tags
-           FROM (
-             SELECT m.conversation_id AS cid,
-                    COALESCE(
-                      jsonb_agg(DISTINCT tag.value),
-                      '[]'::jsonb
-                    ) AS tags
-             FROM messages m,
-                  jsonb_array_elements_text(
-                    COALESCE(m.metadata->'hashtags', '[]'::jsonb)
-                  ) AS tag
-             WHERE m.role = 'assistant'
-             GROUP BY m.conversation_id
-           ) AS sub
-           WHERE c.id = sub.cid`,
-        );
-        this.logger.log('conversations.hashtags 마이그레이션 완료');
-      }
-    } catch (e) {
-      this.logger.error(
-        `conversations.hashtags 마이그레이션 실패: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
-    // conversations.excluded_hashtags 마이그레이션 — 사용자가 배제한 hashtag 영속 저장.
-    try {
-      const exists = await this.conversations.query(
-        `SELECT 1 FROM information_schema.columns
-         WHERE table_name = 'conversations' AND column_name = 'excluded_hashtags' LIMIT 1`,
-      );
-      if (!Array.isArray(exists) || exists.length === 0) {
-        this.logger.log('conversations.excluded_hashtags 컬럼 추가');
-        await this.conversations.query(
-          `ALTER TABLE conversations
-           ADD COLUMN excluded_hashtags JSONB NOT NULL DEFAULT '[]'::jsonb`,
-        );
-        this.logger.log('conversations.excluded_hashtags 마이그레이션 완료');
-      }
-    } catch (e) {
-      this.logger.error(
-        `conversations.excluded_hashtags 마이그레이션 실패: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
-    // 인덱스 최적화 2차 — 핫패스 쿼리 조사 결과 반영. 모두 IF EXISTS 라 멱등.
-    // (db/init/07_indexes_optimization_v2.sql 과 동일 내용 — 기존 DB 도 받게 런타임에 적용.)
-    try {
-      // 1) Activity heatmap (role='user' partial)
-      await this.messages.query(
-        `CREATE INDEX IF NOT EXISTS messages_user_role_created_idx
-         ON messages (conversation_id, created_at DESC)
-         WHERE role = 'user'`,
-      );
-      // 2) Thread graph (kind='thread' partial)
-      await this.conversations.query(
-        `CREATE INDEX IF NOT EXISTS conversations_user_thread_idx
-         ON conversations (user_id)
-         WHERE kind = 'thread'`,
-      );
-      // 3) Admin guard / count (role='admin' partial)
-      await this.conversations.query(
-        `CREATE INDEX IF NOT EXISTS users_role_admin_idx
-         ON users (id)
-         WHERE role = 'admin'`,
-      );
-      // 4) 중복 인덱스 제거: users_email_lower_uidx (UNIQUE) 가 같은 lookup 을 커버.
-      await this.conversations.query(
-        `DROP INDEX IF EXISTS users_email_lower_idx`,
-      );
-      // 5) Obsolete GIN — hashtag 가 conversations.hashtags 로 이전된 뒤 미사용.
-      await this.messages.query(
-        `DROP INDEX IF EXISTS messages_metadata_gin_idx`,
-      );
-      this.logger.log('인덱스 최적화 2차 적용 완료');
-    } catch (e) {
-      this.logger.warn(
-        `인덱스 최적화 2차 적용 실패(무시): ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
-    // activity_log 테이블 마이그레이션 — heatmap 데이터가 conversation 삭제에 영향받지 않도록 분리.
-    // 신규 DB 는 08_activity_log.sql 이 처리. 기존 DB 는 여기서 생성 + 기존 messages 에서 backfill.
-    try {
-      const exists = await this.conversations.query(
-        `SELECT 1 FROM information_schema.tables
-         WHERE table_name = 'activity_log' LIMIT 1`,
-      );
-      if (!Array.isArray(exists) || exists.length === 0) {
-        this.logger.log('activity_log 테이블 생성 + backfill 시작');
-        await this.conversations.query(
-          `CREATE TABLE activity_log (
-             user_id  UUID  NOT NULL REFERENCES users (id) ON DELETE CASCADE,
-             date     DATE  NOT NULL,
-             kind     TEXT  NOT NULL CHECK (kind IN ('thread', 'chat')),
-             count    INT   NOT NULL DEFAULT 0,
-             PRIMARY KEY (user_id, date, kind)
-           )`,
-        );
-        await this.conversations.query(
-          `CREATE INDEX IF NOT EXISTS activity_log_user_date_idx
-           ON activity_log (user_id, date DESC)`,
-        );
-        // 기존 messages 의 user 발화를 일자/kind 별로 집계해 backfill.
-        await this.conversations.query(
-          `INSERT INTO activity_log (user_id, date, kind, count)
-           SELECT c.user_id,
-                  (m.created_at AT TIME ZONE 'Asia/Seoul')::date AS date,
-                  c.kind,
-                  COUNT(*)::int
-           FROM messages m
-           INNER JOIN conversations c ON c.id = m.conversation_id
-           WHERE m.role = 'user'
-           GROUP BY c.user_id, date, c.kind
-           ON CONFLICT (user_id, date, kind) DO NOTHING`,
-        );
-        this.logger.log('activity_log 마이그레이션 완료');
-      }
-    } catch (e) {
-      this.logger.error(
-        `activity_log 마이그레이션 실패: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
-  }
 
   private toDto(c: Conversation): ConversationDto {
     return {
@@ -579,12 +411,12 @@ export class ConversationsService implements OnModuleInit {
     const existingIds = new Set(existing.map((m) => m.id));
     if (existingIds.size !== orderedIds.length) {
       throw new BadRequestException(
-        `재정렬 대상 수 불일치: 받은 ${orderedIds.length}건, 실제 ${existingIds.size}건`,
+        `Reorder count mismatch: received ${orderedIds.length}, actual ${existingIds.size}.`,
       );
     }
     for (const id of orderedIds) {
       if (!existingIds.has(id)) {
-        throw new BadRequestException(`알 수 없는 메시지 id: ${id}`);
+        throw new BadRequestException(`Unknown message id: ${id}`);
       }
     }
     // 1-pass UPDATE — CASE WHEN 으로 각 id 에 position 매핑.

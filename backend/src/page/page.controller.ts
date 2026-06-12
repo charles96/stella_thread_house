@@ -61,7 +61,7 @@ export class PageController {
 
   private async run(url: string | undefined) {
     if (!url || !url.trim()) {
-      throw new BadRequestException('url 파라미터가 필요합니다');
+      throw new BadRequestException('The "url" parameter is required.');
     }
     try {
       return await this.pageService.extract(url.trim());
@@ -81,7 +81,7 @@ export class PageController {
   @ApiQuery({ name: 'url', required: true })
   async imgProxy(@Query('url') url: string | undefined, @Res() res: Response) {
     if (!url || !url.trim()) {
-      throw new BadRequestException('url 파라미터가 필요합니다');
+      throw new BadRequestException('The "url" parameter is required.');
     }
     try {
       const { buffer, contentType } = await this.pageService.fetchImageBuffer(
@@ -136,7 +136,7 @@ export class PageController {
     model: string | undefined,
   ) {
     if (!url || !url.trim()) {
-      throw new BadRequestException('url 파라미터가 필요합니다');
+      throw new BadRequestException('The "url" parameter is required.');
     }
     try {
       return await this.pageService.extractByTitle(url.trim(), {
@@ -199,11 +199,11 @@ export class PageController {
     maxImages: string | undefined,
   ) {
     if (!url || !url.trim()) {
-      throw new BadRequestException('url 파라미터가 필요합니다');
+      throw new BadRequestException('The "url" parameter is required.');
     }
     const max = maxImages != null ? Number(maxImages) : undefined;
     if (max != null && (!Number.isFinite(max) || max < 0)) {
-      throw new BadRequestException('maxImages는 0 이상의 정수여야 합니다');
+      throw new BadRequestException('maxImages must be an integer of 0 or greater.');
     }
     try {
       return await this.pageService.extractWithImageAnalysis(url.trim(), {

@@ -158,7 +158,7 @@ export class ConversationsController {
   ) {
     const lim = limit ? parseInt(limit, 10) : 50;
     if (!Number.isFinite(lim) || lim <= 0) {
-      throw new BadRequestException('limit 가 잘못되었습니다');
+      throw new BadRequestException('Invalid limit.');
     }
     return this.service.listMessages(this.uid(req), id, before ?? null, after ?? null, lim);
   }
@@ -170,7 +170,7 @@ export class ConversationsController {
     @Body() body: AppendMessagesBody,
   ) {
     if (!body || !Array.isArray(body.messages)) {
-      throw new BadRequestException('messages 배열이 필요합니다');
+      throw new BadRequestException('messages array is required.');
     }
     return this.service.appendMessages(this.uid(req), id, body.messages);
   }
@@ -183,7 +183,7 @@ export class ConversationsController {
     @Body() body: DeleteMessagesBody,
   ) {
     if (!body || !Array.isArray(body.ids)) {
-      throw new BadRequestException('ids 배열이 필요합니다');
+      throw new BadRequestException('ids array is required.');
     }
     await this.service.deleteMessages(this.uid(req), id, body.ids);
   }
@@ -199,7 +199,7 @@ export class ConversationsController {
     @Body() body: ReorderMessagesBody,
   ) {
     if (!body || !Array.isArray(body.orderedIds)) {
-      throw new BadRequestException('orderedIds 배열이 필요합니다');
+      throw new BadRequestException('orderedIds array is required.');
     }
     await this.service.reorderMessages(this.uid(req), id, body.orderedIds);
   }

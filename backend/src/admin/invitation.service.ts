@@ -29,7 +29,7 @@ export class InvitationService {
   ): Promise<Invitation> {
     const email = rawEmail.trim().toLowerCase();
     if (!email || !/^.+@.+\..+$/.test(email)) {
-      throw new BadRequestException('유효한 이메일 주소를 입력하세요');
+      throw new BadRequestException('Please enter a valid email address.');
     }
 
     // 이미 가입한 사용자인지 확인
@@ -38,7 +38,7 @@ export class InvitationService {
       .where('lower(u.email) = :email', { email })
       .getOne();
     if (existingUser) {
-      throw new ConflictException('이미 가입된 사용자입니다');
+      throw new ConflictException('This user is already registered.');
     }
 
     // 활성 초대가 있는지 확인 (lower-email 기준 부분 unique 인덱스 있음)
@@ -47,7 +47,7 @@ export class InvitationService {
       .where("i.status = 'pending' AND lower(i.email) = :email", { email })
       .getOne();
     if (existing) {
-      throw new ConflictException('이미 발송된 초대가 있습니다');
+      throw new ConflictException('An invitation has already been sent.');
     }
 
     const inviter = await this.users.findOne({ where: { id: invitedBy } });
@@ -106,9 +106,9 @@ export class InvitationService {
 
   async revoke(id: string): Promise<void> {
     const inv = await this.invitations.findOne({ where: { id } });
-    if (!inv) throw new NotFoundException('초대를 찾을 수 없습니다');
+    if (!inv) throw new NotFoundException('Invitation not found.');
     if (inv.status !== 'pending') {
-      throw new BadRequestException('대기 중인 초대만 취소할 수 있습니다');
+      throw new BadRequestException('Only pending invitations can be revoked.');
     }
     inv.status = 'revoked';
     await this.invitations.save(inv);

@@ -19,10 +19,10 @@ export class AdminGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest();
     const sub: string | undefined = req.user?.sub;
-    if (!sub) throw new ForbiddenException('인증 필요');
+    if (!sub) throw new ForbiddenException('Authentication required.');
     const user = await this.users.findOne({ where: { id: sub } });
     if (!user || user.role !== 'admin') {
-      throw new ForbiddenException('관리자 권한 필요');
+      throw new ForbiddenException('Administrator privileges required.');
     }
     return true;
   }

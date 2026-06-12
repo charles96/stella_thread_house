@@ -66,7 +66,7 @@ export class PageExtractByTitleRequestDto {
   @ApiProperty({
     required: false,
     example: 'gemma4:26b',
-    description: '사용할 모델 (미지정 시 AI_DEFAULT_MODEL 기본값)',
+    description: '사용할 모델 (미지정 시 DB ai config / 기본 모델)',
   })
   model?: string;
 }

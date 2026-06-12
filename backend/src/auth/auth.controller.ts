@@ -43,7 +43,7 @@ export class AuthController {
   async getInvitation(@Param('token') token: string) {
     const inv = await this.invitations.findPendingByToken(token);
     if (!inv) {
-      throw new NotFoundException('유효하지 않은 초대 토큰입니다.');
+      throw new NotFoundException('Invalid invitation token.');
     }
     return { email: inv.email };
   }
@@ -153,7 +153,7 @@ export class AuthController {
     if (!user) {
       // JWT 는 유효하지만 DB 에서 사라진 user — stale 쿠키. 쿠키 비우고 401.
       res.clearCookie('stella_token', { path: '/' });
-      throw new UnauthorizedException('세션이 만료되었습니다. 다시 로그인하세요.');
+      throw new UnauthorizedException('Your session has expired. Please sign in again.');
     }
     return user;
   }

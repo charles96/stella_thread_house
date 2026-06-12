@@ -139,7 +139,7 @@ export class ChatController {
   @ApiOperation({ summary: '외부 이미지를 data URL로 프록시' })
   @ApiQuery({ name: 'url', required: true })
   async imageProxy(@Query('url') url?: string) {
-    if (!url) throw new BadRequestException('url 파라미터가 필요합니다');
+    if (!url) throw new BadRequestException('The "url" parameter is required.');
     try {
       return await this.chatService.fetchImageAsDataUrl(url);
     } catch (err) {
@@ -228,7 +228,7 @@ export class ChatController {
   @ApiOperation({ summary: '대화 전체를 짧게 요약' })
   async summary(@Body() body: SummaryRequest) {
     if (!Array.isArray(body.messages) || body.messages.length === 0) {
-      throw new BadRequestException('messages가 필요합니다');
+      throw new BadRequestException('messages is required.');
     }
     try {
       const text = await this.chatService.summarize(body.messages, body.model);
@@ -252,7 +252,7 @@ export class ChatController {
     @Res() res: Response,
   ) {
     if (!body || typeof body.latestAnswer !== 'string' || !body.latestAnswer.trim()) {
-      throw new BadRequestException('latestAnswer 가 필요합니다');
+      throw new BadRequestException('latestAnswer is required.');
     }
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache, no-transform');

@@ -113,7 +113,7 @@ export class AttachmentsService {
     if (!fs.existsSync(full)) throw new NotFoundException();
     const deg = (((degrees % 360) + 360) % 360) as number;
     if (deg !== 90 && deg !== 180 && deg !== 270) {
-      throw new BadRequestException('degrees 는 90/180/270 만 허용');
+      throw new BadRequestException('degrees must be one of 90, 180, or 270.');
     }
     const input = fs.readFileSync(full);
     // 확장자가 아닌 실제 내용으로 포맷 판별(.heic 안에 jpeg 가 든 경우 등 대비).
@@ -121,7 +121,7 @@ export class AttachmentsService {
     try {
       fmt = (await sharp(input).metadata()).format;
     } catch {
-      throw new BadRequestException('이미지 디코드 실패');
+      throw new BadRequestException('Failed to decode image.');
     }
     const pipe = sharp(input, { failOn: 'none' }).rotate(deg);
     let out: Buffer;
@@ -131,7 +131,7 @@ export class AttachmentsService {
     else if (fmt === 'jpeg') out = await pipe.jpeg({ quality: 95 }).toBuffer();
     else if (fmt === 'jpg') out = await pipe.jpeg({ quality: 95 }).toBuffer();
     else if (fmt) out = await pipe.toBuffer(); // tiff/avif/heif/gif 등은 입력 포맷 그대로.
-    else throw new BadRequestException('회전 미지원 포맷');
+    else throw new BadRequestException('Unsupported image format for rotation.');
     fs.writeFileSync(full, out);
   }
 

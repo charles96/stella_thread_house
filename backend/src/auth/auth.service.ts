@@ -88,17 +88,17 @@ export class AuthService {
   }): Promise<AuthUser> {
     const email = input.email.trim().toLowerCase();
     if (!email || !input.password) {
-      throw new BadRequestException('email/password 가 필요합니다.');
+      throw new BadRequestException('Email and password are required.');
     }
     if (input.password.length < 8) {
-      throw new BadRequestException('비밀번호는 8자 이상이어야 합니다.');
+      throw new BadRequestException('Password must be at least 8 characters.');
     }
     const exists = await this.users
       .createQueryBuilder('u')
       .where('lower(u.email) = :e', { e: email })
       .getOne();
     if (exists) {
-      throw new ConflictException('이미 가입된 이메일입니다.');
+      throw new ConflictException('This email is already registered.');
     }
 
     let role: 'admin' | 'member' = 'member';
@@ -109,27 +109,27 @@ export class AuthService {
       const envPass = process.env.TH_ADMIN_PASSWORD;
       if (!envEmail || !envPass) {
         throw new ForbiddenException(
-          '관리자 자동 가입이 비활성화 상태입니다. TH_ADMIN_EMAIL_ID/TH_ADMIN_PASSWORD env 를 설정하세요.',
+          'Admin auto-signup is disabled. Set the TH_ADMIN_EMAIL_ID/TH_ADMIN_PASSWORD environment variables.',
         );
       }
       if (email !== envEmail || input.password !== envPass) {
         throw new ForbiddenException(
-          'docker-compose 의 TH_ADMIN_EMAIL_ID/TH_ADMIN_PASSWORD 와 일치해야 첫 관리자로 가입됩니다.',
+          'Email and password must match TH_ADMIN_EMAIL_ID/TH_ADMIN_PASSWORD to register as the first admin.',
         );
       }
       role = 'admin';
     } else {
       // 초대 토큰 시나리오.
       if (!input.token) {
-        throw new ForbiddenException('초대 토큰이 필요합니다.');
+        throw new ForbiddenException('An invitation token is required.');
       }
       const invite = await this.invitations.findPendingByToken(input.token);
       if (!invite) {
-        throw new ForbiddenException('유효하지 않은 초대 토큰입니다.');
+        throw new ForbiddenException('Invalid invitation token.');
       }
       if (invite.email.trim().toLowerCase() !== email) {
         throw new ForbiddenException(
-          '초대된 이메일과 다른 주소로는 가입할 수 없습니다.',
+          'You cannot sign up with an email address other than the invited one.',
         );
       }
       role = 'member';
@@ -160,14 +160,14 @@ export class AuthService {
     newPassword: string,
   ): Promise<AuthUser> {
     if (!newPassword || newPassword.length < 8) {
-      throw new BadRequestException('새 비밀번호는 8자 이상이어야 합니다.');
+      throw new BadRequestException('The new password must be at least 8 characters.');
     }
     const user = await this.users.findOne({ where: { id: userId } });
     if (!user) throw new UnauthorizedException();
     if (user.passwordHash) {
       const ok = await bcrypt.compare(currentPassword ?? '', user.passwordHash);
       if (!ok) {
-        throw new UnauthorizedException('현재 비밀번호가 올바르지 않습니다.');
+        throw new UnauthorizedException('The current password is incorrect.');
       }
     }
     user.passwordHash = await bcrypt.hash(newPassword, BCRYPT_COST);
@@ -251,17 +251,17 @@ export class AuthService {
 
     if (!user || !user.passwordHash) {
       throw new UnauthorizedException(
-        '이메일 또는 비밀번호가 올바르지 않습니다.',
+        'Invalid email or password.',
       );
     }
     const ok = await bcrypt.compare(password, user.passwordHash);
     if (!ok) {
       throw new UnauthorizedException(
-        '이메일 또는 비밀번호가 올바르지 않습니다.',
+        'Invalid email or password.',
       );
     }
     if (user.isDeactivated) {
-      throw new UnauthorizedException('비활성화된 계정입니다. 관리자에게 문의하세요.');
+      throw new UnauthorizedException('This account is deactivated. Please contact an administrator.');
     }
     await this.touchLastLogin(user.id);
     return this.toAuthUser(user);
@@ -286,7 +286,7 @@ export class AuthService {
     });
     if (user) {
       if (user.isDeactivated) {
-        throw new ForbiddenException('비활성화된 계정입니다. 관리자에게 문의하세요.');
+        throw new ForbiddenException('This account is deactivated. Please contact an administrator.');
       }
       user.email = input.email;
       user.name = input.name ?? null;
@@ -303,7 +303,7 @@ export class AuthService {
       .getOne();
     if (byEmail) {
       if (byEmail.isDeactivated) {
-        throw new ForbiddenException('비활성화된 계정입니다. 관리자에게 문의하세요.');
+        throw new ForbiddenException('This account is deactivated. Please contact an administrator.');
       }
       byEmail.googleId = input.googleId;
       byEmail.name = byEmail.name ?? input.name ?? null;
@@ -316,7 +316,7 @@ export class AuthService {
     // 신규 가입: 초대 필수.
     const invited = await this.invitations.hasPendingInvite(input.email);
     if (!invited) {
-      throw new ForbiddenException('초대받지 않은 계정입니다');
+      throw new ForbiddenException('This account has not been invited.');
     }
 
     user = this.users.create({
@@ -344,7 +344,7 @@ export class AuthService {
     });
     if (owner && owner.id !== user.id) {
       throw new ConflictException(
-        '다른 사용자에게 연결된 Google 계정입니다.',
+        'This Google account is linked to another user.',
       );
     }
     user.googleId = input.googleId;
