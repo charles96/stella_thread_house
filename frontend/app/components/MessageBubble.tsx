@@ -70,6 +70,16 @@ import { useI18n } from '@/lib/i18n';
 import { MermaidView, SvgView } from './ArtifactPanel';
 import type { Message, ReadPageImage, SearchImage } from './ChatRoom';
 
+// 렌더/스트리밍 핫패스에서 반복 사용되는 정규식 — 모듈 스코프로 올려 매 호출의 RegExp 생성을
+// 피한다. (`.test`/`.exec` 는 non-global 이라 lastIndex 무관, `.replace` 는 global 이어도
+// 호출마다 lastIndex 를 0 으로 리셋 → 모듈 공유가 안전하고 동작 동일.)
+const EXTERNAL_URL_RE = /^https?:\/\//i;
+const ARTIFACT_LANG_RE = /language-(mermaid|svg)/i;
+const CODE_LANG_RE = /language-(\w+)/;
+// 모델이 본문에 적은 사고 과정 헤더 줄을 제거 (renderedContent 에서 매 청크 전체 본문 대상).
+const THINKING_HEADER_RE =
+  /^[\s>]*(?:#{1,6}\s*)?(?:\*\*|__)?\s*(?:\[?\s*(?:생각\s*과정|사고\s*과정|분석|thinking)\s*\]?\s*)(?:\*\*|__)?\s*[:：]?\s*$\n?/gim;
+
 // 물리 회전 후 같은 URL 의 이미지를 다시 받게 하는 캐시 버스트. 버전이 있을 때만 ?v= 부착.
 function withCacheBust(url: string, v?: number): string {
   if (!v) return url;
@@ -1622,10 +1632,7 @@ function MessageBubble({
       return message.content.replace(/^\s*⚠️️?\s*/u, '');
     }
     // 모델이 가끔 본문에 사고 과정 헤더를 적는 경우 제거.
-    const stripped = message.content.replace(
-      /^[\s>]*(?:#{1,6}\s*)?(?:\*\*|__)?\s*(?:\[?\s*(?:생각\s*과정|사고\s*과정|분석|thinking)\s*\]?\s*)(?:\*\*|__)?\s*[:：]?\s*$\n?/gim,
-      '',
-    );
+    const stripped = message.content.replace(THINKING_HEADER_RE, '');
     // 스트리밍 중(isLive)에는 미완성 토큰(구분행 없는 표 머리글, 닫히지 않은 **/~~)이
     // raw 로 번쩍이며 깨져 보인다. 완료 전까지만 임시 보정해 부드럽게 렌더.
     const base = isLive ? healStreamingMarkdown(stripped) : stripped;
@@ -2044,7 +2051,7 @@ function MessageBubble({
     return {
       a({ href, children, ...rest }) {
         const isExternal =
-          typeof href === 'string' && /^https?:\/\//i.test(href);
+          typeof href === 'string' && EXTERNAL_URL_RE.test(href);
         return (
           <a
             href={href}
@@ -2109,7 +2116,7 @@ function MessageBubble({
         if (first && typeof first === 'object' && 'props' in first) {
           const cls =
             (first as { props: { className?: string } }).props.className ?? '';
-          if (/language-(mermaid|svg)/i.test(cls)) {
+          if (ARTIFACT_LANG_RE.test(cls)) {
             return <>{children}</>;
           }
         }
@@ -2131,7 +2138,7 @@ function MessageBubble({
         );
       },
       code({ className, children, ...props }) {
-        const lang = /language-(\w+)/.exec(className ?? '')?.[1]?.toLowerCase();
+        const lang = CODE_LANG_RE.exec(className ?? '')?.[1]?.toLowerCase();
         if (lang === 'mermaid' || lang === 'svg') {
           const code = String(children).replace(/\n$/, '');
           const kind: 'mermaid' | 'svg' = lang === 'mermaid' ? 'mermaid' : 'svg';
@@ -3886,7 +3893,7 @@ function MessageBubble({
                       ) : img.kind === 'x' ? (
                         // X: 썸네일 URL 이 있으면 이미지 + X 배지, 없으면 텍스트 기반 카드.
                         img.url &&
-                        /^https?:\/\//i.test(img.url) &&
+                        EXTERNAL_URL_RE.test(img.url) &&
                         !/^https?:\/\/(?:www\.|mobile\.)?(?:twitter\.com|x\.com)\//i.test(
                           img.url,
                         ) ? (

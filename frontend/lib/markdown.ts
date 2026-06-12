@@ -11,6 +11,13 @@
 const HANGUL = /[가-힯ᄀ-ᇿ㄰-㆏]/;
 const PROTECT_RE = /(```[\s\S]*?```|`[^`\n]+?`)/g;
 
+// 스트리밍 중 매 청크마다 전체(자라나는) 본문을 스캔하는 정규식 — 모듈 스코프로 올려
+// 호출마다의 RegExp 객체 생성을 피한다. `.match`/`.replace` 는 global 이어도 호출마다
+// lastIndex 를 0 으로 리셋하므로 모듈 공유가 안전(동작 동일).
+const FENCE_LINE_RE = /^```/gm;
+const EMPHASIS_STARS_RE = /\*\*/g;
+const EMPHASIS_TILDES_RE = /~~/g;
+
 function isAdjacentToHangul(
   outerPrev: string,
   outerNext: string,
@@ -128,36 +135,45 @@ export function healStreamingMarkdown(text: string): string {
   if (!text) return text;
 
   // 열린 코드 펜스(```) 안쪽이면 그 내부는 코드로 안전하게 렌더되므로 손대지 않는다.
-  const fenceCount = (text.match(/^```/gm) || []).length;
+  const fenceCount = (text.match(FENCE_LINE_RE) || []).length;
   if (fenceCount % 2 === 1) return text;
 
   let out = text;
 
   // 끝부분이 '표 행으로 보이는 줄'(파이프 2개 이상)들로 이어지는데 그 블록 안에 구분행이
-  // 아직 없으면, 표가 완성될 때까지 그 줄들을 숨긴다.
-  const lines = out.split('\n');
-  const pipes = (s: string) => (s.match(/\|/g) || []).length;
-  let tail = lines.length;
-  while (tail > 0 && pipes(lines[tail - 1]) >= 2) tail--;
-  if (tail < lines.length) {
-    const block = lines.slice(tail);
-    const hasDelim = block.some((l) => {
-      const t = l.trim();
-      return /-{3,}/.test(t) && /^[\s|:\-]+$/.test(t);
-    });
-    if (!hasDelim) out = lines.slice(0, tail).join('\n').replace(/\n+$/, '');
+  // 아직 없으면, 표가 완성될 때까지 그 줄들을 숨긴다. (파이프가 없으면 표일 수 없으므로 스킵)
+  if (out.indexOf('|') >= 0) {
+    const lines = out.split('\n');
+    const pipes = (s: string) => (s.match(/\|/g) || []).length;
+    let tail = lines.length;
+    while (tail > 0 && pipes(lines[tail - 1]) >= 2) tail--;
+    if (tail < lines.length) {
+      const block = lines.slice(tail);
+      const hasDelim = block.some((l) => {
+        const t = l.trim();
+        return /-{3,}/.test(t) && /^[\s|:\-]+$/.test(t);
+      });
+      if (!hasDelim) out = lines.slice(0, tail).join('\n').replace(/\n+$/, '');
+    }
   }
 
   // 닫히지 않은 강조 토큰 보정 — 완성된 코드 영역(``` / `..`)은 제외하고 카운트.
-  const bare = out.replace(PROTECT_RE, '');
-  if (((bare.match(/\*\*/g) || []).length) % 2 === 1) out += '**';
-  if (((bare.match(/~~/g) || []).length) % 2 === 1) out += '~~';
+  // `*`/`~` 가 아예 없으면 매칭이 0(짝수)이라 보정이 없으므로, 보호영역 제거 비용도 스킵.
+  const hasStar = out.indexOf('*') >= 0;
+  const hasTilde = out.indexOf('~') >= 0;
+  if (hasStar || hasTilde) {
+    const bare = out.replace(PROTECT_RE, '');
+    if (hasStar && (bare.match(EMPHASIS_STARS_RE) || []).length % 2 === 1) out += '**';
+    if (hasTilde && (bare.match(EMPHASIS_TILDES_RE) || []).length % 2 === 1) out += '~~';
+  }
 
   return out;
 }
 
 export function fixKoreanEmphasis(text: string): string {
   if (!text) return text;
+  // patch() 는 `*`/`**` 시퀀스만 변형한다. `*` 가 없으면 split/재조립 결과가 원본과 동일 → 즉시 반환.
+  if (text.indexOf('*') < 0) return text;
   const parts: string[] = [];
   let last = 0;
   let m: RegExpExecArray | null;
@@ -279,6 +295,8 @@ export function escapeStrayTags(text: string): string {
 
 export function styleCitations(text: string): string {
   if (!text) return text;
+  // CITE_RE 는 `[` 가 있어야만 매칭한다. `[` 가 없으면 split/재조립 결과가 원본과 동일 → 즉시 반환.
+  if (text.indexOf('[') < 0) return text;
   // 코드 영역(``` 블록 / 인라인 `..`)을 보호하고 그 외에서만 치환.
   const parts = text.split(PROTECT_RE);
   return parts
