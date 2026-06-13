@@ -229,6 +229,19 @@
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+/* textarea resize-y 의 우측 하단 네이티브 리사이즈 그립 — 솔리드 박스(내용 유무에 따라 크기가
+   들쭉날쭉)를 없애고, 작고 일관된 대각선 그립 아이콘으로 표시. */
+::-webkit-resizer {
+  background-color: transparent;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12'%3E%3Cg stroke='%239b8870' stroke-width='1.3' stroke-linecap='round'%3E%3Cline x1='11' y1='4' x2='4' y2='11'/%3E%3Cline x1='11' y1='8' x2='8' y2='11'/%3E%3C/g%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: bottom right;
+  background-size: 12px 12px;
+}
+/* 가로·세로 스크롤바가 만나는 코너도 흰색으로 보이지 않게. */
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
 
 @keyframes visionBlink {
   0%, 100% {

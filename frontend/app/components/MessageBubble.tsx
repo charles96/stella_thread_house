@@ -3573,10 +3573,8 @@ function MessageBubble({
                       ref={answerEditRef}
                       value={answerDraft}
                       onChange={(e) => setAnswerDraft(e.target.value)}
-                      rows={Math.max(
-                        6,
-                        Math.min(28, answerDraft.split('\n').length + 2),
-                      )}
+                      // 내용 길이와 무관하게 일관된 높이로 연다(AI 답변/메뉴얼 본문 동일). 더 보려면 resize-y 로 직접 확장.
+                      rows={12}
                       className="hidden w-full min-w-0 max-w-full resize-y bg-transparent font-mono text-[13px] leading-relaxed text-bubble-bot-foreground outline-none placeholder:text-muted-foreground md:block"
                       placeholder={t('message.manualBodyEmpty')}
                       spellCheck={false}
@@ -3634,15 +3632,25 @@ function MessageBubble({
                         {t('message.edit')}
                       </button>
                       {onDeleteTurn && (
-                        <button
-                          type="button"
-                          onClick={onDeleteTurn}
-                          title={t('message.delete')}
-                          className="relative z-[0] inline-flex min-w-[72px] items-center justify-center gap-1 rounded-b-md border border-t-0 border-destructive/40 bg-card px-3 pb-1 pt-3 text-[11px] font-medium text-destructive shadow-[0_2px_4px_rgba(0,0,0,0.25)] transition-colors hover:bg-destructive hover:text-destructive-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                          {t('message.delete')}
-                        </button>
+                        // delayDuration={0} — 커서가 올라가면 즉시 풍선도움말(소제목 삭제와 동일 메시지).
+                        <TooltipProvider delayDuration={0}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button
+                                type="button"
+                                onClick={onDeleteTurn}
+                                aria-label={t('thread.heading.deleteHint')}
+                                className="relative z-[0] inline-flex min-w-[72px] items-center justify-center gap-1 rounded-b-md border border-t-0 border-destructive/40 bg-card px-3 pb-1 pt-3 text-[11px] font-medium text-destructive shadow-[0_2px_4px_rgba(0,0,0,0.25)] transition-colors hover:bg-destructive hover:text-destructive-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                                {t('message.delete')}
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top">
+                              {t('thread.heading.deleteHint')}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
                       )}
                     </>
                   ) : (
