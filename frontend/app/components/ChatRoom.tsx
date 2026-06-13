@@ -994,12 +994,14 @@ export default function ChatRoom() {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const blob = await res.blob();
         if (!/^image\//i.test(blob.type)) {
-          throw new Error(`이미지가 아닙니다 (${blob.type || '알 수 없음'})`);
+          throw new Error(
+            t('error.notAnImage').replace('{type}', blob.type || t('common.unknown')),
+          );
         }
         dataUrl = await new Promise<string>((resolve, reject) => {
           const fr = new FileReader();
           fr.onload = () => resolve(fr.result as string);
-          fr.onerror = () => reject(new Error('파일 읽기 실패'));
+          fr.onerror = () => reject(new Error(t('error.fileReadFailed')));
           fr.readAsDataURL(blob);
         });
       } else {
@@ -1026,8 +1028,8 @@ export default function ChatRoom() {
       dataUrlToSourceRef.current.set(dataUrl, url);
       inputBarRef.current?.attachImageDataUrls([dataUrl], [name]);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : '오류';
-      alert(`이미지 첨부 실패: ${msg}`);
+      const msg = e instanceof Error ? e.message : t('common.error');
+      alert(`${t('error.imageAttachFailed')}: ${msg}`);
     }
   }
   // InputBar 의 현재 dataUrl 목록을 받아 → 살아남은 source URL 집합으로 재계산.
@@ -4075,7 +4077,7 @@ export default function ChatRoom() {
       const isAbort =
         err instanceof DOMException && err.name === 'AbortError';
       if (!isAbort) {
-        const message = err instanceof Error ? err.message : '오류 발생';
+        const message = err instanceof Error ? err.message : t('common.errorOccurred');
         const errorCode = (err as Error & { code?: string })?.code;
         // 에러 직전 버퍼에 남은 부분 콘텐츠/상태가 finally 의 flushStream() 에서
         // 에러 메시지 뒤에 덧붙거나 status 가 되살아나지 않도록 펜딩 버퍼를 비운다.
@@ -4990,7 +4992,7 @@ export default function ChatRoom() {
             void doLogout();
           } else {
             // 저장 실패 시 모달 유지 — 사용자에게 결정권.
-            window.alert('일부 항목 저장에 실패했습니다. 다시 시도하거나 저장하지 않고 진행하세요.');
+            window.alert(t('error.partialSaveFailed'));
           }
         }}
         onContinueWithoutSaving={() => {

@@ -5,6 +5,7 @@ import { Code2, Eye, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
+import { useI18n } from '@/lib/i18n';
 import type { Artifact } from '@/lib/artifacts';
 
 type Tab = 'preview' | 'code';
@@ -107,6 +108,7 @@ function SvgView({ code }: { code: string }) {
 }
 
 function MermaidView({ code }: { code: string }) {
+  const { t } = useI18n();
   const ref = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -136,7 +138,7 @@ function MermaidView({ code }: { code: string }) {
         if (ref.current) ref.current.innerHTML = svg;
       } catch (e) {
         if (cancelled) return;
-        const msg = e instanceof Error ? e.message : '렌더 실패';
+        const msg = e instanceof Error ? e.message : t('error.renderFailed');
         setError(msg);
       }
     })();
@@ -148,7 +150,7 @@ function MermaidView({ code }: { code: string }) {
   if (error) {
     return (
       <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-[12.5px] text-destructive-foreground">
-        Mermaid 렌더 오류: {error}
+        {t('error.mermaidRender')}: {error}
       </div>
     );
   }

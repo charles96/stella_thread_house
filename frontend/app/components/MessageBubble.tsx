@@ -2029,11 +2029,11 @@ function MessageBubble({
       if (saved) {
         setSavedSourceUrls((prev) => new Set(prev).add(url));
       } else {
-        throw new Error('업로드 실패');
+        throw new Error(t('error.uploadFailed'));
       }
     } catch (e) {
       alert(
-        `이미지 저장 실패: ${e instanceof Error ? e.message : '오류'}`,
+        `${t('error.imageSaveFailed')}: ${e instanceof Error ? e.message : t('common.error')}`,
       );
     } finally {
       setSavingUrl(null);

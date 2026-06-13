@@ -201,7 +201,7 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
         }
       }, 50);
     } catch {
-      alert('카메라에 접근할 수 없습니다. 브라우저 권한을 확인하세요.');
+      alert(t('input.cameraError'));
     }
   }
 

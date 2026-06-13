@@ -1774,7 +1774,7 @@ function MembersTab({ currentUserId }: { currentUserId?: string }) {
         body: JSON.stringify({ email: email.trim() }),
       });
       const body = await res.json();
-      if (!res.ok) throw new Error(body?.message ?? '초대 발송 실패');
+      if (!res.ok) throw new Error(body?.message ?? t('settings.member.inviteSendFailed'));
       setEmail('');
       setInfo(
         body?.mailError
