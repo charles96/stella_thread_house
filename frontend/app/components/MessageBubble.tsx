@@ -3622,15 +3622,25 @@ function MessageBubble({
                 <div className={cn((message.content || answerEditing || contentEverArrived) ? '-mt-2' : 'mt-2', 'mr-3 flex items-start gap-1 self-end')}>
                   {!answerEditing ? (
                     <>
-                      <button
-                        type="button"
-                        onClick={startAnswerEdit}
-                        title={t('message.edit')}
-                        className="relative z-[0] inline-flex min-w-[72px] items-center justify-center gap-1 rounded-b-md border border-t-0 border-primary/40 bg-card px-3 pb-1 pt-3 text-[11px] font-medium text-primary shadow-[0_2px_4px_rgba(0,0,0,0.25)] transition-colors hover:bg-primary hover:text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                      >
-                        <Pencil className="h-3 w-3" />
-                        {t('message.edit')}
-                      </button>
+                      {/* delayDuration={0} — 커서가 올라가면 즉시 풍선도움말. */}
+                      <TooltipProvider delayDuration={0}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              onClick={startAnswerEdit}
+                              aria-label={t('message.edit.hint')}
+                              className="relative z-[0] inline-flex min-w-[72px] items-center justify-center gap-1 rounded-b-md border border-t-0 border-primary/40 bg-card px-3 pb-1 pt-3 text-[11px] font-medium text-primary shadow-[0_2px_4px_rgba(0,0,0,0.25)] transition-colors hover:bg-primary hover:text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                            >
+                              <Pencil className="h-3 w-3" />
+                              {t('message.edit')}
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="top">
+                            {t('message.edit.hint')}
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                       {onDeleteTurn && (
                         // delayDuration={0} — 커서가 올라가면 즉시 풍선도움말(소제목 삭제와 동일 메시지).
                         <TooltipProvider delayDuration={0}>

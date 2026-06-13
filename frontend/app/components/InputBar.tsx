@@ -165,7 +165,7 @@ const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar(
       setImageNames((prev) => [...prev, ...names].slice(0, MAX_FILES));
     } catch (err) {
       console.error(err);
-      alert('이미지를 읽는 중 오류가 발생했습니다.');
+      alert(t('input.imageReadError'));
     }
   }
 
