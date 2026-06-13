@@ -27,11 +27,11 @@ export class AdminUserController {
   @Get()
   async list() {
     const rows = await this.users.find({ order: { createdAt: 'ASC' } });
-    // google_id 등 민감 필드 제외
+    // 민감 필드 제외
     return rows.map((u) => this.toView(u));
   }
 
-  // 응답용 사용자 뷰 — 민감 필드(google_id, password_hash, settings) 제외.
+  // 응답용 사용자 뷰 — 민감 필드(password_hash, settings) 제외.
   private toView(u: User) {
     return {
       id: u.id,

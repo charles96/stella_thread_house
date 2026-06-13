@@ -1,7 +1,6 @@
 import {
   Body,
   Controller,
-  ForbiddenException,
   Get,
   NotFoundException,
   Param,
@@ -14,7 +13,8 @@ import {
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Request, Response } from 'express';
-import { AuthService, AuthUser, GoogleProfileInput } from './auth.service';
+import { AuthService } from './auth.service';
+import { Public } from './public.decorator';
 import { InvitationService } from '../admin/invitation.service';
 
 const COOKIE_OPTS = {
@@ -32,6 +32,7 @@ export class AuthController {
     private readonly invitations: InvitationService,
   ) {}
 
+  @Public()
   @Get('setup-status')
   setupStatus() {
     return this.auth.getSetupStatus();
@@ -39,6 +40,7 @@ export class AuthController {
 
   // 초대 메일 링크에서 ?token=... 으로 들어왔을 때 토큰의 invited 이메일을 조회.
   // 가입 폼의 이메일 필드 자동 채움/락 용. pending 토큰만 노출.
+  @Public()
   @Get('invitation/:token')
   async getInvitation(@Param('token') token: string) {
     const inv = await this.invitations.findPendingByToken(token);
@@ -48,6 +50,7 @@ export class AuthController {
     return { email: inv.email };
   }
 
+  @Public()
   @Post('register')
   async register(
     @Body() body: { email: string; password: string; token?: string },
@@ -59,6 +62,7 @@ export class AuthController {
     res.json(user);
   }
 
+  @Public()
   @Post('login')
   async login(
     @Body() body: { email: string; password: string },
@@ -94,57 +98,6 @@ export class AuthController {
     return this.auth.updateName(userId, body.name ?? '');
   }
 
-  // Google OAuth — 로그인/가입 (초대 또는 기존 이메일 매칭) 흐름.
-  @Get('google')
-  @UseGuards(AuthGuard('google'))
-  googleLogin() {
-    // passport 가 Google 로 redirect 한다.
-  }
-
-  // 로그인된 사용자가 자기 계정에 Google 을 연결할 때 시작점.
-  // stella_link_user 쿠키에 user id 를 잠시 저장 → callback 에서 link 모드로 분기.
-  @Get('google/link')
-  @UseGuards(AuthGuard('jwt'))
-  startGoogleLink(@Req() req: Request, @Res() res: Response) {
-    const userId = (req.user as { sub: string }).sub;
-    res.cookie('stella_link_user', userId, {
-      httpOnly: true,
-      secure: false,
-      sameSite: 'lax',
-      maxAge: 5 * 60 * 1000,
-      path: '/',
-    });
-    res.redirect('/auth/google');
-  }
-
-  @Get('google/callback')
-  @UseGuards(AuthGuard('google'))
-  async googleCallback(@Req() req: Request, @Res() res: Response) {
-    const profile = req.user as GoogleProfileInput;
-    const front = process.env.TH_HOST ?? 'http://localhost:3100';
-    try {
-      const linkUserId = (req.cookies?.stella_link_user as string) || '';
-      let user: AuthUser;
-      if (linkUserId) {
-        user = await this.auth.linkGoogle(linkUserId, profile);
-        res.clearCookie('stella_link_user', { path: '/' });
-      } else {
-        user = await this.auth.upsertFromGoogle(profile);
-      }
-      const token = this.auth.signToken(user);
-      res.cookie('stella_token', token, COOKIE_OPTS);
-      res.redirect(front);
-    } catch (e) {
-      const msg =
-        e instanceof ForbiddenException
-          ? '초대받지 않은 계정입니다'
-          : e instanceof Error
-            ? e.message
-            : '로그인 실패';
-      res.redirect(`${front}/login?login_error=${encodeURIComponent(msg)}`);
-    }
-  }
-
   @Get('me')
   @UseGuards(AuthGuard('jwt'))
   async me(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
@@ -175,6 +128,7 @@ export class AuthController {
     return this.auth.updateUserSettings(userId, body);
   }
 
+  @Public()
   @Get('logout')
   logout(@Res() res: Response) {
     res.clearCookie('stella_token', { path: '/' });

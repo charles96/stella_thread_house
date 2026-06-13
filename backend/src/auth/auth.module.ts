@@ -6,7 +6,6 @@ import { AdminModule } from '../admin/admin.module';
 import { User } from '../db/entities/user.entity';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
-import { GoogleStrategy } from './strategies/google.strategy';
 import { JwtStrategy } from './strategies/jwt.strategy';
 
 @Module({
@@ -20,7 +19,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     AdminModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, GoogleStrategy, JwtStrategy],
+  providers: [AuthService, JwtStrategy],
   exports: [AuthService],
 })
 export class AuthModule {}

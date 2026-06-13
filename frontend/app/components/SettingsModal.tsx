@@ -386,7 +386,7 @@ function GeneralTab({
         <UserInfoSection user={user} onUserUpdated={onUserUpdated} />
       )}
       </div>
-      {/* 비밀번호/Google SSO. */}
+      {/* 비밀번호 변경. */}
       {user && <AccountSection user={user} />}
       {/* 2) 외관 — 언어/테마. 폭이 넓을 땐 2열 그리드, 좁을 땐 1열. */}
       <section className="last:border-b-0 last:pb-0 border-b border-border/50 pb-8">
@@ -646,7 +646,7 @@ function UserInfoSection({
   );
 }
 
-// 비밀번호 변경 + Google SSO 연동.
+// 비밀번호 변경.
 function AccountSection({ user }: { user: AuthUser }) {
   const { t } = useI18n();
   const [pwOpen, setPwOpen] = useState(false);

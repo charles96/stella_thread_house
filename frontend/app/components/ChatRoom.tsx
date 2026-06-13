@@ -52,7 +52,6 @@ export interface AuthUser {
   picture?: string;
   role?: 'admin' | 'member';
   hasPassword?: boolean;
-  hasGoogle?: boolean;
 }
 
 export interface Source {
@@ -4446,7 +4445,7 @@ export default function ChatRoom() {
             onCollapse={() => setSidebarOpen(false)}
             user={user}
             onLogin={() => {
-              window.location.href = `${API_URL}/auth/google`;
+              window.location.href = '/login';
             }}
             onLogout={handleLogout}
             onOpenSettings={() => {

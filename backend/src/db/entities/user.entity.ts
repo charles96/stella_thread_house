@@ -18,10 +18,6 @@ export class User {
   @PrimaryColumn({ type: 'uuid', default: () => 'uuidv7()' })
   id!: string;
 
-  // SSO 연동 후에만 채워짐. email/password 가입 직후엔 NULL.
-  @Column({ name: 'google_id', type: 'text', nullable: true })
-  googleId?: string | null;
-
   @Index()
   @Column({ type: 'text' })
   email!: string;
@@ -32,7 +28,7 @@ export class User {
   @Column({ type: 'text', nullable: true })
   picture?: string | null;
 
-  // bcrypt 해시. Google SSO only 사용자는 NULL.
+  // bcrypt 해시.
   @Column({ name: 'password_hash', type: 'text', nullable: true })
   passwordHash?: string | null;
 

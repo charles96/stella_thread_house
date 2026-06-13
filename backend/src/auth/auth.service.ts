@@ -19,14 +19,6 @@ export interface AuthUser {
   picture?: string;
   role: 'admin' | 'member';
   hasPassword: boolean;
-  hasGoogle: boolean;
-}
-
-export interface GoogleProfileInput {
-  googleId: string;
-  email: string;
-  name?: string;
-  picture?: string;
 }
 
 const BCRYPT_COST = 10;
@@ -276,84 +268,6 @@ export class AuthService {
     }
   }
 
-  // Google 로그인 콜백에서 호출.
-  // - 기존 google_id 매칭: 정보 갱신 후 반환
-  // - 같은 이메일의 기존 (email/password) 사용자가 있으면 → 자동 SSO 연동
-  // - 그 외 신규: pending 초대가 있을 때만 member 가입. 초대 없으면 거부.
-  async upsertFromGoogle(input: GoogleProfileInput): Promise<AuthUser> {
-    let user = await this.users.findOne({
-      where: { googleId: input.googleId },
-    });
-    if (user) {
-      if (user.isDeactivated) {
-        throw new ForbiddenException('This account is deactivated. Please contact an administrator.');
-      }
-      user.email = input.email;
-      user.name = input.name ?? null;
-      user.picture = input.picture ?? null;
-      user = await this.users.save(user);
-      await this.touchLastLogin(user.id);
-      return this.toAuthUser(user);
-    }
-
-    // 같은 이메일의 기존 사용자가 있으면 SSO 연동.
-    const byEmail = await this.users
-      .createQueryBuilder('u')
-      .where('lower(u.email) = :e', { e: input.email.trim().toLowerCase() })
-      .getOne();
-    if (byEmail) {
-      if (byEmail.isDeactivated) {
-        throw new ForbiddenException('This account is deactivated. Please contact an administrator.');
-      }
-      byEmail.googleId = input.googleId;
-      byEmail.name = byEmail.name ?? input.name ?? null;
-      byEmail.picture = byEmail.picture ?? input.picture ?? null;
-      const saved = await this.users.save(byEmail);
-      await this.touchLastLogin(saved.id);
-      return this.toAuthUser(saved);
-    }
-
-    // 신규 가입: 초대 필수.
-    const invited = await this.invitations.hasPendingInvite(input.email);
-    if (!invited) {
-      throw new ForbiddenException('This account has not been invited.');
-    }
-
-    user = this.users.create({
-      googleId: input.googleId,
-      email: input.email,
-      name: input.name ?? null,
-      picture: input.picture ?? null,
-      role: 'member',
-    });
-    user = await this.users.save(user);
-    await this.invitations.acceptByEmail(input.email, user.id);
-    await this.touchLastLogin(user.id);
-    return this.toAuthUser(user);
-  }
-
-  // 로그인 한 사용자가 자신의 계정에 Google SSO 를 연결.
-  async linkGoogle(
-    userId: string,
-    input: GoogleProfileInput,
-  ): Promise<AuthUser> {
-    const user = await this.users.findOne({ where: { id: userId } });
-    if (!user) throw new UnauthorizedException();
-    const owner = await this.users.findOne({
-      where: { googleId: input.googleId },
-    });
-    if (owner && owner.id !== user.id) {
-      throw new ConflictException(
-        'This Google account is linked to another user.',
-      );
-    }
-    user.googleId = input.googleId;
-    if (!user.name) user.name = input.name ?? null;
-    if (!user.picture) user.picture = input.picture ?? null;
-    const saved = await this.users.save(user);
-    return this.toAuthUser(saved);
-  }
-
   signToken(user: AuthUser): string {
     return this.jwt.sign({
       sub: user.id,
@@ -377,7 +291,6 @@ export class AuthService {
       picture: u.picture ?? undefined,
       role: u.role,
       hasPassword: !!u.passwordHash,
-      hasGoogle: !!u.googleId,
     };
   }
 }

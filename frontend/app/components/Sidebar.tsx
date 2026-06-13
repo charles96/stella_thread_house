@@ -658,7 +658,7 @@ export default function Sidebar({
             onClick={onLogin}
           >
             <LogIn className="h-4 w-4 text-primary" />
-            {t('sidebar.googleLogin')}
+            {t('sidebar.login')}
           </Button>
         )}
       </div>

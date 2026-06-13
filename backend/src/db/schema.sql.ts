@@ -4,7 +4,6 @@ export const SCHEMA_SQL = `
 
 CREATE TABLE IF NOT EXISTS users (
   id             UUID        PRIMARY KEY DEFAULT uuidv7(),
-  google_id      TEXT,
   email          TEXT        NOT NULL,
   name           TEXT,
   picture        TEXT,
@@ -17,8 +16,6 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS users_google_id_uidx
-  ON users (google_id) WHERE google_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_uidx
   ON users (lower(email));
 
